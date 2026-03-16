@@ -222,6 +222,8 @@ def process_mbo_day(
     book = OrderBook()
     previous_signature = None
     emitted_timestamps = set()
+    current_sequence: Optional[str] = None
+    pending_fill_cancels: set[tuple[str, int, str, int]] = set()
 
     stats = {
         "rows_emitted": 0,
@@ -288,7 +290,12 @@ def process_mbo_day(
             side = row["side"]
             size = int(row["size"])
             order_id = int(row["order_id"])
+            sequence = row["sequence"]
             in_session = should_keep_timestamp(local_dt, session_start, session_end)
+
+            if sequence != current_sequence:
+                current_sequence = sequence
+                pending_fill_cancels.clear()
 
             if local_dt.time() > session_end:
                 flush_group(current_ts, current_counts)
@@ -314,6 +321,12 @@ def process_mbo_day(
                     current_counts["limit_sell_volume"] += size
                     current_counts["limit_sell_n"] += 1
             elif action == "C":
+                fill_cancel_key = (sequence, order_id, side, size)
+                if fill_cancel_key in pending_fill_cancels:
+                    pending_fill_cancels.remove(fill_cancel_key)
+                    if on_mbo_row is not None and idx % ROW_UPDATE_INTERVAL == 0:
+                        on_mbo_row(idx)
+                    continue
                 cancelled = book.cancel(order_id, size)
                 if in_session and cancelled is not None:
                     cancelled_side, removed = cancelled
@@ -325,6 +338,8 @@ def process_mbo_day(
                         current_counts["withdraw_sell_n"] += 1
             elif action == "F":
                 book.fill(order_id, size)
+                if side in {"A", "B"} and size > 0:
+                    pending_fill_cancels.add((sequence, order_id, side, size))
             elif action == "M":
                 price = price_to_int(row["price"])
                 modified = book.modify(order_id, price, size)
