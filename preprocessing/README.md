@@ -15,4 +15,5 @@ uv sync
 uv run python -m preprocessing.databento decompress --raw-root data/raw
 uv run python -m preprocessing.databento convert --raw-root data/raw --output-root data/processed --symbol GOOGL
 uv run python -m preprocessing.databento validate --raw-root data/raw --processed-root data/processed --validation-root data/validation --symbol GOOGL
+uv run python -m preprocessing.databento analyze-divergence --raw-root data/raw --processed-root data/processed --analysis-root data/validation --symbol GOOGL --day 20260302
 ```

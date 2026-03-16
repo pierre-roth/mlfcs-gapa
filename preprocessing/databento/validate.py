@@ -6,7 +6,7 @@ from collections import OrderedDict, deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, time, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 from .common import (
