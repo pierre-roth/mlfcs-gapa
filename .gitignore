@@ -1,0 +1,13 @@
+.DS_Store
+.venv/
+data/*
+!data/.gitkeep
+!data/raw/
+data/raw/**
+!data/raw/.gitkeep
+!data/processed/
+data/processed/**
+!data/processed/.gitkeep
+!data/validation/
+data/validation/**
+!data/validation/.gitkeep

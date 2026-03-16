@@ -20,9 +20,12 @@ from network.network import *
 class TrainConfig:
     # Experiment
     code: str = '000001'
+    data_dir: str = "./data/processed"
     device: str = "cpu"
     latency: int = 1
     time_window: int = 50
+    session_start: str = "09:30:00"
+    session_end: str = "16:00:00"
     log: bool = False
     exp_name: str = ''
     # Agent
@@ -53,8 +56,11 @@ def init_env(day, config):
     environment = env(
         code=config['code'], 
         day=day,
+        data_dir=config['data_dir'],
         latency=config['latency'],
         T=config['time_window'],
+        session_start=config['session_start'],
+        session_end=config['session_end'],
         # state ablation
         wo_lob_state=config['wo_lob_state'],
         wo_market_state=config['wo_market_state'],

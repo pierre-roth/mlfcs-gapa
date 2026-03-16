@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import random
 import time
+from pathlib import Path
 from tqdm import tqdm
 
 # from tensorforce import Environment
@@ -17,7 +18,9 @@ class BaseEnv():
             self, 
             initial_value=0, 
             max_episode_timesteps=1000,
-            data_dir='./data', 
+            data_dir='./data/processed', 
+            session_start='09:30:00',
+            session_end='16:00:00',
             log=1, 
             experiment_name='', 
             **kwargs
@@ -27,6 +30,8 @@ class BaseEnv():
         self.initial_value = initial_value
         self.__max_episode_timesteps__=max_episode_timesteps
         self.data_dir = data_dir
+        self.session_start = session_start
+        self.session_end = session_end
         self.log = log
         self.exp_name = experiment_name   
 
@@ -62,7 +67,10 @@ class BaseEnv():
 
         self.orderbook = pd.concat([ask, bid], axis=1)
         self.orderbook.timestamp = pd.to_datetime(self.orderbook.timestamp)
-        self.orderbook = self.orderbook[(f'{self.day} 09:30:00'<self.orderbook.timestamp)&(self.orderbook.timestamp<f'{self.day} 14:57:00')]
+        self.orderbook = self.orderbook[
+            (f'{self.day} {self.session_start}' < self.orderbook.timestamp)
+            & (self.orderbook.timestamp < f'{self.day} {self.session_end}')
+        ]
         self.orderbook = self.orderbook.set_index('timestamp')
         self.orderbook_length = len(self.orderbook)
         print('load lob done!', code, day)
@@ -87,15 +95,38 @@ class BaseEnv():
         self.order = pd.read_csv(f'raw/SZL2_ORDER_{code}_{day[:6]}.csv', names=list(order_columns), low_memory=False)
         self.order.TradingTime = pd.to_datetime(self.order.TradingTime)
         self.order = self.order[self.order.TradingDate==int(day)]
-        self.order = self.order[(f'{self.day} 09:30:00'<self.order.TradingTime)&(self.order.TradingTime<f'{self.day} 14:57:00')]
+        self.order = self.order[
+            (f'{self.day} {self.session_start}' < self.order.TradingTime)
+            & (self.order.TradingTime < f'{self.day} {self.session_end}')
+        ]
 
     def load_trade(self, code, day):
+        processed_trade_path = Path(self.data_dir) / code / day / 'trades.csv'
+        if processed_trade_path.exists():
+            self.trade = pd.read_csv(processed_trade_path)
+            self.trade['TradingTime'] = pd.to_datetime(self.trade['timestamp'])
+            self.trade['TradePrice'] = self.trade['price']
+            self.trade['TradeVolume'] = self.trade['size']
+            self.trade['TradeType'] = 'F'
+            self.trade = self.trade[
+                (f'{self.day} {self.session_start}' < self.trade.TradingTime)
+                & (self.trade.TradingTime < f'{self.day} {self.session_end}')
+            ]
+
+            self.is_trade = pd.DataFrame(index=self.orderbook.index, columns=['is_trade'])
+            self.is_trade['is_trade'] = 0
+            self.is_trade.loc[self.orderbook.index.isin(self.trade.TradingTime), 'is_trade'] = 1
+            return
+
         trade_columns = pd.read_csv('raw/GTA_SZL2_TRADE.csv')
         self.trade = pd.read_csv(f'raw/SZL2_TRADE_{code}_{day[:6]}.csv', names=list(trade_columns))
         self.trade.TradingTime = pd.to_datetime(self.trade.TradingTime)
         self.trade = self.trade[self.trade.TradingDate==int(day)]
         self.trade = self.trade[self.trade.TradeType=="F"]
-        self.trade = self.trade[(f'{self.day} 09:30:00'<self.trade.TradingTime)&(self.trade.TradingTime<f'{self.day} 14:57:00')]
+        self.trade = self.trade[
+            (f'{self.day} {self.session_start}' < self.trade.TradingTime)
+            & (self.trade.TradingTime < f'{self.day} {self.session_end}')
+        ]
         
         self.is_trade = pd.DataFrame(index=self.orderbook.index,columns=['is_trade'])
         self.is_trade['is_trade'] = 0
