@@ -128,6 +128,8 @@ def open_csv_text(path: Path) -> Iterator[TextIO]:
                 stderr_clean = stderr.strip()
                 benign_early_close = (
                     "Broken pipe" in stderr
+                    or "Write error" in stderr
+                    or "error 70" in stderr
                     or stderr_clean in {"", "zstd:"}
                 )
                 if not benign_early_close:
