@@ -13,3 +13,5 @@ data/processed/**
 !data/validation/
 data/validation/**
 !data/validation/.gitkeep
+!data/sample/
+!data/sample/**
