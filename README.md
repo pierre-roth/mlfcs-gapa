@@ -2,6 +2,12 @@
 
 This repository is an attempt at a recreation and possible extention of the work, "Market Making with Deep Reinforcement Learning from Limit Order Books", which was accepted by IJCNN'23.
 
+Team members: 
+- **G**hali Berbich
+- **A**nja Petric
+- **P**ierre Roth
+- **A**mine Benjelloun Touimi
+
 ## Environment
 
 This project is `uv`-first.
