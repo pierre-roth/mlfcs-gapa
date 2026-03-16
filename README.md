@@ -1,6 +1,6 @@
 # Market Making with Deep Reinforcement Learning from Limit Order Books
 
-This repository is for the demonstration of our work, "Market Making with Deep Reinforcement Learning from Limit Order Books",  which has been accepted by IJCNN'23.
+This repository is an attempt at a recreation and possible extention of the work, "Market Making with Deep Reinforcement Learning from Limit Order Books", which was accepted by IJCNN'23.
 
 ## Environment
 
@@ -9,7 +9,7 @@ This project is `uv`-first.
 Set up the local environment with:
 
 ```bash
-uv sync
+uv sync --python 3.12
 ```
 
 Run project or preprocessing commands with `uv run`, for example:
