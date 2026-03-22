@@ -4,13 +4,15 @@ version = "0.1.0"
 description = "Databento preprocessing and experiments for market making from limit order books."
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "keras",
     "numpy",
     "pandas",
     "pyrallis",
     "rich",
-    "tensorflow",
-    "tensorforce",
+    "matplotlib",
+    "pytest",
+    "scikit-learn",
+    "seaborn",
+    "torch",
     "tqdm",
 ]
 

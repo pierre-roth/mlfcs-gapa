@@ -63,6 +63,7 @@ Copy this block for each new week.
 - Main goal for the week: Convert, validate, and package usable project data so method work can proceed on top of a stable input pipeline.
 - Biggest win: The converter was validated against `MBP-10`, a major reconstruction bug was fixed, and a tracked sample dataset was added for contributors without the full raw data.
 - Biggest risk or blocker: The legacy training stack still needs a fully resolved `uv` dependency story, especially around `tensorflow` and `tensorforce`.
+- Added complete ground-up implemetation of the paper's continuous part in `lobmm/`.
 
 ### Contributor Update: Pierre
 
@@ -83,3 +84,18 @@ Copy this block for each new week.
   - `preprocessing/databento/`
   - `data/sample/`
   - `data/validation/`
+
+# Contributor Update: Anja
+- Wrote full simplified pipeline in `paper_replication.ipynb`
+
+# Contributor Update: Pierre
+- uploaded all data to cluster (currently in scratch as no dedicated storage found)
+- Started writing complete paper (continuous part only) replication pipeline in PyTorch in `lobmm/`
+- Warning: data normalization is still different than in the paper. (log instead of divide by max volume, no perfect stationarity, but assume paper doesn't have it either)
+
+
+## Week of 2026-03-16
+
+### Weekly Snapshot
+
+TODO
