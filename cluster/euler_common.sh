@@ -22,17 +22,20 @@ euler_load_modules() {
 euler_activate_overlay_env() {
     local scratch_root="${SCRATCH:-/cluster/scratch/${USER}}"
     export VENV_DIR="${VENV_DIR:-${scratch_root}/venvs/mlfcs-gapa-euler-py311}"
+    mkdir -p "$(dirname "${VENV_DIR}")"
 
     local lock_dir="${VENV_DIR}.lock"
     cleanup_lock() {
         rmdir "${lock_dir}" 2>/dev/null || true
     }
     while ! mkdir "${lock_dir}" 2>/dev/null; do
+        echo "Waiting for overlay environment lock: ${lock_dir}" >&2
         sleep 2
     done
     trap cleanup_lock RETURN
 
     if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+        echo "Creating overlay virtualenv at ${VENV_DIR}" >&2
         python -m venv --system-site-packages "${VENV_DIR}"
     fi
 
@@ -40,6 +43,7 @@ euler_activate_overlay_env() {
     source "${VENV_DIR}/bin/activate"
 
     if ! python -c 'import pyrallis' >/dev/null 2>&1; then
+        echo "Installing missing dependency pyrallis into ${VENV_DIR}" >&2
         python -m pip install --disable-pip-version-check --quiet pyrallis
     fi
 
