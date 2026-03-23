@@ -63,7 +63,7 @@ def _run_latency_study(config: SuiteConfig) -> dict[str, dict[str, object]]:
 
 def run_suite(config: SuiteConfig) -> None:
     config.apply_mode_defaults()
-    out_dir = prepare_run(config)
+    out_dir = prepare_run(config, label="suite")
     summary: dict[str, object] = {}
     if config.run_pretrain:
         summary["pretrain"] = run_pretrain(PretrainConfig(**_config_kwargs(PretrainConfig, config)))

@@ -318,7 +318,7 @@ def _decision_and_attention_plots(out_dir: Path, report_dir: Path) -> None:
 
 def run_report(config: ExperimentConfig) -> Path:
     config.apply_mode_defaults()
-    out_dir = prepare_run(config)
+    out_dir = prepare_run(config, label="report")
     report_dir = ensure_dir(out_dir / "reports")
     combined = _collect_episode_frames(out_dir)
     if combined.empty:

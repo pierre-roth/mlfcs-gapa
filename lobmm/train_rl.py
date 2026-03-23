@@ -62,7 +62,7 @@ def load_trained_ppo(config: RLTrainConfig, symbol: str, days: list[DayData]) ->
 
 def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
     config.apply_mode_defaults()
-    out_dir = prepare_run(config)
+    out_dir = prepare_run(config, label=f"train_{config.algorithm}")
     if config.algorithm == "dqn":
         placeholder = {
             symbol: {

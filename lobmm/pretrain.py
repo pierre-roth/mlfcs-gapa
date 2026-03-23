@@ -87,7 +87,7 @@ def _save_checkpoint(
 
 def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
     config.apply_mode_defaults()
-    out_dir = prepare_run(config)
+    out_dir = prepare_run(config, label="pretrain")
     results: dict[str, dict[str, float | str]] = {}
     stop_requested = _StopRequested()
     old_usr1 = signal.getsignal(signal.SIGUSR1)

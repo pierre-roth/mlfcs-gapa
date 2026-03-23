@@ -16,13 +16,24 @@ from .metrics import EpisodeResult, sharpe
 from .utils import ensure_dir, save_json, set_seed, timestamped_name
 
 
-def prepare_run(config: ExperimentConfig) -> Path:
+def _config_snapshot_path(out_dir: Path, label: str | None) -> Path:
+    if label:
+        slug = label.lower().replace(" ", "_")
+    else:
+        slug = type(out_dir).__name__.lower()
+    return out_dir / f"config_{slug}.json"
+
+
+def prepare_run(config: ExperimentConfig, label: str | None = None) -> Path:
     set_seed(config.seed)
     if not config.run_name:
         config.run_name = timestamped_name(config.mode)
     out = config.output_dir()
     ensure_dir(out)
-    save_json(out / "config.json", config)
+    root_config = out / "config.json"
+    if not root_config.exists():
+        save_json(root_config, config)
+    save_json(_config_snapshot_path(out, label or type(config).__name__.replace("Config", "")), config)
     return out
 
 

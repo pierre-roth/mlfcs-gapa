@@ -155,6 +155,7 @@ def main() -> None:
     config_cls, runner = _resolve_runner(args.kind)
     overrides = _load_overrides(config_cls, args.set)
     config = config_cls(**overrides)
+    config.apply_mode_defaults()
 
     if args.dry_run:
         payload = {field.name: getattr(config, field.name) for field in fields(config_cls)}

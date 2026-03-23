@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from lobmm.config import ExperimentConfig, PretrainConfig, RLTrainConfig
 from lobmm.evaluate import run_evaluation
 from lobmm.env import MarketMakingEnv
-from lobmm.pipeline import load_symbol_splits
+from lobmm.pipeline import load_symbol_splits, prepare_run
 from lobmm.pretrain import run_pretrain
 from lobmm.report import run_report
 from lobmm.train_rl import run_rl_training
@@ -166,3 +167,31 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
     assert "C-PPO" in (report_dir / "continuous_paper_table.md").read_text()
     assert (report_dir / "continuous_overall_results.md").exists()
     assert (report_dir / "runtime_summary.md").exists()
+
+
+def test_prepare_run_keeps_root_config_and_stage_snapshots(tmp_path: Path) -> None:
+    pre_cfg = PretrainConfig(
+        mode="medium",
+        symbols=["AAPL"],
+        output_root=str(tmp_path),
+        run_name="config_run",
+        device="cuda",
+    ).apply_mode_defaults()
+    out_dir = prepare_run(pre_cfg, label="pretrain")
+
+    report_cfg = ExperimentConfig(
+        mode="medium",
+        symbols=["AAPL"],
+        output_root=str(tmp_path),
+        run_name="config_run",
+        device="cpu",
+    ).apply_mode_defaults()
+    prepare_run(report_cfg, label="report")
+
+    root = json.loads((out_dir / "config.json").read_text())
+    pre = json.loads((out_dir / "config_pretrain.json").read_text())
+    report = json.loads((out_dir / "config_report.json").read_text())
+
+    assert root["device"] == "cuda"
+    assert pre["device"] == "cuda"
+    assert report["device"] == "cpu"

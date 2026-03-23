@@ -12,7 +12,7 @@ from .utils import ensure_dir, save_json
 
 def run_evaluation(config: RLTrainConfig) -> dict[str, dict[str, dict[str, float]]]:
     config.apply_mode_defaults()
-    out_dir = prepare_run(config)
+    out_dir = prepare_run(config, label="evaluate")
     summaries: dict[str, dict[str, dict[str, float]]] = {}
     for symbol in config.symbols:
         splits = load_symbol_splits(config, symbol)
