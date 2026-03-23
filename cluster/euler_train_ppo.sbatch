@@ -12,9 +12,10 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
+export REPO_ROOT
 # shellcheck source=cluster/euler_common.sh
-source "${SCRIPT_DIR}/euler_common.sh"
+source "${REPO_ROOT}/cluster/euler_common.sh"
 
 export DEVICE="${DEVICE:-cuda}"
 export ALGORITHM="${ALGORITHM:-ppo}"
