@@ -13,23 +13,33 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lobmm.config import ExperimentConfig, PretrainConfig, RLTrainConfig, SuiteConfig
-from lobmm.evaluate import run_evaluation
-from lobmm.pretrain import run_pretrain
-from lobmm.report import run_report
-from lobmm.run_suite import run_suite
-from lobmm.train_rl import run_rl_training
-
-
-RUNNERS = {
-    "pretrain": (PretrainConfig, run_pretrain),
-    "train": (RLTrainConfig, run_rl_training),
-    "evaluate": (RLTrainConfig, run_evaluation),
-    "report": (ExperimentConfig, run_report),
-    "suite": (SuiteConfig, run_suite),
-}
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 FALSE_VALUES = {"0", "false", "no", "n", "off"}
+
+
+def _resolve_runner(kind: str):
+    if kind == "pretrain":
+        from lobmm.pretrain import run_pretrain
+
+        return PretrainConfig, run_pretrain
+    if kind == "train":
+        from lobmm.train_rl import run_rl_training
+
+        return RLTrainConfig, run_rl_training
+    if kind == "evaluate":
+        from lobmm.evaluate import run_evaluation
+
+        return RLTrainConfig, run_evaluation
+    if kind == "report":
+        from lobmm.report import run_report
+
+        return ExperimentConfig, run_report
+    if kind == "suite":
+        from lobmm.run_suite import run_suite
+
+        return SuiteConfig, run_suite
+    raise KeyError(kind)
 
 
 def _field_default(field) -> Any:
@@ -131,7 +141,7 @@ def _load_overrides(config_cls, set_items: list[str]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dispatch Euler batch jobs into the right lobmm entry point.")
-    parser.add_argument("kind", choices=sorted(RUNNERS))
+    parser.add_argument("kind", choices=["evaluate", "pretrain", "report", "suite", "train"])
     parser.add_argument("--dry-run", action="store_true", help="Print the resolved config and exit.")
     parser.add_argument(
         "--set",
@@ -142,7 +152,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_cls, runner = RUNNERS[args.kind]
+    config_cls, runner = _resolve_runner(args.kind)
     overrides = _load_overrides(config_cls, args.set)
     config = config_cls(**overrides)
 
