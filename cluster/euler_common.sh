@@ -20,6 +20,10 @@ euler_load_modules() {
 }
 
 euler_activate_overlay_env() {
+    if [[ "${USE_OVERLAY_ENV:-0}" != "1" ]]; then
+        return
+    fi
+
     local scratch_root="${SCRATCH:-/cluster/scratch/${USER}}"
     export VENV_DIR="${VENV_DIR:-${scratch_root}/venvs/mlfcs-gapa-euler-py311}"
     mkdir -p "$(dirname "${VENV_DIR}")"

@@ -77,5 +77,11 @@ For each prefix, the wrapper understands:
 
 ## Python environment
 
-The jobs load Euler's `python_cuda/3.11.6` module and then create a small overlay virtualenv in scratch with `--system-site-packages`.
-That reuses the cluster-provided CUDA-enabled `torch` and only installs `pyrallis`, which keeps startup light.
+By default, the jobs just use Euler's `python_cuda/3.11.6` module directly.
+That avoids network-dependent package installation on compute nodes.
+
+If you explicitly want an overlay virtualenv in scratch, set:
+
+```bash
+USE_OVERLAY_ENV=1
+```

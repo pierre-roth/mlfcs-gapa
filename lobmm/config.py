@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 
@@ -88,6 +89,8 @@ class ExperimentConfig:
             self.max_eval_episodes_per_day = self.max_eval_episodes_per_day
             self.max_train_episodes_per_day = self.max_train_episodes_per_day
         self.device = self._resolve_device()
+        if self.device == "mps":
+            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         return self
 
     def _resolve_device(self) -> str:

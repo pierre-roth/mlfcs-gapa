@@ -46,6 +46,13 @@ def _gae(rewards: list[float], values: list[float], dones: list[bool], gamma: fl
     return advantages, returns
 
 
+def _sample_continuous_action(dist, device: str) -> torch.Tensor:
+    if device == "mps":
+        cpu_dist = type(dist)(dist.concentration1.detach().cpu(), dist.concentration0.detach().cpu())
+        return cpu_dist.sample().to(dist.concentration1.device)
+    return dist.sample()
+
+
 @dataclass
 class ReplayItem:
     obs: Observation
@@ -92,7 +99,7 @@ def train_ppo(
                 while not done:
                     lob_t, flat_t = _obs_to_tensors([obs], device)
                     dist, value = model.dist_value(lob_t, flat_t)
-                    action = dist.sample()
+                    action = _sample_continuous_action(dist, device)
                     log_prob = dist.log_prob(action).sum(dim=-1)
                     next_obs, reward, done, _ = env.step(action.squeeze(0).detach().cpu().numpy())
                     rollouts.append(

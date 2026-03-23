@@ -208,10 +208,22 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
     msg = _read_frame(root / "msg.csv", total_rows, config.max_rows_per_day, head_only=head_only)
 
     timestamps = pd.to_datetime(ask["timestamp"])
+    bid_timestamps = pd.to_datetime(bid["timestamp"])
+    msg_timestamps = pd.to_datetime(msg["timestamp"])
+    price_timestamps = pd.to_datetime(price["timestamp"])
+
+    if len(bid) != len(ask) or len(msg) != len(ask) or len(price) != len(ask):
+        raise ValueError(
+            f"Row count mismatch for {symbol} {day}: "
+            f"ask={len(ask)} bid={len(bid)} msg={len(msg)} price={len(price)}"
+        )
+
+    if not (bid_timestamps.equals(timestamps) and msg_timestamps.equals(timestamps) and price_timestamps.equals(timestamps)):
+        raise ValueError(f"Timestamp alignment mismatch across processed files for {symbol} {day}")
+
     bid = bid.drop(columns=["timestamp"])
     msg = msg.drop(columns=["timestamp"])
-    price["timestamp"] = pd.to_datetime(price["timestamp"])
-    price = price.set_index("timestamp").loc[timestamps].reset_index()
+    price = price.drop(columns=["timestamp"])
 
     trades = pd.read_csv(root / "trades.csv")
     trades["timestamp"] = pd.to_datetime(trades["timestamp"])
