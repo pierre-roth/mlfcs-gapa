@@ -8,35 +8,37 @@ from torch.distributions import Beta
 
 
 class AttnLOB(nn.Module):
-    def __init__(self, lookback: int = 50, output_dim: int = 64, num_heads: int = 4) -> None:
+    def __init__(self, lookback: int = 50, output_dim: int = 64, num_heads: int = 10, key_dim: int = 16) -> None:
         super().__init__()
         self.lookback = lookback
         self.output_dim = output_dim
+        self.attn_dim = num_heads * key_dim
         self.spatial = nn.Sequential(
             nn.Conv2d(1, 32, (1, 2), stride=(1, 2)),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
             nn.Conv2d(32, 32, (1, 5), stride=(1, 5)),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
             nn.Conv2d(32, 32, (1, 4)),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, (4, 1), padding=(1, 0)),
+            nn.Conv2d(32, 32, (4, 1), padding="same"),
             nn.LeakyReLU(0.01),
         )
         self.branch_3 = nn.Sequential(nn.Conv2d(32, 64, (1, 1)), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, (3, 1), padding=(1, 0)), nn.LeakyReLU(0.01))
         self.branch_5 = nn.Sequential(nn.Conv2d(32, 64, (1, 1)), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, (5, 1), padding=(2, 0)), nn.LeakyReLU(0.01))
         self.branch_pool = nn.Sequential(nn.MaxPool2d((3, 1), stride=(1, 1), padding=(1, 0)), nn.Conv2d(32, 64, (1, 1)), nn.LeakyReLU(0.01))
-        self.temporal_proj = nn.Linear(192, output_dim)
-        self.attn = nn.MultiheadAttention(output_dim, num_heads=num_heads, batch_first=True)
+        self.temporal_proj = nn.Linear(192, self.attn_dim)
+        self.attn = nn.MultiheadAttention(self.attn_dim, num_heads=num_heads, batch_first=True)
+        self.output_proj = nn.Linear(self.attn_dim, output_dim)
         self.last_attention: torch.Tensor | None = None
 
     def features(self, lob: torch.Tensor) -> torch.Tensor:
@@ -48,7 +50,7 @@ class AttnLOB(nn.Module):
         query = x[:, -1:, :]
         attn_out, attn_weights = self.attn(query, x, x, need_weights=True, average_attn_weights=False)
         self.last_attention = attn_weights.detach()
-        return attn_out.squeeze(1)
+        return self.output_proj(attn_out.squeeze(1))
 
     def forward(self, lob: torch.Tensor) -> torch.Tensor:
         return self.features(lob)

@@ -165,6 +165,11 @@ class MarketMakingEnv:
         trades = self.day.trades_by_index.get(event_idx)
         if trades is None or trades.empty:
             return []
+        if "aggressor_side" in trades.columns:
+            desired_side = "B" if side == "ask" else "A"
+            trades = trades[trades["aggressor_side"].eq(desired_side)]
+            if trades.empty:
+                return []
         fills: list[tuple[float, float]] = []
         traded_prices = trades["price"].to_numpy(dtype=np.float32)
         traded_sizes = trades["size"].to_numpy(dtype=np.float32)

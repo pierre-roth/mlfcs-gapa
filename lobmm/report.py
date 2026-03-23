@@ -15,8 +15,6 @@ from .utils import ensure_dir
 
 OVERALL_METHOD_ORDER = [
     "PPO_full",
-    "PPO_inventory_only",
-    "PPO_handcrafted",
     "AS",
     "Random",
     "Fixed_1",
@@ -33,8 +31,6 @@ ABLATION_METHOD_ORDER = [
 
 DISPLAY_NAME = {
     "PPO_full": "C-PPO",
-    "PPO_inventory_only": "Inv-RL",
-    "PPO_handcrafted": "LOB-RL",
     "PPO_wo_lob": "w/o LOB state",
     "PPO_wo_attn": "w/o Attn-LOB",
     "PPO_wo_dynamic": "w/o Dynamic state",

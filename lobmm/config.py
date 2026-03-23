@@ -14,7 +14,7 @@ class ExperimentConfig:
     session_end: str = "16:00:00"
     lookback: int = 50
     tick_size: float = 0.01
-    device: str = "cpu"
+    device: str = "auto"
     seed: int = 7
     run_name: str = ""
     train_days: int = 6
@@ -32,12 +32,12 @@ class ExperimentConfig:
     pretrain_lr: float = 1e-3
     episode_length: int = 2000
     latency: int = 1
-    max_inventory: int = 10
-    trade_unit: int = 100
+    max_inventory: int = 100
+    trade_unit: int = 1
     max_bias: float = 0.05
     max_spread: float = 0.10
     eta: float = 0.5
-    zeta: float = 0.01
+    zeta: float = 1e-4
     gamma: float = 0.99
     ppo_epochs: int = 10
     ppo_rollouts_per_epoch: int = 8
@@ -58,7 +58,7 @@ class ExperimentConfig:
     dqn_eps_decay: int = 5_000
     latency_sweep: list[int] = field(default_factory=lambda: [1, 2, 5, 10])
     as_gamma: float = 0.1
-    as_kappa: float = 1.5
+    as_kappa: float = 20.0
     as_vol_window_s: int = 300
     report_top_attention_points: int = 50
 
@@ -71,10 +71,8 @@ class ExperimentConfig:
             self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day or 2_048
             self.max_eval_episodes_per_day = self.max_eval_episodes_per_day or 1
             self.max_train_episodes_per_day = self.max_train_episodes_per_day or 1
-            self.pretrain_backbone = "simple"
             self.pretrain_epochs = min(self.pretrain_epochs, 2)
             self.pretrain_batch_size = min(self.pretrain_batch_size, 64)
-            self.episode_length = min(self.episode_length, 96)
             self.ppo_epochs = min(self.ppo_epochs, 2)
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 2)
             self.ppo_updates = min(self.ppo_updates, 1)
@@ -85,11 +83,29 @@ class ExperimentConfig:
             self.dqn_replay_size = min(self.dqn_replay_size, 2_000)
             self.dqn_warmup_steps = min(self.dqn_warmup_steps, 100)
         else:
-            self.max_rows_per_day = self.max_rows_per_day or 250_000
-            self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day or 100_000
-            self.max_eval_episodes_per_day = self.max_eval_episodes_per_day or 8
-            self.max_train_episodes_per_day = self.max_train_episodes_per_day or 16
+            self.max_rows_per_day = self.max_rows_per_day
+            self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day
+            self.max_eval_episodes_per_day = self.max_eval_episodes_per_day
+            self.max_train_episodes_per_day = self.max_train_episodes_per_day
+        self.device = self._resolve_device()
         return self
+
+    def _resolve_device(self) -> str:
+        if self.device != "auto":
+            return self.device
+        try:
+            import torch
+        except ImportError:
+            return "cpu"
+        mps_backend = getattr(torch.backends, "mps", None)
+        mps_available = bool(mps_backend is not None and torch.backends.mps.is_available())
+        if self.mode == "smoke" and mps_available:
+            return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+        if mps_available:
+            return "mps"
+        return "cpu"
 
     def output_dir(self) -> Path:
         run_name = self.run_name or f"{self.mode}_run"
@@ -107,7 +123,7 @@ class RLTrainConfig(ExperimentConfig):
     state_mode: str = "full"
     reward_mode: str = "hybrid"
     backbone_name: str = "attn_lob.pt"
-    backbone_trainable: bool = False
+    backbone_trainable: bool = True
     wo_lob_state: bool = False
     wo_dynamic_state: bool = False
     alt_backbone: str = "simple"
@@ -145,7 +161,7 @@ class RLTrainConfig(ExperimentConfig):
 class SuiteConfig(ExperimentConfig):
     run_pretrain: bool = True
     run_main_agents: bool = True
-    run_rl_baselines: bool = True
+    run_rl_baselines: bool = False
     run_non_rl_baselines: bool = True
     run_ablations: bool = True
     run_latency: bool = True

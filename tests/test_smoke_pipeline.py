@@ -11,6 +11,19 @@ from lobmm.report import run_report
 from lobmm.train_rl import run_rl_training
 
 
+def test_mode_defaults_keep_method_shape() -> None:
+    smoke_cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+    assert smoke_cfg.pretrain_backbone == "attn"
+    assert smoke_cfg.episode_length == 2000
+    assert smoke_cfg.device in {"cpu", "cuda", "mps"}
+
+    full_cfg = RLTrainConfig(mode="full", symbols=["AAPL"]).apply_mode_defaults()
+    assert full_cfg.max_rows_per_day is None
+    assert full_cfg.max_pretrain_samples_per_day is None
+    assert full_cfg.max_train_episodes_per_day is None
+    assert full_cfg.max_eval_episodes_per_day is None
+
+
 def test_load_symbol_splits_smoke() -> None:
     cfg = ExperimentConfig(mode="smoke", symbols=["AAPL", "GOOGL"]).apply_mode_defaults()
     for symbol in cfg.symbols:

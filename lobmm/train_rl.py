@@ -27,6 +27,16 @@ def _flat_dim(days: list[DayData], state_mode: str, wo_dynamic_state: bool) -> i
     return dynamic + 2
 
 
+def _load_matching_state_dict(module: torch.nn.Module, state_dict: dict[str, torch.Tensor]) -> None:
+    current = module.state_dict()
+    compatible = {
+        key: value
+        for key, value in state_dict.items()
+        if key in current and current[key].shape == value.shape
+    }
+    module.load_state_dict(compatible, strict=False)
+
+
 def _build_encoder(config: RLTrainConfig, days: list[DayData], symbol: str):
     backbone = None
     if not config.wo_lob_state and config.state_mode == "full":
@@ -35,7 +45,7 @@ def _build_encoder(config: RLTrainConfig, days: list[DayData], symbol: str):
         ckpt = Path(config.output_dir()) / symbol / "pretrain" / config.backbone_name
         if ckpt.exists():
             state_dict = torch.load(ckpt, map_location="cpu")
-            backbone.load_state_dict(state_dict, strict=False)
+            _load_matching_state_dict(backbone, state_dict)
         for param in backbone.parameters():
             param.requires_grad = config.backbone_trainable
     return SharedStateEncoder(backbone, _flat_dim(days, config.state_mode, config.wo_dynamic_state))

@@ -80,10 +80,6 @@ def run_suite(config: SuiteConfig) -> None:
         )
     if config.run_main_agents:
         summary["ppo"] = run_rl_training(RLTrainConfig(**_config_kwargs(RLTrainConfig, config, algorithm="ppo", state_mode="full")))
-        summary["dqn"] = {
-            "status": "skipped",
-            "reason": "Discrete dueling DQN intentionally left as a placeholder."
-        }
     if config.run_rl_baselines:
         summary["inventory_rl"] = run_rl_training(RLTrainConfig(**_config_kwargs(RLTrainConfig, config, algorithm="ppo", state_mode="inventory_only", wo_lob_state=True, wo_dynamic_state=True)))
         summary["handcrafted_rl"] = run_rl_training(RLTrainConfig(**_config_kwargs(RLTrainConfig, config, algorithm="ppo", state_mode="handcrafted", wo_lob_state=True, wo_dynamic_state=True)))
