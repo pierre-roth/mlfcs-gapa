@@ -30,6 +30,8 @@ class ExperimentConfig:
     pretrain_epochs: int = 10
     pretrain_batch_size: int = 128
     pretrain_lr: float = 1e-3
+    pretrain_checkpoint_seconds: int = 600
+    pretrain_resume: bool = True
     episode_length: int = 2000
     latency: int = 1
     max_inventory: int = 100

@@ -13,6 +13,7 @@ Usage:
   cluster/submit_euler.sh report
   cluster/submit_euler.sh suite
   cluster/submit_euler.sh pipeline
+  cluster/submit_euler.sh pipeline-aapl
 
 Environment overrides:
   RUN_NAME=...              Shared output run name. Recommended for multi-stage runs.
@@ -21,16 +22,17 @@ Environment overrides:
   OUTPUT_ROOT=/cluster/...  Defaults to /cluster/scratch/$USER/artifacts
   MODE=full                 Defaults to full.
 
-  PRETRAIN_TIME=08:00:00    Resource overrides per stage.
-  TRAIN_TIME=08:00:00
-  EVALUATE_TIME=02:00:00
-  REPORT_TIME=01:00:00
-  SUITE_TIME=18:00:00
+  PRETRAIN_TIME=2-00:00:00  Resource overrides per stage.
+  TRAIN_TIME=2-00:00:00
+  EVALUATE_TIME=2-00:00:00
+  REPORT_TIME=2-00:00:00
+  SUITE_TIME=2-00:00:00
 
   PRETRAIN_CPUS=8           Also supported: *_MEM_PER_CPU, *_GPUS, *_TMP, *_PARTITION.
 
 Examples:
   RUN_NAME=euler_main SYMBOLS=AAPL,GOOGL cluster/submit_euler.sh pipeline
+  RUN_NAME=euler_main cluster/submit_euler.sh pipeline-aapl
   RUN_NAME=euler_suite RUN_ABLATIONS=1 cluster/submit_euler.sh suite
 EOF
 }
@@ -193,6 +195,9 @@ main() {
             ;;
         pipeline)
             submit_pipeline
+            ;;
+        pipeline-aapl)
+            SYMBOLS=AAPL submit_pipeline
             ;;
         -h|--help|help)
             usage

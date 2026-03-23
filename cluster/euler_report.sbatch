@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=lobmm-report
 #SBATCH --account=ls_math
-#SBATCH --time=01:00:00
+#SBATCH --partition=normal.24h
+#SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=6G

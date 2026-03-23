@@ -27,6 +27,12 @@ Submit the main pipeline with one GPU job per symbol and a final CPU report job:
 RUN_NAME=euler_main SYMBOLS=AAPL,GOOGL cluster/submit_euler.sh pipeline
 ```
 
+Submit the faster AAPL-only pipeline:
+
+```bash
+RUN_NAME=euler_main cluster/submit_euler.sh pipeline-aapl
+```
+
 Submit a single stage directly:
 
 ```bash
@@ -74,6 +80,13 @@ For each prefix, the wrapper understands:
 - `*_GPUS`
 - `*_TMP`
 - `*_PARTITION`
+
+The bundled sbatch defaults now use the full currently allowed Euler walltime for these partitions:
+
+- `gpu.24h`: `2-00:00:00`
+- `normal.24h`: `2-00:00:00`
+
+Pretraining also checkpoints periodically and writes a resumable partial backbone so a timeout does not throw away all progress.
 
 ## Python environment
 

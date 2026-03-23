@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=lobmm-suite
 #SBATCH --account=ls_math
-#SBATCH --time=18:00:00
+#SBATCH --partition=gpu.24h
+#SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
