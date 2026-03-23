@@ -17,6 +17,19 @@ def test_mode_defaults_keep_method_shape() -> None:
     assert smoke_cfg.episode_length == 2000
     assert smoke_cfg.device in {"cpu", "cuda", "mps"}
 
+    medium_cfg = RLTrainConfig(mode="medium", symbols=["AAPL"]).apply_mode_defaults()
+    assert medium_cfg.train_days == 4
+    assert medium_cfg.val_days == 1
+    assert medium_cfg.test_days == 1
+    assert medium_cfg.max_rows_per_day == 200_000
+    assert medium_cfg.max_pretrain_samples_per_day == 50_000
+    assert medium_cfg.max_train_episodes_per_day == 8
+    assert medium_cfg.max_eval_episodes_per_day == 4
+    assert medium_cfg.pretrain_epochs == 4
+    assert medium_cfg.ppo_epochs == 4
+    assert medium_cfg.pretrain_batch_size == 256
+    assert medium_cfg.ppo_minibatch_size == 256
+
     full_cfg = RLTrainConfig(mode="full", symbols=["AAPL"]).apply_mode_defaults()
     assert full_cfg.max_rows_per_day is None
     assert full_cfg.max_pretrain_samples_per_day is None

@@ -84,6 +84,28 @@ class ExperimentConfig:
             self.dqn_batch_size = min(self.dqn_batch_size, 64)
             self.dqn_replay_size = min(self.dqn_replay_size, 2_000)
             self.dqn_warmup_steps = min(self.dqn_warmup_steps, 100)
+        elif self.mode == "medium":
+            self.train_days = min(self.train_days, 4)
+            self.val_days = min(self.val_days, 1)
+            self.test_days = min(self.test_days, 1)
+            self.max_rows_per_day = self.max_rows_per_day or 200_000
+            self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day or 50_000
+            self.max_eval_episodes_per_day = self.max_eval_episodes_per_day or 4
+            self.max_train_episodes_per_day = self.max_train_episodes_per_day or 8
+            self.pretrain_epochs = min(self.pretrain_epochs, 4)
+            if self.pretrain_batch_size == 128:
+                self.pretrain_batch_size = 256
+            self.ppo_epochs = min(self.ppo_epochs, 4)
+            self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 4)
+            self.ppo_updates = min(self.ppo_updates, 1)
+            if self.ppo_minibatch_size == 128:
+                self.ppo_minibatch_size = 256
+            self.dqn_epochs = min(self.dqn_epochs, 4)
+            self.dqn_batches_per_epoch = min(self.dqn_batches_per_epoch, 16)
+            if self.dqn_batch_size == 128:
+                self.dqn_batch_size = 256
+            self.dqn_replay_size = min(self.dqn_replay_size, 10_000)
+            self.dqn_warmup_steps = min(self.dqn_warmup_steps, 500)
         else:
             self.max_rows_per_day = self.max_rows_per_day
             self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day

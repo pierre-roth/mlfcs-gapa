@@ -33,6 +33,12 @@ Submit the faster AAPL-only pipeline:
 RUN_NAME=euler_main cluster/submit_euler.sh pipeline-aapl
 ```
 
+Submit the representative medium-budget AAPL-only pipeline:
+
+```bash
+RUN_NAME=euler_mid cluster/submit_euler.sh pipeline-aapl-medium
+```
+
 Submit a single stage directly:
 
 ```bash
@@ -87,6 +93,14 @@ The bundled sbatch defaults now use the full currently allowed Euler walltime fo
 - `normal.24h`: `2-00:00:00`
 
 Pretraining also checkpoints periodically and writes a resumable partial backbone so a timeout does not throw away all progress.
+
+## Modes
+
+- `MODE=full`: full dataset and uncapped episode budgets.
+- `MODE=medium`: AAPL-friendly middle ground sized to finish a full pipeline in a few hours on Euler.
+- `MODE=smoke`: tiny local plumbing check.
+
+`pipeline-aapl-medium` is equivalent to `SYMBOLS=AAPL MODE=medium cluster/submit_euler.sh pipeline`.
 
 ## Python environment
 

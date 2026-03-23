@@ -14,6 +14,7 @@ Usage:
   cluster/submit_euler.sh suite
   cluster/submit_euler.sh pipeline
   cluster/submit_euler.sh pipeline-aapl
+  cluster/submit_euler.sh pipeline-aapl-medium
 
 Environment overrides:
   RUN_NAME=...              Shared output run name. Recommended for multi-stage runs.
@@ -33,6 +34,7 @@ Environment overrides:
 Examples:
   RUN_NAME=euler_main SYMBOLS=AAPL,GOOGL cluster/submit_euler.sh pipeline
   RUN_NAME=euler_main cluster/submit_euler.sh pipeline-aapl
+  RUN_NAME=euler_mid cluster/submit_euler.sh pipeline-aapl-medium
   RUN_NAME=euler_suite RUN_ABLATIONS=1 cluster/submit_euler.sh suite
 EOF
 }
@@ -198,6 +200,9 @@ main() {
             ;;
         pipeline-aapl)
             SYMBOLS=AAPL submit_pipeline
+            ;;
+        pipeline-aapl-medium)
+            SYMBOLS=AAPL MODE=medium submit_pipeline
             ;;
         -h|--help|help)
             usage
