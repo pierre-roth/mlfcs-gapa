@@ -50,6 +50,13 @@ class MarketMakingEnv:
     def available_episodes(self) -> list[tuple[int, int]]:
         return self._episode_ranges()
 
+    def selected_episodes(self, limit: int | None) -> list[tuple[int, int]]:
+        episodes = self.available_episodes()
+        if limit is None or limit >= len(episodes):
+            return episodes
+        indices = np.linspace(0, len(episodes) - 1, num=limit, dtype=np.int64)
+        return [episodes[int(idx)] for idx in indices]
+
     def reset(self, episode_span: tuple[int, int]) -> Observation:
         self.episode_span = episode_span
         self.episode_decisions = self.decision_indices[episode_span[0] : episode_span[1]]

@@ -65,6 +65,17 @@ def test_env_one_step_smoke() -> None:
     assert done in {True, False}
 
 
+def test_selected_episodes_spread_across_day() -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+    splits = load_symbol_splits(cfg, "AAPL")
+    env = MarketMakingEnv(splits["train"][0], cfg)
+    episodes = env.available_episodes()
+    selected = env.selected_episodes(2)
+    assert len(episodes) >= 2
+    assert selected[0] == episodes[0]
+    assert selected[-1] == episodes[-1]
+
+
 def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
     pre_cfg = PretrainConfig(
         mode="smoke",

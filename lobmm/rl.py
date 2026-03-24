@@ -92,7 +92,7 @@ def train_ppo(
         rollouts: list[tuple[Observation, np.ndarray, float, float, float, bool]] = []
         rewards_epoch = []
         for env in envs:
-            for episode_index, span in enumerate(env.available_episodes()[: config.max_train_episodes_per_day]):
+            for episode_index, span in enumerate(env.selected_episodes(config.max_train_episodes_per_day)):
                 obs = env.reset(span)
                 done = False
                 episode_rewards = []
@@ -178,7 +178,7 @@ def train_dqn(
     for epoch in range(config.dqn_epochs):
         epoch_rewards = []
         for env in envs:
-            for span in env.available_episodes()[: config.max_train_episodes_per_day]:
+            for span in env.selected_episodes(config.max_train_episodes_per_day):
                 obs = env.reset(span)
                 done = False
                 episode_reward = 0.0
