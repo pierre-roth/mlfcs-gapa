@@ -128,24 +128,27 @@ def train_ppo(
         dones = [item[5] for item in rollouts]
         advantages, returns = _gae(reward_stream, values, dones, config.gamma, config.gae_lambda)
         advantages = (advantages - advantages.mean()) / max(advantages.std(), 1e-6)
-        lob_batch, flat_batch = _obs_to_tensors(obs_list, device)
-        actions_t = torch.tensor(actions, dtype=torch.float32, device=device)
-        old_log_probs_t = torch.tensor(old_log_probs, dtype=torch.float32, device=device)
-        adv_t = torch.tensor(advantages, dtype=torch.float32, device=device)
-        ret_t = torch.tensor(returns, dtype=torch.float32, device=device)
+        actions_t = torch.tensor(actions, dtype=torch.float32)
+        old_log_probs_t = torch.tensor(old_log_probs, dtype=torch.float32)
+        adv_t = torch.tensor(advantages, dtype=torch.float32)
+        ret_t = torch.tensor(returns, dtype=torch.float32)
         batch_size = len(obs_list)
         for _ in range(config.ppo_updates):
-            indices = torch.randperm(batch_size, device=device)
+            indices = torch.randperm(batch_size)
             for start in range(0, batch_size, config.ppo_minibatch_size):
                 batch_idx = indices[start : start + config.ppo_minibatch_size]
-                lob_mb = None if lob_batch is None else lob_batch[batch_idx]
-                flat_mb = flat_batch[batch_idx]
+                obs_mb = [obs_list[int(idx)] for idx in batch_idx.tolist()]
+                lob_mb, flat_mb = _obs_to_tensors(obs_mb, device)
+                actions_mb = actions_t[batch_idx].to(device)
+                old_log_probs_mb = old_log_probs_t[batch_idx].to(device)
+                adv_mb = adv_t[batch_idx].to(device)
+                ret_mb = ret_t[batch_idx].to(device)
                 dist, value = model.dist_value(lob_mb, flat_mb)
-                log_prob = dist.log_prob(actions_t[batch_idx]).sum(dim=-1)
-                ratio = torch.exp(log_prob - old_log_probs_t[batch_idx])
+                log_prob = dist.log_prob(actions_mb).sum(dim=-1)
+                ratio = torch.exp(log_prob - old_log_probs_mb)
                 clipped = torch.clamp(ratio, 1.0 - config.ppo_clip, 1.0 + config.ppo_clip)
-                policy_loss = -torch.min(ratio * adv_t[batch_idx], clipped * adv_t[batch_idx]).mean()
-                value_loss = F.mse_loss(value, ret_t[batch_idx])
+                policy_loss = -torch.min(ratio * adv_mb, clipped * adv_mb).mean()
+                value_loss = F.mse_loss(value, ret_mb)
                 entropy = dist.entropy().mean()
                 loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
                 optimizer.zero_grad()
