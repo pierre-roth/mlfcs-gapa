@@ -26,7 +26,7 @@ def _run_latency_study(config: SuiteConfig) -> dict[str, dict[str, object]]:
     results: dict[str, dict[str, object]] = {}
     base_cfg = RLTrainConfig(**_config_kwargs(RLTrainConfig, config, algorithm="ppo", state_mode="full"))
     for symbol in config.symbols:
-        from .pipeline import evaluate_baseline_policy, load_symbol_splits, standard_baselines
+        from .pipeline import evaluate_baseline_policy, load_symbol_splits, resolve_symbol_rl_config, standard_baselines
         from .env import MarketMakingEnv
 
         splits = load_symbol_splits(base_cfg, symbol)
@@ -35,6 +35,7 @@ def _run_latency_study(config: SuiteConfig) -> dict[str, dict[str, object]]:
         for latency in config.latency_sweep:
             latency_cfg = RLTrainConfig(**_config_kwargs(RLTrainConfig, config, algorithm="ppo", state_mode="full", latency=latency))
             latency_cfg.apply_mode_defaults()
+            latency_cfg = resolve_symbol_rl_config(latency_cfg, splits["train"])
             ppo_envs = [
                 MarketMakingEnv(day, latency_cfg, state_mode="full", wo_lob_state=False, wo_dynamic_state=False, reward_mode=latency_cfg.reward_mode)
                 for day in splits["test"]

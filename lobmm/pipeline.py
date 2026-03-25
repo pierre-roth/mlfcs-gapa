@@ -10,7 +10,7 @@ import torch
 
 from .baselines import AvellanedaStoikovPolicy, BaselinePolicy, FixedLevelPolicy, QuoteDecision, RandomPolicy
 from .config import ExperimentConfig, RLTrainConfig
-from .data import DayData, apply_lob_normalizer, discover_days, fit_lob_normalizer, load_day_data, split_days
+from .data import DayData, apply_lob_normalizer, discover_days, estimate_episode_length, fit_lob_normalizer, load_day_data, split_days
 from .env import MarketMakingEnv
 from .metrics import EpisodeResult, sharpe
 from .utils import ensure_dir, save_json, set_seed, timestamped_name
@@ -49,6 +49,18 @@ def load_symbol_splits(config: ExperimentConfig, symbol: str) -> dict[str, list[
         for day in split_days_data:
             apply_lob_normalizer(day, mean, std)
     return loaded
+
+
+def resolve_symbol_rl_config(config: RLTrainConfig, train_days: list[DayData]) -> RLTrainConfig:
+    resolved = RLTrainConfig(**asdict(config))
+    resolved.episode_length = estimate_episode_length(
+        train_days,
+        target_seconds=config.target_episode_seconds,
+        lookback=config.lookback,
+        latency=config.latency,
+        fallback=config.episode_length,
+    )
+    return resolved
 
 
 def save_episode_results(path: str | Path, results: Iterable[EpisodeResult]) -> pd.DataFrame:

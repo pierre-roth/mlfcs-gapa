@@ -12,13 +12,15 @@ class ExperimentConfig:
     symbols: list[str] = field(default_factory=lambda: ["AAPL", "GOOGL"])
     session_start: str = "09:30:00"
     session_end: str = "16:00:00"
+    use_stable_hours: bool = True
+    stable_windows: list[str] = field(default_factory=lambda: ["10:00:00-15:30:00"])
     lookback: int = 50
     tick_size: float = 0.01
     device: str = "auto"
     seed: int = 7
     run_name: str = ""
-    train_days: int = 6
-    val_days: int = 2
+    train_days: int = 7
+    val_days: int = 1
     test_days: int = 2
     max_rows_per_day: int | None = None
     max_pretrain_samples_per_day: int | None = None
@@ -29,20 +31,26 @@ class ExperimentConfig:
     pretrain_alpha: float = 1e-5
     pretrain_epochs: int = 10
     pretrain_batch_size: int = 128
+    pretrain_num_workers: int = 0
+    pretrain_prefetch_factor: int | None = None
     pretrain_lr: float = 1e-3
     pretrain_checkpoint_seconds: int = 600
     pretrain_resume: bool = True
     episode_length: int = 2000
+    target_episode_seconds: int | None = 120
     latency: int = 1
-    max_inventory: int = 100
+    max_inventory: int = 200
     trade_unit: int = 1
     max_bias: float = 0.05
     max_spread: float = 0.10
+    quote_scale_mode: str = "bps"
+    max_bias_bps: float = 2.0
+    max_spread_bps: float = 8.0
     eta: float = 0.5
-    zeta: float = 1e-4
+    zeta: float = 0.01
     gamma: float = 0.99
     ppo_epochs: int = 10
-    ppo_rollouts_per_epoch: int = 8
+    ppo_rollouts_per_epoch: int = 16
     ppo_updates: int = 2
     ppo_minibatch_size: int = 128
     ppo_lr: float = 3e-4

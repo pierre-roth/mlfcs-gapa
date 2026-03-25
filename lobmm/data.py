@@ -51,14 +51,22 @@ class DayData:
     spread: np.ndarray
     dynamic: np.ndarray
     handcrafted: np.ndarray
-    trades_by_index: dict[int, pd.DataFrame]
+    trades_by_index: dict[int, "TradeBatch"]
     trade_indices: np.ndarray
+    row_multiplier: int = 1
     normalized_lob: np.ndarray | None = None
     norm_mean: np.ndarray | None = None
     norm_std: np.ndarray | None = None
 
     def valid_label_indices(self, lookback: int, horizon: int) -> np.ndarray:
         return np.arange(lookback - 1, len(self.midprice) - horizon)
+
+
+@dataclass
+class TradeBatch:
+    price: np.ndarray
+    size: np.ndarray
+    aggressor_side: np.ndarray | None
 
 
 def discover_days(data_dir: str | Path, symbol: str) -> list[str]:
@@ -88,10 +96,16 @@ def _row_count(path: Path) -> int:
         return sum(1 for _ in handle) - 1
 
 
-def _skiprows_for_limit(total_rows: int, max_rows: int | None):
+def _row_stride_for_limit(total_rows: int, max_rows: int | None) -> int:
     if max_rows is None or total_rows <= max_rows:
+        return 1
+    return max(1, int(np.ceil(total_rows / max_rows)))
+
+
+def _skiprows_for_limit(total_rows: int, max_rows: int | None):
+    stride = _row_stride_for_limit(total_rows, max_rows)
+    if stride <= 1:
         return None
-    stride = max(1, int(np.ceil(total_rows / max_rows)))
     return lambda idx: idx > 0 and ((idx - 1) % stride != 0)
 
 
@@ -102,15 +116,67 @@ def _read_frame(path: Path, total_rows: int, max_rows: int | None, head_only: bo
     return pd.read_csv(path, skiprows=skiprows)
 
 
-def _build_trade_index_map(timestamps: pd.DatetimeIndex, trades: pd.DataFrame) -> dict[int, pd.DataFrame]:
+def _read_contiguous_frame(path: Path, start_row: int, nrows: int) -> pd.DataFrame:
+    if start_row <= 0:
+        return pd.read_csv(path, nrows=nrows)
+    return pd.read_csv(path, skiprows=range(1, start_row + 1), nrows=nrows)
+
+
+def _build_trade_index_map(timestamps: pd.DatetimeIndex, trades: pd.DataFrame) -> dict[int, TradeBatch]:
     if trades.empty:
         return {}
     ts_to_index = {ts: idx for idx, ts in enumerate(timestamps)}
     trades = trades[trades["timestamp"].isin(ts_to_index)]
-    grouped: dict[int, pd.DataFrame] = {}
+    grouped: dict[int, TradeBatch] = {}
     for ts, group in trades.groupby("timestamp"):
-        grouped[ts_to_index[ts]] = group.reset_index(drop=True)
+        grouped[ts_to_index[ts]] = TradeBatch(
+            price=group["price"].to_numpy(dtype=np.float32, copy=True),
+            size=group["size"].to_numpy(dtype=np.float32, copy=True),
+            aggressor_side=group["aggressor_side"].to_numpy(copy=True) if "aggressor_side" in group.columns else None,
+        )
     return grouped
+
+
+def _time_to_seconds(value: str) -> int:
+    delta = pd.to_timedelta(value)
+    return int(delta.total_seconds())
+
+
+def _stable_window_mask(timestamps: pd.DatetimeIndex, config: ExperimentConfig) -> np.ndarray:
+    if not config.use_stable_hours or not config.stable_windows:
+        return np.ones(len(timestamps), dtype=bool)
+    seconds = timestamps.hour * 3600 + timestamps.minute * 60 + timestamps.second
+    mask = np.zeros(len(timestamps), dtype=bool)
+    for window in config.stable_windows:
+        start, end = window.split("-", maxsplit=1)
+        start_s = _time_to_seconds(start)
+        end_s = _time_to_seconds(end)
+        mask |= (seconds >= start_s) & (seconds < end_s)
+    return mask
+
+
+def _stable_window_mask_from_strings(times: pd.Series, config: ExperimentConfig) -> np.ndarray:
+    if not config.use_stable_hours or not config.stable_windows:
+        return np.ones(len(times), dtype=bool)
+    mask = np.zeros(len(times), dtype=bool)
+    for window in config.stable_windows:
+        start, end = window.split("-", maxsplit=1)
+        mask |= (times >= start) & (times < end)
+    return mask
+
+
+def _find_smoke_stable_start(path: Path, config: ExperimentConfig, chunk_size: int = 250_000) -> int | None:
+    if not config.use_stable_hours or not config.stable_windows:
+        return None
+    row_offset = 0
+    for chunk in pd.read_csv(path, usecols=["timestamp"], chunksize=chunk_size):
+        times = chunk["timestamp"].astype(str).str.slice(11, 19)
+        mask = _stable_window_mask_from_strings(times, config)
+        if np.any(mask):
+            indices = np.flatnonzero(mask)
+            return row_offset + int(indices[0])
+        row_offset += len(chunk)
+    return None
 
 
 def _midprice_labels(midprice: np.ndarray, horizon: int, alpha: float) -> np.ndarray:
@@ -200,12 +266,24 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
     root = Path(config.data_dir) / symbol / day
     if not root.exists():
         raise FileNotFoundError(f"Missing processed day directory: {root}")
-    head_only = config.mode == "smoke"
-    total_rows = (config.max_rows_per_day or 0) if head_only else _row_count(root / "ask.csv")
-    ask = _read_frame(root / "ask.csv", total_rows, config.max_rows_per_day, head_only=head_only)
-    bid = _read_frame(root / "bid.csv", total_rows, config.max_rows_per_day, head_only=head_only)
-    price = _read_frame(root / "price.csv", total_rows, config.max_rows_per_day, head_only=head_only)
-    msg = _read_frame(root / "msg.csv", total_rows, config.max_rows_per_day, head_only=head_only)
+    head_only = config.mode == "smoke" and not config.use_stable_hours
+    smoke_start = None
+    if config.mode == "smoke" and config.use_stable_hours and config.max_rows_per_day is not None:
+        smoke_start = _find_smoke_stable_start(root / "ask.csv", config)
+    if smoke_start is not None:
+        sample_rows = config.max_rows_per_day
+        ask = _read_contiguous_frame(root / "ask.csv", smoke_start, sample_rows)
+        bid = _read_contiguous_frame(root / "bid.csv", smoke_start, sample_rows)
+        price = _read_contiguous_frame(root / "price.csv", smoke_start, sample_rows)
+        msg = _read_contiguous_frame(root / "msg.csv", smoke_start, sample_rows)
+        row_multiplier = 1
+    else:
+        total_rows = (config.max_rows_per_day or 0) if head_only else _row_count(root / "ask.csv")
+        row_multiplier = 1 if head_only else _row_stride_for_limit(total_rows, config.max_rows_per_day)
+        ask = _read_frame(root / "ask.csv", total_rows, config.max_rows_per_day, head_only=head_only)
+        bid = _read_frame(root / "bid.csv", total_rows, config.max_rows_per_day, head_only=head_only)
+        price = _read_frame(root / "price.csv", total_rows, config.max_rows_per_day, head_only=head_only)
+        msg = _read_frame(root / "msg.csv", total_rows, config.max_rows_per_day, head_only=head_only)
 
     timestamps = pd.to_datetime(ask["timestamp"])
     bid_timestamps = pd.to_datetime(bid["timestamp"])
@@ -220,6 +298,16 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
 
     if not (bid_timestamps.equals(timestamps) and msg_timestamps.equals(timestamps) and price_timestamps.equals(timestamps)):
         raise ValueError(f"Timestamp alignment mismatch across processed files for {symbol} {day}")
+
+    stable_mask = _stable_window_mask(pd.DatetimeIndex(timestamps), config)
+    if not stable_mask.all():
+        ask = ask.loc[stable_mask].reset_index(drop=True)
+        bid = bid.loc[stable_mask].reset_index(drop=True)
+        msg = msg.loc[stable_mask].reset_index(drop=True)
+        price = price.loc[stable_mask].reset_index(drop=True)
+        timestamps = pd.to_datetime(ask["timestamp"])
+        if ask.empty:
+            raise ValueError(f"No stable-hour rows left for {symbol} {day} after applying {config.stable_windows}")
 
     bid = bid.drop(columns=["timestamp"])
     msg = msg.drop(columns=["timestamp"])
@@ -261,7 +349,34 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
         handcrafted=handcrafted,
         trades_by_index=trades_by_index,
         trade_indices=trade_indices,
+        row_multiplier=row_multiplier,
     )
+
+
+def estimate_episode_length(
+    days: Iterable[DayData],
+    target_seconds: int | None,
+    lookback: int,
+    latency: int,
+    fallback: int,
+) -> int:
+    if target_seconds is None or target_seconds <= 0:
+        return fallback
+    total_steps = 0
+    total_seconds = 0.0
+    for day in days:
+        tradable = len(day.midprice) - (lookback - 1 + latency)
+        if tradable <= 0 or len(day.timestamps) < 2:
+            continue
+        span = (day.timestamps[-1] - day.timestamps[0]).total_seconds()
+        if span <= 0:
+            continue
+        total_steps += tradable * max(day.row_multiplier, 1)
+        total_seconds += span
+    if total_steps <= 0 or total_seconds <= 0:
+        return fallback
+    steps_per_second = total_steps / total_seconds
+    return max(8, int(round(target_seconds * steps_per_second)))
 
 
 def fit_lob_normalizer(days: Iterable[DayData]) -> tuple[np.ndarray, np.ndarray]:

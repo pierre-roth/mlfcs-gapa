@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 
@@ -12,7 +11,7 @@ from .config import RLTrainConfig
 from .data import DayData
 from .env import MarketMakingEnv
 from .models import ContinuousActorCritic, SharedStateEncoder, build_backbone
-from .pipeline import load_symbol_splits, prepare_run, save_episode_results, summarize_results
+from .pipeline import load_symbol_splits, prepare_run, resolve_symbol_rl_config, save_episode_results, summarize_results
 from .rl import train_ppo
 from .utils import ensure_dir, save_json
 
@@ -77,18 +76,26 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
     variant_name = config.variant_name()
     for symbol in config.symbols:
         splits = load_symbol_splits(config, symbol)
-        train_envs = [MarketMakingEnv(day, config, state_mode=config.state_mode, wo_lob_state=config.wo_lob_state, wo_dynamic_state=config.wo_dynamic_state, reward_mode=config.reward_mode) for day in splits["train"]]
-        eval_envs = [MarketMakingEnv(day, config, state_mode=config.state_mode, wo_lob_state=config.wo_lob_state, wo_dynamic_state=config.wo_dynamic_state, reward_mode=config.reward_mode) for day in splits["test"]]
-        encoder = _build_encoder(config, splits["train"], symbol)
+        symbol_cfg = resolve_symbol_rl_config(config, splits["train"])
+        train_envs = [
+            MarketMakingEnv(day, symbol_cfg, state_mode=symbol_cfg.state_mode, wo_lob_state=symbol_cfg.wo_lob_state, wo_dynamic_state=symbol_cfg.wo_dynamic_state, reward_mode=symbol_cfg.reward_mode)
+            for day in splits["train"]
+        ]
+        eval_envs = [
+            MarketMakingEnv(day, symbol_cfg, state_mode=symbol_cfg.state_mode, wo_lob_state=symbol_cfg.wo_lob_state, wo_dynamic_state=symbol_cfg.wo_dynamic_state, reward_mode=symbol_cfg.reward_mode)
+            for day in splits["test"]
+        ]
+        encoder = _build_encoder(symbol_cfg, splits["train"], symbol)
         symbol_dir = ensure_dir(out_dir / symbol / config.algorithm / variant_name)
         model = ContinuousActorCritic(encoder)
-        model, history, train_runtime = train_ppo(train_envs, model, config)
+        model, history, train_runtime = train_ppo(train_envs, model, symbol_cfg)
         torch.save(model.state_dict(), symbol_dir / "model.pt")
         trained = model
         pd.DataFrame(history).to_csv(symbol_dir / "history.csv", index=False)
-        results, eval_runtime = evaluate_rl_model(eval_envs, trained, config, output_dir=symbol_dir, method_name=config.method_name())
+        results, eval_runtime = evaluate_rl_model(eval_envs, trained, symbol_cfg, output_dir=symbol_dir, method_name=symbol_cfg.method_name())
         frame = save_episode_results(symbol_dir / "episodes.csv", results)
         summary = summarize_results(frame)
+        summary["episode_length"] = int(symbol_cfg.episode_length)
         summary.update(train_runtime)
         summary.update(eval_runtime)
         save_json(symbol_dir / "summary.json", summary)

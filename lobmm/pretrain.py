@@ -133,8 +133,17 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
                 max_samples_per_day=max(512, (config.max_pretrain_samples_per_day or 512) // 4),
             )
             pin_memory = config.device == "cuda"
-            train_loader = DataLoader(train_ds, batch_size=config.pretrain_batch_size, shuffle=True, pin_memory=pin_memory)
-            val_loader = DataLoader(val_ds, batch_size=config.pretrain_batch_size, pin_memory=pin_memory)
+            loader_kwargs = {
+                "batch_size": config.pretrain_batch_size,
+                "pin_memory": pin_memory,
+                "num_workers": config.pretrain_num_workers,
+            }
+            if config.pretrain_num_workers > 0:
+                loader_kwargs["persistent_workers"] = True
+                if config.pretrain_prefetch_factor is not None:
+                    loader_kwargs["prefetch_factor"] = config.pretrain_prefetch_factor
+            train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)
+            val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)
             backbone = build_backbone(config.pretrain_backbone, config.lookback).to(config.device)
             model = PretrainClassifier(backbone).to(config.device)
             optimizer = Adam(model.parameters(), lr=config.pretrain_lr)

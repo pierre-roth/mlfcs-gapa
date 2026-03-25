@@ -6,7 +6,7 @@ import json
 from lobmm.config import ExperimentConfig, PretrainConfig, RLTrainConfig
 from lobmm.evaluate import run_evaluation
 from lobmm.env import MarketMakingEnv
-from lobmm.pipeline import load_symbol_splits, prepare_run
+from lobmm.pipeline import load_symbol_splits, prepare_run, resolve_symbol_rl_config
 from lobmm.pretrain import run_pretrain
 from lobmm.report import run_report
 from lobmm.train_rl import run_rl_training
@@ -16,7 +16,9 @@ def test_mode_defaults_keep_method_shape() -> None:
     smoke_cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
     assert smoke_cfg.pretrain_backbone == "attn"
     assert smoke_cfg.episode_length == 2000
-    assert smoke_cfg.device in {"cpu", "cuda", "mps"}
+    assert smoke_cfg.device in {"cpu", "cuda"}
+    assert smoke_cfg.quote_scale_mode == "bps"
+    assert smoke_cfg.target_episode_seconds == 120
 
     medium_cfg = RLTrainConfig(mode="medium", symbols=["AAPL"]).apply_mode_defaults()
     assert medium_cfg.train_days == 4
@@ -32,6 +34,9 @@ def test_mode_defaults_keep_method_shape() -> None:
     assert medium_cfg.ppo_minibatch_size == 256
 
     full_cfg = RLTrainConfig(mode="full", symbols=["AAPL"]).apply_mode_defaults()
+    assert full_cfg.train_days == 7
+    assert full_cfg.val_days == 1
+    assert full_cfg.test_days == 2
     assert full_cfg.max_rows_per_day is None
     assert full_cfg.max_pretrain_samples_per_day is None
     assert full_cfg.max_train_episodes_per_day is None
@@ -49,6 +54,8 @@ def test_load_symbol_splits_smoke() -> None:
         assert sample.lob.shape[1] == 40
         assert sample.dynamic.shape[1] == 24
         assert sample.normalized_lob is not None
+        assert sample.timestamps[0].strftime("%H:%M:%S") >= "10:00:00"
+        assert sample.timestamps[-1].strftime("%H:%M:%S") < "15:30:00"
 
 
 def test_env_one_step_smoke() -> None:
@@ -76,12 +83,44 @@ def test_selected_episodes_spread_across_day() -> None:
     assert selected[-1] == episodes[-1]
 
 
+def test_symbol_episode_length_targets_about_two_minutes() -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+    splits = load_symbol_splits(cfg, "AAPL")
+    resolved = resolve_symbol_rl_config(cfg, splits["train"])
+    assert 25_000 <= resolved.episode_length <= 120_000
+
+
+def test_bps_quotes_scale_with_midprice() -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+    splits = load_symbol_splits(cfg, "AAPL")
+    resolved = resolve_symbol_rl_config(cfg, splits["train"])
+    env = MarketMakingEnv(splits["train"][0], resolved)
+    span = env.available_episodes()[0]
+    env.reset(span)
+    quote_idx = max(int(env.episode_decisions[env.step_cursor] - env.config.latency), env.config.lookback - 1)
+    orders = env.action_to_orders([1.0, 1.0], quote_idx)
+    expected = float(env.day.midprice[quote_idx]) * resolved.max_spread_bps * 1e-4
+    assert abs(orders["spread"] - expected) <= 0.03
+
+
+def test_inventory_penalty_is_normalized_to_limit() -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+    splits = load_symbol_splits(cfg, "AAPL")
+    env = MarketMakingEnv(splits["train"][0], cfg)
+    span = env.available_episodes()[0]
+    env.reset(span)
+    env.inventory = cfg.max_inventory * cfg.trade_unit
+    reward = env._reward([], float(env.day.midprice[env.episode_decisions[0]]))
+    assert abs(reward + cfg.zeta) < 1e-6
+
+
 def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
     pre_cfg = PretrainConfig(
         mode="smoke",
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="test_run",
+        use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
         max_pretrain_samples_per_day=256,
@@ -95,6 +134,9 @@ def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
         run_name="test_run",
         algorithm="ppo",
         state_mode="full",
+        use_stable_hours=False,
+        target_episode_seconds=None,
+        episode_length=512,
         ppo_epochs=1,
         max_rows_per_day=4_000,
         max_train_episodes_per_day=1,
@@ -111,6 +153,7 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="variant_run",
+        use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
         max_pretrain_samples_per_day=256,
@@ -123,6 +166,9 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         run_name="variant_run",
         algorithm="ppo",
         state_mode="full",
+        use_stable_hours=False,
+        target_episode_seconds=None,
+        episode_length=512,
         ppo_epochs=1,
         max_rows_per_day=4_000,
         max_train_episodes_per_day=1,
@@ -136,6 +182,9 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         algorithm="ppo",
         state_mode="full",
         wo_lob_state=True,
+        use_stable_hours=False,
+        target_episode_seconds=None,
+        episode_length=512,
         ppo_epochs=1,
         max_rows_per_day=4_000,
         max_train_episodes_per_day=1,
@@ -153,6 +202,7 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="report_run",
+        use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
         max_pretrain_samples_per_day=256,
@@ -165,6 +215,9 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
         run_name="report_run",
         algorithm="ppo",
         state_mode="full",
+        use_stable_hours=False,
+        target_episode_seconds=None,
+        episode_length=512,
         ppo_epochs=1,
         max_rows_per_day=4_000,
         max_train_episodes_per_day=1,

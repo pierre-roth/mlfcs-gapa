@@ -38,6 +38,16 @@ class MarketMakingEnv:
             raise RuntimeError(f"No tradable indices for {day.symbol} {day.day}")
         self.num_discrete_actions = 8
 
+    def spawn(self) -> "MarketMakingEnv":
+        return MarketMakingEnv(
+            self.day,
+            self.config,
+            state_mode=self.state_mode,
+            wo_lob_state=self.wo_lob_state,
+            wo_dynamic_state=self.wo_dynamic_state,
+            reward_mode=self.reward_mode,
+        )
+
     def _episode_ranges(self) -> list[tuple[int, int]]:
         length = self.config.episode_length
         segments = []
@@ -102,8 +112,15 @@ class MarketMakingEnv:
 
     def _continuous_orders(self, action: np.ndarray, quote_idx: int) -> dict[str, float]:
         mid = float(self.day.midprice[quote_idx])
-        bias = float(np.clip(action[0], 0.0, 1.0)) * self.config.max_bias
-        spread = max(self.config.tick_size, float(np.clip(action[1], 0.0, 1.0)) * self.config.max_spread)
+        if self.config.quote_scale_mode == "bps":
+            bias = float(np.clip(action[0], 0.0, 1.0)) * self.config.max_bias_bps * 1e-4 * mid
+            spread = max(
+                self.config.tick_size,
+                float(np.clip(action[1], 0.0, 1.0)) * self.config.max_spread_bps * 1e-4 * mid,
+            )
+        else:
+            bias = float(np.clip(action[0], 0.0, 1.0)) * self.config.max_bias
+            spread = max(self.config.tick_size, float(np.clip(action[1], 0.0, 1.0)) * self.config.max_spread)
         sign = 0.0 if self.inventory == 0 else np.sign(self.inventory)
         reservation = mid - sign * bias
         ask_price, bid_price = price_legal_check(reservation + spread / 2, reservation - spread / 2, self.config.tick_size)
@@ -170,16 +187,18 @@ class MarketMakingEnv:
         if volume == 0 or price == 0:
             return []
         trades = self.day.trades_by_index.get(event_idx)
-        if trades is None or trades.empty:
+        if trades is None or trades.price.size == 0:
             return []
-        if "aggressor_side" in trades.columns:
+        traded_prices = trades.price
+        traded_sizes = trades.size
+        if trades.aggressor_side is not None:
             desired_side = "B" if side == "ask" else "A"
-            trades = trades[trades["aggressor_side"].eq(desired_side)]
-            if trades.empty:
+            side_mask = trades.aggressor_side == desired_side
+            if not np.any(side_mask):
                 return []
+            traded_prices = traded_prices[side_mask]
+            traded_sizes = traded_sizes[side_mask]
         fills: list[tuple[float, float]] = []
-        traded_prices = trades["price"].to_numpy(dtype=np.float32)
-        traded_sizes = trades["size"].to_numpy(dtype=np.float32)
         if side == "ask":
             book_cross_price = float(self.day.bid1[event_idx])
             signed_volume = -abs(volume)
@@ -218,7 +237,8 @@ class MarketMakingEnv:
         pnl_delta = self.value - self.value_prev
         dampened = pnl_delta - max(0.0, self.config.eta * pnl_delta)
         trading = sum(volume * (midprice - price) for price, volume in fills)
-        inventory_penalty = self.config.zeta * (self.inventory / max(self.config.trade_unit, 1)) ** 2
+        inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
+        inventory_penalty = self.config.zeta * (self.inventory / inv_limit) ** 2
         self.value_prev = self.value
         if self.reward_mode == "pnl":
             return float(pnl_delta)

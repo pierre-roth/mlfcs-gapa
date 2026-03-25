@@ -62,6 +62,19 @@ class ReplayItem:
     done: bool
 
 
+@dataclass
+class _PendingEpisode:
+    env: MarketMakingEnv
+    span: tuple[int, int]
+
+
+@dataclass
+class _ActiveEpisode:
+    env: MarketMakingEnv
+    obs: Observation
+    episode_reward: float = 0.0
+
+
 class ReplayBuffer:
     def __init__(self, capacity: int) -> None:
         self.buffer: deque[ReplayItem] = deque(maxlen=capacity)
@@ -91,34 +104,53 @@ def train_ppo(
     for epoch in range(config.ppo_epochs):
         rollouts: list[tuple[Observation, np.ndarray, float, float, float, bool]] = []
         rewards_epoch = []
+        pending: deque[_PendingEpisode] = deque()
         for env in envs:
-            for episode_index, span in enumerate(env.selected_episodes(config.max_train_episodes_per_day)):
-                obs = env.reset(span)
-                done = False
-                episode_rewards = []
-                while not done:
-                    lob_t, flat_t = _obs_to_tensors([obs], device)
-                    dist, value = model.dist_value(lob_t, flat_t)
-                    action = _sample_continuous_action(dist, device)
-                    log_prob = dist.log_prob(action).sum(dim=-1)
-                    next_obs, reward, done, _ = env.step(action.squeeze(0).detach().cpu().numpy())
-                    rollouts.append(
-                        (
-                            obs,
-                            action.squeeze(0).detach().cpu().numpy(),
-                            float(log_prob.item()),
-                            float(value.item()),
-                            float(reward),
-                            done,
-                        )
+            for span in env.selected_episodes(config.max_train_episodes_per_day):
+                pending.append(_PendingEpisode(env=env.spawn(), span=span))
+        max_active = max(1, config.ppo_rollouts_per_epoch)
+        active: list[_ActiveEpisode] = []
+        while pending or active:
+            while pending and len(active) < max_active:
+                episode = pending.popleft()
+                active.append(_ActiveEpisode(env=episode.env, obs=episode.env.reset(episode.span)))
+            if not active:
+                break
+            obs_batch = [episode.obs for episode in active]
+            with torch.no_grad():
+                lob_t, flat_t = _obs_to_tensors(obs_batch, device)
+                dist, value = model.dist_value(lob_t, flat_t)
+                action = _sample_continuous_action(dist, device)
+                log_prob = dist.log_prob(action).sum(dim=-1)
+            actions = action.detach().cpu().numpy()
+            log_probs = log_prob.detach().cpu().numpy()
+            values_mb = value.detach().cpu().numpy()
+            next_active: list[_ActiveEpisode] = []
+            for idx, episode in enumerate(active):
+                obs = episode.obs
+                next_obs, reward, done, _ = episode.env.step(actions[idx])
+                rollouts.append(
+                    (
+                        obs,
+                        actions[idx],
+                        float(log_probs[idx]),
+                        float(values_mb[idx]),
+                        float(reward),
+                        done,
                     )
-                    episode_rewards.append(float(reward))
-                    obs = next_obs
-                    total_steps += 1
-                rewards_epoch.append(float(np.sum(episode_rewards)))
+                )
+                episode.episode_reward += float(reward)
+                total_steps += 1
+                if done:
+                    rewards_epoch.append(float(episode.episode_reward))
+                else:
+                    episode.obs = next_obs
+                    next_active.append(episode)
+            active = next_active
         if not rollouts:
             break
 
+        model.train()
         rewards = rewards_epoch or [0.0]
         obs_list = [item[0] for item in rollouts]
         actions = np.stack([item[1] for item in rollouts]).astype(np.float32)
@@ -151,7 +183,7 @@ def train_ppo(
                 value_loss = F.mse_loss(value, ret_mb)
                 entropy = dist.entropy().mean()
                 loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
