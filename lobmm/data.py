@@ -423,6 +423,7 @@ class PretrainDataset(Dataset):
         self.lookback = lookback
         self.samples: list[tuple[int, int]] = []
         self.labels: list[np.ndarray] = []
+        self.sample_labels: list[int] = []
         for day_idx, day in enumerate(days):
             labels = _midprice_labels(day.midprice, horizon, alpha)
             valid = day.valid_label_indices(lookback, horizon)
@@ -432,7 +433,15 @@ class PretrainDataset(Dataset):
                 valid = valid[::stride][:max_samples_per_day]
             for idx in valid:
                 self.samples.append((day_idx, int(idx)))
+                self.sample_labels.append(int(labels[idx]))
             self.labels.append(labels)
+        self.sample_labels_np = np.asarray(self.sample_labels, dtype=np.int64)
+
+    def class_counts(self) -> dict[int, int]:
+        if self.sample_labels_np.size == 0:
+            return {0: 0, 1: 0, 2: 0}
+        counts = np.bincount(self.sample_labels_np, minlength=3)
+        return {label: int(counts[label]) for label in range(3)}
 
     def __len__(self) -> int:
         return len(self.samples)

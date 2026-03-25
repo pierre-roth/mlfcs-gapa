@@ -33,6 +33,9 @@ class ExperimentConfig:
     pretrain_batch_size: int = 128
     pretrain_num_workers: int = 0
     pretrain_prefetch_factor: int | None = None
+    pretrain_balance_mode: str = "weighted_loss"
+    pretrain_sampler_power: float = 1.0
+    pretrain_eval_samples_per_day: int | None = None
     pretrain_lr: float = 1e-3
     pretrain_checkpoint_seconds: int = 600
     pretrain_resume: bool = True
@@ -83,6 +86,8 @@ class ExperimentConfig:
             self.max_train_episodes_per_day = self.max_train_episodes_per_day or 1
             self.pretrain_epochs = min(self.pretrain_epochs, 2)
             self.pretrain_batch_size = min(self.pretrain_batch_size, 64)
+            if self.pretrain_eval_samples_per_day is None:
+                self.pretrain_eval_samples_per_day = 1_024
             self.ppo_epochs = min(self.ppo_epochs, 2)
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 2)
             self.ppo_updates = min(self.ppo_updates, 1)
@@ -103,6 +108,8 @@ class ExperimentConfig:
             self.pretrain_epochs = min(self.pretrain_epochs, 4)
             if self.pretrain_batch_size == 128:
                 self.pretrain_batch_size = 256
+            if self.pretrain_eval_samples_per_day is None:
+                self.pretrain_eval_samples_per_day = 12_500
             self.ppo_epochs = min(self.ppo_epochs, 4)
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 4)
             self.ppo_updates = min(self.ppo_updates, 1)
@@ -119,6 +126,9 @@ class ExperimentConfig:
             self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day
             self.max_eval_episodes_per_day = self.max_eval_episodes_per_day
             self.max_train_episodes_per_day = self.max_train_episodes_per_day
+        if self.pretrain_eval_samples_per_day is None:
+            base = self.max_pretrain_samples_per_day or 100_000
+            self.pretrain_eval_samples_per_day = max(4_096, base // 4)
         self.device = self._resolve_device()
         return self
 

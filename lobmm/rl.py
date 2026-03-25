@@ -19,8 +19,10 @@ def _obs_to_tensors(obs_batch: list[Observation], device: str) -> tuple[torch.Te
     if obs_batch[0].lob is None:
         lob = None
     else:
-        lob = torch.tensor(np.stack([obs.lob for obs in obs_batch]), dtype=torch.float32, device=device)
-    flat = torch.tensor(np.stack([obs.flat for obs in obs_batch]), dtype=torch.float32, device=device)
+        lob_np = np.stack([obs.lob for obs in obs_batch]).astype(np.float32, copy=False)
+        lob = torch.from_numpy(lob_np).to(device=device, non_blocking=device == "cuda")
+    flat_np = np.stack([obs.flat for obs in obs_batch]).astype(np.float32, copy=False)
+    flat = torch.from_numpy(flat_np).to(device=device, non_blocking=device == "cuda")
     return lob, flat
 
 

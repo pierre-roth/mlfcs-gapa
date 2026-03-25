@@ -19,6 +19,8 @@ def test_mode_defaults_keep_method_shape() -> None:
     assert smoke_cfg.device in {"cpu", "cuda"}
     assert smoke_cfg.quote_scale_mode == "bps"
     assert smoke_cfg.target_episode_seconds == 120
+    assert smoke_cfg.pretrain_balance_mode == "weighted_loss"
+    assert smoke_cfg.pretrain_eval_samples_per_day == 1_024
 
     medium_cfg = RLTrainConfig(mode="medium", symbols=["AAPL"]).apply_mode_defaults()
     assert medium_cfg.train_days == 4
@@ -32,6 +34,7 @@ def test_mode_defaults_keep_method_shape() -> None:
     assert medium_cfg.ppo_epochs == 4
     assert medium_cfg.pretrain_batch_size == 256
     assert medium_cfg.ppo_minibatch_size == 256
+    assert medium_cfg.pretrain_eval_samples_per_day == 12_500
 
     full_cfg = RLTrainConfig(mode="full", symbols=["AAPL"]).apply_mode_defaults()
     assert full_cfg.train_days == 7
@@ -127,6 +130,10 @@ def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
     ).apply_mode_defaults()
     pre_result = run_pretrain(pre_cfg)
     assert "AAPL" in pre_result
+    pre_summary = json.loads((tmp_path / "test_run" / "AAPL" / "pretrain" / "summary.json").read_text())
+    assert pre_summary["pretrain_balance_mode"] == "weighted_loss"
+    assert set(pre_summary["split_metrics"].keys()) == {"train", "val", "test"}
+    assert len(pre_summary["class_weights"]) == 3
     ppo_cfg = RLTrainConfig(
         mode="smoke",
         symbols=["AAPL"],
