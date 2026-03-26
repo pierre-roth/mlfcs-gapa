@@ -78,7 +78,12 @@ class MarketMakingEnv:
         self.turnover = 0.0
         self.trades = 0
         self.rewards = 0.0
+        self.fill_steps = 0
         self.quote_spreads: list[float] = []
+        self.quote_spreads_bps: list[float] = []
+        self.quote_biases_bps: list[float] = []
+        self.ask_distance_bps: list[float] = []
+        self.bid_distance_bps: list[float] = []
         self.inventory_history: list[float] = []
         self.step_logs: list[dict[str, float]] = []
         return self._build_observation(self.episode_decisions[self.step_cursor] - self.config.latency)
@@ -257,12 +262,26 @@ class MarketMakingEnv:
         fills.extend(self._match_one_side(event_idx, "bid", float(orders["bid_price"]), float(abs(orders["bid_volume"]))))
         self.quote_spreads.append(float(orders.get("spread", 0.0)))
         midprice = float(self.day.midprice[event_idx])
+        ask_distance_bps = 1e4 * (float(orders["ask_price"]) - midprice) / max(midprice, 1e-8) if orders["ask_price"] > 0 else 0.0
+        bid_distance_bps = 1e4 * (midprice - float(orders["bid_price"])) / max(midprice, 1e-8) if orders["bid_price"] > 0 else 0.0
+        spread_bps = 1e4 * float(orders.get("spread", 0.0)) / max(midprice, 1e-8)
+        if orders["ask_price"] > 0 and orders["bid_price"] > 0:
+            reservation = 0.5 * (float(orders["ask_price"]) + float(orders["bid_price"]))
+            bias_bps = 1e4 * (reservation - midprice) / max(midprice, 1e-8)
+        else:
+            bias_bps = 0.0
+        self.quote_spreads_bps.append(float(spread_bps))
+        self.quote_biases_bps.append(float(bias_bps))
+        self.ask_distance_bps.append(float(ask_distance_bps))
+        self.bid_distance_bps.append(float(bid_distance_bps))
 
         for price, volume in fills:
             self.inventory += volume
             self.cash -= volume * price
             self.turnover += abs(volume * price)
             self.trades += 1
+        if fills:
+            self.fill_steps += 1
 
         self.value = self.cash + self.inventory * midprice
         reward = self._reward(fills, midprice)
@@ -275,6 +294,11 @@ class MarketMakingEnv:
                 "inventory": float(self.inventory),
                 "ask_quote": float(orders["ask_price"]),
                 "bid_quote": float(orders["bid_price"]),
+                "spread_bps": float(spread_bps),
+                "bias_bps": float(bias_bps),
+                "ask_distance_bps": float(ask_distance_bps),
+                "bid_distance_bps": float(bid_distance_bps),
+                "fills": float(len(fills)),
                 "reward": reward,
                 "cash": float(self.cash),
                 "value": float(self.value),
@@ -322,6 +346,11 @@ class MarketMakingEnv:
             reward=float(self.rewards),
             trades=int(self.trades),
             latency=latency if latency is not None else self.config.latency,
+            fill_rate=float(self.fill_steps / max(len(self.episode_decisions), 1)),
+            avg_bias_bps=float(np.mean(self.quote_biases_bps)) if self.quote_biases_bps else 0.0,
+            avg_ask_distance_bps=float(np.mean(self.ask_distance_bps)) if self.ask_distance_bps else 0.0,
+            avg_bid_distance_bps=float(np.mean(self.bid_distance_bps)) if self.bid_distance_bps else 0.0,
+            avg_spread_bps=float(np.mean(self.quote_spreads_bps)) if self.quote_spreads_bps else 0.0,
         )
 
     def episode_trace(self) -> pd.DataFrame:

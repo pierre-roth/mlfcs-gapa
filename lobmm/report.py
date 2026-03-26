@@ -57,6 +57,11 @@ RESULT_COLUMNS = {
     "reward",
     "trades",
     "latency",
+    "fill_rate",
+    "avg_bias_bps",
+    "avg_ask_distance_bps",
+    "avg_bid_distance_bps",
+    "avg_spread_bps",
 }
 
 
@@ -182,6 +187,27 @@ def _save_runtime_table(out_dir: Path, report_dir: Path) -> None:
     frame.to_csv(report_dir / "runtime_summary.csv", index=False)
     display = frame[["symbol", "display_method", "inference_ms_per_step", "train_ms_per_step"]].rename(columns={"display_method": "method"})
     _save_markdown_table(display, report_dir / "runtime_summary.md")
+
+
+def _save_policy_diagnostics(combined: pd.DataFrame, report_dir: Path) -> None:
+    columns = [
+        "fill_rate",
+        "avg_bias_bps",
+        "avg_ask_distance_bps",
+        "avg_bid_distance_bps",
+        "avg_spread_bps",
+    ]
+    available = [column for column in columns if column in combined.columns]
+    if not available:
+        return
+    frame = combined.groupby("method")[available].mean().reset_index()
+    frame["display_method"] = frame["method"].map(_display_name)
+    frame = frame.sort_values("method", key=lambda series: series.map(lambda value: _method_sort_key(value)[0]))
+    frame.to_csv(report_dir / "policy_diagnostics.csv", index=False)
+    _save_markdown_table(
+        frame[["display_method", *available]].rename(columns={"display_method": "method"}),
+        report_dir / "policy_diagnostics.md",
+    )
 
 
 def _training_curves(out_dir: Path, report_dir: Path) -> None:
@@ -367,6 +393,7 @@ def run_report(config: ExperimentConfig) -> Path:
     overall_summary, overall_formatted = _format_overall_results(combined)
     _save_overall_table(overall_summary, overall_formatted, report_dir)
     _save_runtime_table(out_dir, report_dir)
+    _save_policy_diagnostics(combined, report_dir)
 
     sns.set_theme(style="whitegrid")
     metrics = ["nd_pnl", "pnl_map", "profit_ratio", "sharpe"]

@@ -22,6 +22,11 @@ class EpisodeResult:
     reward: float
     trades: int
     latency: int
+    fill_rate: float = 0.0
+    avg_bias_bps: float = 0.0
+    avg_ask_distance_bps: float = 0.0
+    avg_bid_distance_bps: float = 0.0
+    avg_spread_bps: float = 0.0
 
     def to_dict(self) -> dict[str, float | int | str]:
         return asdict(self)

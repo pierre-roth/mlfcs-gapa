@@ -71,7 +71,7 @@ def save_episode_results(path: str | Path, results: Iterable[EpisodeResult]) -> 
 
 
 def summarize_results(frame: pd.DataFrame) -> dict[str, float]:
-    return {
+    summary = {
         "episodes": int(len(frame)),
         "pnl_mean": float(frame["pnl"].mean()) if not frame.empty else 0.0,
         "nd_pnl_mean": float(frame["nd_pnl"].mean()) if not frame.empty else 0.0,
@@ -79,6 +79,16 @@ def summarize_results(frame: pd.DataFrame) -> dict[str, float]:
         "profit_ratio_mean": float(frame["profit_ratio"].mean()) if not frame.empty else 0.0,
         "sharpe": sharpe(frame["pnl"].tolist()) if not frame.empty else 0.0,
     }
+    for column in [
+        "fill_rate",
+        "avg_bias_bps",
+        "avg_ask_distance_bps",
+        "avg_bid_distance_bps",
+        "avg_spread_bps",
+    ]:
+        if column in frame.columns:
+            summary[f"{column}_mean"] = float(frame[column].mean()) if not frame.empty else 0.0
+    return summary
 
 
 def evaluate_baseline_policy(

@@ -73,6 +73,9 @@ def test_env_one_step_smoke() -> None:
     assert isinstance(reward, float)
     assert "inventory" in info
     assert done in {True, False}
+    result = env.episode_result("test", 0)
+    assert hasattr(result, "fill_rate")
+    assert hasattr(result, "avg_spread_bps")
 
 
 def test_selected_episodes_spread_across_day() -> None:
@@ -238,6 +241,7 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
     assert "C-PPO" in (report_dir / "continuous_paper_table.md").read_text()
     assert (report_dir / "continuous_overall_results.md").exists()
     assert (report_dir / "runtime_summary.md").exists()
+    assert (report_dir / "policy_diagnostics.md").exists()
 
 
 def test_prepare_run_keeps_root_config_and_stage_snapshots(tmp_path: Path) -> None:
