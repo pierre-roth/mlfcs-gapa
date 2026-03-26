@@ -120,6 +120,7 @@ def evaluate_rl_model(
     inference_elapsed = 0.0
     for env in envs:
         for episode_index, span in enumerate(env.selected_episodes(config.max_eval_episodes_per_day)):
+            env.set_eval_context(episode_index)
             obs = env.reset(span)
             done = False
             attention_rows = []

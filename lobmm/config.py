@@ -52,6 +52,10 @@ class ExperimentConfig:
     eta: float = 0.5
     zeta: float = 0.01
     gamma: float = 0.99
+    normalize_advantages: bool = True
+    gradient_clip_norm: float = 1.0
+    deterministic_evaluation: bool = True
+    eval_seed_base: int = 20260326
     ppo_epochs: int = 10
     ppo_rollouts_per_epoch: int = 16
     ppo_updates: int = 2

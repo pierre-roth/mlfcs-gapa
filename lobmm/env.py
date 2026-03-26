@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,8 @@ class MarketMakingEnv:
         if len(self.decision_indices) == 0:
             raise RuntimeError(f"No tradable indices for {day.symbol} {day.day}")
         self.num_discrete_actions = 8
+        self.eval_episode_index: int | None = None
+        self.eval_context_key: str | None = None
 
     def spawn(self) -> "MarketMakingEnv":
         return MarketMakingEnv(
@@ -67,9 +70,25 @@ class MarketMakingEnv:
         indices = np.linspace(0, len(episodes) - 1, num=limit, dtype=np.int64)
         return [episodes[int(idx)] for idx in indices]
 
+    def set_eval_context(self, episode_index: int | None) -> None:
+        self.eval_episode_index = episode_index
+
     def reset(self, episode_span: tuple[int, int]) -> Observation:
         self.episode_span = episode_span
         self.episode_decisions = self.decision_indices[episode_span[0] : episode_span[1]]
+        self.eval_context_key = None
+        if self.config.deterministic_evaluation and self.eval_episode_index is not None:
+            self.eval_context_key = "|".join(
+                [
+                    str(self.config.eval_seed_base),
+                    self.day.symbol,
+                    self.day.day,
+                    str(self.eval_episode_index),
+                    str(episode_span[0]),
+                    str(episode_span[1]),
+                    str(self.config.latency),
+                ]
+            )
         self.step_cursor = 0
         self.inventory = 0
         self.cash = 0.0
@@ -188,6 +207,14 @@ class MarketMakingEnv:
             orders["ask_volume"] = 0.0
         return orders
 
+    def _fill_draw(self, event_idx: int, side: str, price: float) -> float:
+        if self.eval_context_key is None:
+            return float(np.random.random())
+        tick_index = int(round(price / max(self.config.tick_size, 1e-8)))
+        key = f"{self.eval_context_key}|{event_idx}|{side}|{tick_index}"
+        digest = hashlib.blake2b(key.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, byteorder="big", signed=False) / float(1 << 64)
+
     def _match_one_side(self, event_idx: int, side: str, price: float, volume: float) -> list[tuple[float, float]]:
         if volume == 0 or price == 0:
             return []
@@ -218,7 +245,7 @@ class MarketMakingEnv:
                 exact_volume = float(traded_sizes[exact].sum())
                 depth = self._level_volume(event_idx, "ask", price)
                 probability = exact_volume / max(exact_volume + depth, 1e-8)
-                if np.random.random() < probability:
+                if self._fill_draw(event_idx, side, price) < probability:
                     fills.append((price, signed_volume))
         else:
             book_cross_price = float(self.day.ask1[event_idx])
@@ -234,19 +261,23 @@ class MarketMakingEnv:
                 exact_volume = float(traded_sizes[exact].sum())
                 depth = self._level_volume(event_idx, "bid", price)
                 probability = exact_volume / max(exact_volume + depth, 1e-8)
-                if np.random.random() < probability:
+                if self._fill_draw(event_idx, side, price) < probability:
                     fills.append((price, signed_volume))
         return fills
 
-    def _reward(self, fills: list[tuple[float, float]], midprice: float) -> float:
+    def _reward(self, fills: list[tuple[float, float]], midprice: float, terminal_flatten: bool = False) -> float:
         pnl_delta = self.value - self.value_prev
         dampened = pnl_delta - max(0.0, self.config.eta * pnl_delta)
-        trading = sum(volume * (midprice - price) for price, volume in fills)
+        trading = 0.0 if terminal_flatten else sum(volume * (midprice - price) for price, volume in fills)
         inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
         inventory_penalty = self.config.zeta * (self.inventory / inv_limit) ** 2
         self.value_prev = self.value
         if self.reward_mode == "pnl":
             return float(pnl_delta)
+        if self.reward_mode == "pnl_inventory":
+            return float(pnl_delta - inventory_penalty)
+        if self.reward_mode == "hybrid_safe":
+            return float(pnl_delta + trading - inventory_penalty)
         reward = 0.0
         reward += dampened
         reward += trading
@@ -316,7 +347,7 @@ class MarketMakingEnv:
             self.turnover += abs(flatten_volume * flatten_price)
             self.trades += 1
             self.value = self.cash
-            flatten_reward = self._reward([(flatten_price, flatten_volume)], midprice)
+            flatten_reward = self._reward([(flatten_price, flatten_volume)], midprice, terminal_flatten=True)
             reward += flatten_reward
             self.rewards += flatten_reward
         next_obs = self._build_observation(max(quote_idx, self.config.lookback - 1)) if done else self._build_observation(max(int(self.episode_decisions[self.step_cursor] - self.config.latency), self.config.lookback - 1))

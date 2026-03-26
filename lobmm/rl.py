@@ -161,7 +161,8 @@ def train_ppo(
         reward_stream = [item[4] for item in rollouts]
         dones = [item[5] for item in rollouts]
         advantages, returns = _gae(reward_stream, values, dones, config.gamma, config.gae_lambda)
-        advantages = (advantages - advantages.mean()) / max(advantages.std(), 1e-6)
+        if config.normalize_advantages:
+            advantages = (advantages - advantages.mean()) / max(advantages.std(), 1e-6)
         actions_t = torch.tensor(actions, dtype=torch.float32)
         old_log_probs_t = torch.tensor(old_log_probs, dtype=torch.float32)
         adv_t = torch.tensor(advantages, dtype=torch.float32)
@@ -187,7 +188,8 @@ def train_ppo(
                 loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if config.gradient_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
                 optimizer.step()
         history.append({"epoch": epoch, "reward_mean": float(np.mean(rewards)), "reward_std": float(np.std(rewards))})
     elapsed = perf_counter() - started

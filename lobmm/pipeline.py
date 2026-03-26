@@ -106,6 +106,7 @@ def evaluate_baseline_policy(
         eval_cfg.latency = latency_value
         env = MarketMakingEnv(day, eval_cfg, state_mode="full", reward_mode=config.reward_mode)
         for episode_index, span in enumerate(env.selected_episodes(config.max_eval_episodes_per_day)):
+            env.set_eval_context(episode_index)
             env.reset(span)
             done = False
             while not done:
