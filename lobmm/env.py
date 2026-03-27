@@ -270,12 +270,23 @@ class MarketMakingEnv:
         dampened = pnl_delta - max(0.0, self.config.eta * pnl_delta)
         trading = 0.0 if terminal_flatten else sum(volume * (midprice - price) for price, volume in fills)
         inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
-        inventory_penalty = self.config.zeta * (self.inventory / inv_limit) ** 2
+        inv_norm = float(self.inventory / inv_limit)
+        progress = float(self.step_cursor / max(len(self.episode_decisions) - 1, 1))
+        inventory_penalty = self.config.zeta * inv_norm**2
         self.value_prev = self.value
         if self.reward_mode == "pnl":
             return float(pnl_delta)
         if self.reward_mode == "pnl_inventory":
             return float(pnl_delta - inventory_penalty)
+        if self.reward_mode == "pnl_inventory_ramp":
+            start = self.config.zeta_start if self.config.zeta_start is not None else self.config.zeta
+            end = self.config.zeta_end if self.config.zeta_end is not None else start
+            ramp_penalty = (start + (end - start) * progress**2) * inv_norm**2
+            return float(pnl_delta - ramp_penalty)
+        if self.reward_mode == "pnl_inventory_l1l2":
+            l2_coeff = self.config.zeta_l2 if self.config.zeta_l2 is not None else self.config.zeta
+            mixed_penalty = l2_coeff * inv_norm**2 + self.config.zeta_l1 * abs(inv_norm)
+            return float(pnl_delta - mixed_penalty)
         if self.reward_mode == "hybrid_safe":
             return float(pnl_delta + trading - inventory_penalty)
         reward = 0.0

@@ -41,7 +41,9 @@ def _build_encoder(config: RLTrainConfig, days: list[DayData], symbol: str):
     if not config.wo_lob_state and config.state_mode == "full":
         backbone_name = config.alt_backbone if config.wo_lob_state else config.pretrain_backbone
         backbone = build_backbone(backbone_name, config.lookback)
-        ckpt = Path(config.output_dir()) / symbol / "pretrain" / config.backbone_name
+        backbone_run_name = config.backbone_run_name or config.run_name
+        backbone_root = Path(config.output_root) / backbone_run_name if backbone_run_name else config.output_dir()
+        ckpt = backbone_root / symbol / "pretrain" / config.backbone_name
         if ckpt.exists():
             state_dict = torch.load(ckpt, map_location="cpu")
             _load_matching_state_dict(backbone, state_dict)

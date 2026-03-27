@@ -51,6 +51,10 @@ class ExperimentConfig:
     max_spread_bps: float = 8.0
     eta: float = 0.5
     zeta: float = 0.01
+    zeta_start: float | None = None
+    zeta_end: float | None = None
+    zeta_l1: float = 0.0
+    zeta_l2: float | None = None
     gamma: float = 0.99
     normalize_advantages: bool = True
     gradient_clip_norm: float = 1.0
@@ -163,6 +167,7 @@ class RLTrainConfig(ExperimentConfig):
     state_mode: str = "full"
     reward_mode: str = "hybrid"
     backbone_name: str = "attn_lob.pt"
+    backbone_run_name: str = ""
     backbone_trainable: bool = True
     wo_lob_state: bool = False
     wo_dynamic_state: bool = False

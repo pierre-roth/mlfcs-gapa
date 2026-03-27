@@ -35,6 +35,7 @@ Examples:
   RUN_NAME=euler_main SYMBOLS=AAPL,GOOGL cluster/submit_euler.sh pipeline
   RUN_NAME=euler_main cluster/submit_euler.sh pipeline-aapl
   RUN_NAME=euler_mid cluster/submit_euler.sh pipeline-aapl-medium
+  DEPENDENCY=afterok:<jobid> RUN_NAME=euler_train cluster/submit_euler.sh train
   RUN_NAME=euler_suite RUN_ABLATIONS=1 cluster/submit_euler.sh suite
 EOF
 }
@@ -99,7 +100,7 @@ resource_flags() {
 submit_stage() {
     local stage_name="$1"
     local script_name="$2"
-    local dependency="${3:-}"
+    local dependency="${3:-${DEPENDENCY:-}}"
     local symbols_csv="${4:-${SYMBOLS:-AAPL,GOOGL}}"
     local device="${5:-}"
 
