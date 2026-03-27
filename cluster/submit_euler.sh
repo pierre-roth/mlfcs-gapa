@@ -19,8 +19,8 @@ Usage:
 Environment overrides:
   RUN_NAME=...              Shared output run name. Recommended for multi-stage runs.
   SYMBOLS=AAPL,GOOGL        Comma-separated symbol list.
-  DATA_DIR=/cluster/...     Defaults to /cluster/scratch/$USER/data/processed
-  OUTPUT_ROOT=/cluster/...  Defaults to /cluster/scratch/$USER/artifacts
+  DATA_DIR=/cluster/...     Defaults to /cluster/work/math/$USER/mlfcs-gapa/data/processed
+  OUTPUT_ROOT=/cluster/...  Defaults to /cluster/project/math/$USER/mlfcs-gapa/artifacts
   MODE=full                 Defaults to full.
 
   PRETRAIN_TIME=2-00:00:00  Resource overrides per stage.
@@ -128,8 +128,8 @@ submit_stage() {
         RUN_NAME="${RUN_NAME:-}" \
         SYMBOLS="${symbols_csv}" \
         MODE="${MODE:-full}" \
-        DATA_DIR="${DATA_DIR:-/cluster/scratch/${USER}/data/processed}" \
-        OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/scratch/${USER}/artifacts}" \
+        DATA_DIR="${DATA_DIR:-/cluster/work/math/${USER}/mlfcs-gapa/data/processed}" \
+        OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/project/math/${USER}/mlfcs-gapa/artifacts}" \
         DEVICE="${device}" \
         sbatch "${flags[@]}" "cluster/${script_name}"
     )

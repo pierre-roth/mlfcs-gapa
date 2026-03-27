@@ -57,8 +57,8 @@ euler_activate_overlay_env() {
 
 euler_prepare_runtime_env() {
     export REPO_ROOT="${REPO_ROOT:-$(euler_repo_root)}"
-    export DATA_DIR="${DATA_DIR:-/cluster/scratch/${USER}/data/processed}"
-    export OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/scratch/${USER}/artifacts}"
+    export DATA_DIR="${DATA_DIR:-/cluster/work/math/${USER}/mlfcs-gapa/data/processed}"
+    export OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/project/math/${USER}/mlfcs-gapa/artifacts}"
     export MODE="${MODE:-full}"
     export PYTHONUNBUFFERED=1
     export MPLBACKEND=Agg

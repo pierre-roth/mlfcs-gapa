@@ -14,10 +14,16 @@ These scripts are designed for the ETH Euler cluster and default to the `ls_math
 The scripts do not require a `data/` symlink. By default they read from:
 
 ```bash
-/cluster/scratch/$USER/data/processed
+/cluster/work/math/$USER/mlfcs-gapa/data/processed
 ```
 
-Override that with `DATA_DIR=...` if needed.
+By default they write outputs to:
+
+```bash
+/cluster/project/math/$USER/mlfcs-gapa/artifacts
+```
+
+Override those with `DATA_DIR=...` or `OUTPUT_ROOT=...` if needed.
 
 ## Recommended usage
 
