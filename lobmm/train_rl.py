@@ -87,10 +87,31 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
             MarketMakingEnv(day, symbol_cfg, state_mode=symbol_cfg.state_mode, wo_lob_state=symbol_cfg.wo_lob_state, wo_dynamic_state=symbol_cfg.wo_dynamic_state, reward_mode=symbol_cfg.reward_mode)
             for day in splits["test"]
         ]
+        val_envs = [
+            MarketMakingEnv(day, symbol_cfg, state_mode=symbol_cfg.state_mode, wo_lob_state=symbol_cfg.wo_lob_state, wo_dynamic_state=symbol_cfg.wo_dynamic_state, reward_mode=symbol_cfg.reward_mode)
+            for day in splits["val"]
+        ]
         encoder = _build_encoder(symbol_cfg, splits["train"], symbol)
         symbol_dir = ensure_dir(out_dir / symbol / config.algorithm / variant_name)
         model = ContinuousActorCritic(encoder)
-        model, history, train_runtime = train_ppo(train_envs, model, symbol_cfg)
+        checkpoints_dir = symbol_dir / "checkpoints" if (symbol_cfg.ppo_checkpoint_every > 0 or symbol_cfg.ppo_select_best_model) else None
+
+        def select_fn(candidate: ContinuousActorCritic, epoch: int) -> dict[str, float] | None:
+            if not symbol_cfg.ppo_select_best_model or not val_envs:
+                return None
+            results, _ = evaluate_rl_model(val_envs, candidate, symbol_cfg, output_dir=None, method_name=f"{symbol_cfg.method_name()}_val")
+            frame = pd.DataFrame([result.to_dict() for result in results])
+            metrics = summarize_results(frame)
+            metrics["epoch"] = float(epoch)
+            return metrics
+
+        model, history, train_runtime = train_ppo(
+            train_envs,
+            model,
+            symbol_cfg,
+            checkpoint_dir=checkpoints_dir,
+            select_fn=select_fn,
+        )
         torch.save(model.state_dict(), symbol_dir / "model.pt")
         trained = model
         pd.DataFrame(history).to_csv(symbol_dir / "history.csv", index=False)

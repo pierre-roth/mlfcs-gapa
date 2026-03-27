@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
+from typing import Callable
 
 import numpy as np
 import torch
@@ -92,10 +94,16 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
+def _cpu_state_dict(module: nn.Module) -> dict[str, torch.Tensor]:
+    return {key: value.detach().cpu() for key, value in module.state_dict().items()}
+
+
 def train_ppo(
     envs: list[MarketMakingEnv],
     model: ContinuousActorCritic,
     config: RLTrainConfig,
+    checkpoint_dir: Path | None = None,
+    select_fn: Callable[[ContinuousActorCritic, int], dict[str, float] | None] | None = None,
 ) -> tuple[ContinuousActorCritic, list[dict[str, float]], dict[str, float]]:
     device = config.device
     model.to(device)
@@ -103,6 +111,12 @@ def train_ppo(
     history: list[dict[str, float]] = []
     total_steps = 0
     started = perf_counter()
+    best_metric = float("-inf")
+    best_epoch = -1
+    best_state: dict[str, torch.Tensor] | None = None
+    selection_metric = config.ppo_selection_metric
+    if checkpoint_dir is not None:
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
     for epoch in range(config.ppo_epochs):
         rollouts: list[tuple[Observation, np.ndarray, float, float, float, bool]] = []
         rewards_epoch = []
@@ -191,13 +205,31 @@ def train_ppo(
                 if config.gradient_clip_norm > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
                 optimizer.step()
-        history.append({"epoch": epoch, "reward_mean": float(np.mean(rewards)), "reward_std": float(np.std(rewards))})
+        epoch_summary = {"epoch": epoch, "reward_mean": float(np.mean(rewards)), "reward_std": float(np.std(rewards))}
+        if checkpoint_dir is not None and config.ppo_checkpoint_every > 0 and (epoch + 1) % config.ppo_checkpoint_every == 0:
+            torch.save(model.state_dict(), checkpoint_dir / f"epoch_{epoch:03d}.pt")
+        if select_fn is not None:
+            selection = select_fn(model, epoch)
+            if selection:
+                epoch_summary.update({f"val_{key}": float(value) for key, value in selection.items()})
+                metric_value = float(selection.get(selection_metric, float("-inf")))
+                if np.isfinite(metric_value) and metric_value > best_metric:
+                    best_metric = metric_value
+                    best_epoch = epoch
+                    best_state = _cpu_state_dict(model)
+        history.append(epoch_summary)
     elapsed = perf_counter() - started
+    if best_state is not None:
+        model.load_state_dict(best_state)
     runtime = {
         "train_steps": float(total_steps),
         "train_wall_time_sec": float(elapsed),
         "train_ms_per_step": float(1000.0 * elapsed / max(total_steps, 1)),
     }
+    if best_epoch >= 0:
+        runtime["selected_epoch"] = float(best_epoch)
+        runtime["selected_metric"] = float(best_metric)
+        runtime["selection_metric_name"] = selection_metric
     return model, history, runtime
 
 

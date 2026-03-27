@@ -67,6 +67,9 @@ class ExperimentConfig:
     ppo_lr: float = 3e-4
     ppo_clip: float = 0.2
     gae_lambda: float = 0.95
+    ppo_checkpoint_every: int = 0
+    ppo_select_best_model: bool = False
+    ppo_selection_metric: str = "pnl_mean"
     dqn_epochs: int = 10
     dqn_batches_per_epoch: int = 64
     dqn_batch_size: int = 128
