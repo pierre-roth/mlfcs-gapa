@@ -55,6 +55,50 @@ Copy this block for each new week.
 
 ---
 
+## Week of 2026-03-23
+
+### Weekly Snapshot
+
+- Overall status: The replication pipeline is stable on Euler, deterministic evaluation is in place, and the best current PPO setup is now close to the simple `AS` baseline on `AAPL`.
+- Main goal for the week: Tune the continuous RL setup for US data, move storage off scratch, and start a larger creative fork with bigger market-structure changes.
+- Biggest win: The stage-6 competitive quoting setup materially improved PPO and identified a credible default for larger runs.
+- Biggest risk or blocker: PPO still learns weak directional bias and the current `lobmm` environment likely remains mismatched to US microstructure.
+
+### Contributor Update: Pierre
+
+- Focus area: Euler training pipeline, RL tuning, environment realism, and experimental infrastructure.
+- Completed:
+  - Removed real-run downsampling by default, made the encoder trainable by default, aligned smoke/full more closely, and improved US-specific defaults in `lobmm/`.
+  - Simplified the baseline suite to primitive baselines, moved Euler data/artifacts/logs to permanent `work`/`project` storage, and updated the cluster defaults accordingly.
+  - Added resumable pretraining, deterministic evaluation, PPO checkpoint plumbing, policy diagnostics, and multiple Euler submission helpers.
+  - Ran the full tuning sequence on Euler from `medium` and `full` runs through stage-2/3/4/5/6 AAPL sweeps, then launched two larger stage-7 full runs and a new creative `lobmmx/` fork.
+  - Created `lobmmx/` as a sibling experimental package with random initial inventory, terminal inventory allowed, trading-edge reward, spread/tick-unit reward scaling, US-timescale features, decoupled directional vs inventory skew, multitask pretraining, maker/taker fees, and aggressive validation-time PPO checkpointing.
+  - Diagnosed and fixed a `lobmmx` Slurm dependency-ordering bug that had released creative `evaluate`/`report` jobs right after pretrain, then resubmitted corrected downstream jobs behind the still-running train jobs.
+- In progress:
+  - Stage-7 full runs on `AAPL+GOOGL` are running on Euler with the current best `lobmm` setup.
+  - The first `lobmmx` creative AAPL batch is running on Euler, with repaired `evaluate`/`report` jobs now queued behind the active train jobs.
+- Blocked:
+  - Current PPO still tends toward low directional bias, so further gains likely require environment/state changes rather than more standard hyperparameter tuning.
+- Next week:
+  - Compare the stage-7 full runs and the first `lobmmx` runs.
+  - Keep the best current-code setup as the exploitation path and iterate on `lobmmx` as the exploration path.
+- Relevant findings from runs:
+  - `euler_aapl_medium`: pipeline healthy; end-to-end runtime about `23.5m`.
+  - `euler_full_12h`: first full run failed in PPO due to CUDA OOM; fixed by moving only minibatches to GPU.
+  - `euler_full_tuned_24h`: stronger budget improved pretrain (`AAPL F1 0.687`, `GOOGL F1 0.610`) and made `GOOGL` slightly profitable, but still far from the paper.
+  - Stage-2 AAPL sweep: balanced pretraining solved the class-collapse issue; `ctrl`/`sampler` reached about `0.64` val/test F1, but PPO still trailed `AS`.
+  - Stage-3 AAPL sweep: better pretraining stayed stable, but PPO remained too passive; lowering `zeta` or freezing the backbone had little effect.
+  - Stage-4 AAPL sweep: `pnl_inventory` reward with `60s` episodes and much higher `gamma`/`GAE` worked best; `euler_aapl_stage4_pnlinv60_ultra` reached `pnl 0.01469`, `nd_pnl 0.13978`, `sharpe 0.3014`, close to `AS`.
+  - Stage-5 AAPL sweep: larger RL budget and extra reward shaping hurt; competitive quotes were the only promising change.
+  - Stage-6 AAPL sweep: stage-4-sized budget plus competitive quotes was the best current result; `euler_aapl_stage6_ultra_competitive_ckpt` reached `pnl 0.01406`, `nd_pnl 0.14454`, `sharpe 0.2576`, while the plain control lagged clearly.
+  - Global conclusion so far: competitive quote scales matter a lot, deterministic evaluation was necessary, pretraining is now good enough, and the remaining ceiling is probably environment/state realism rather than more generic PPO tuning.
+- Links:
+  - `lobmm/`
+  - `lobmmx/`
+  - `cluster/`
+  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/`
+  - `/cluster/work/math/piroth/mlfcs-gapa/data/processed/`
+
 ## Week of 2026-03-16
 
 ### Weekly Snapshot
