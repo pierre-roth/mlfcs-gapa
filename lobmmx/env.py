@@ -102,6 +102,7 @@ class MarketMakingEnv:
         else:
             start_units = 0
         self.inventory = float(start_units * self.config.trade_unit)
+        self.initial_inventory = float(self.inventory)
         self.cash = 0.0
         self.value = 0.0
         self.value_prev = 0.0
@@ -303,6 +304,8 @@ class MarketMakingEnv:
         inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
         inv_norm = float(self.inventory / inv_limit)
         progress = float(self.step_cursor / max(len(self.episode_decisions) - 1, 1))
+        if self.reward_mode == "trade_inventory":
+            return 0.0
         if self.reward_mode == "trade_inventory_ramp":
             start = self.config.zeta_start if self.config.zeta_start is not None else self.config.zeta
             end = self.config.zeta_end if self.config.zeta_end is not None else start
@@ -311,6 +314,13 @@ class MarketMakingEnv:
             l2_coeff = self.config.zeta_l2 if self.config.zeta_l2 is not None else self.config.zeta
             return float(l2_coeff * inv_norm**2 + self.config.zeta_l1 * abs(inv_norm))
         return float(self.config.zeta * inv_norm**2)
+
+    def _terminal_inventory_penalty(self, midprice: float, spread: float) -> float:
+        if self.inventory == 0:
+            return 0.0
+        reward_unit = self._reward_unit(midprice, spread)
+        liquidation_cost = abs(self.inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
+        return float(self.config.terminal_inventory_cost_scale * liquidation_cost / reward_unit)
 
     def step(self, action: np.ndarray | int | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
         event_idx = int(self.episode_decisions[self.step_cursor])
@@ -354,32 +364,11 @@ class MarketMakingEnv:
         trade_units = trade_edge_step / reward_unit
         self.trading_pnl_units += trade_units
         reward = float(trade_units - self._inventory_penalty())
-        self.rewards += reward
         self.inventory_history.append(float(self.inventory))
-        self.step_logs.append(
-            {
-                "timestamp": self.day.timestamps[event_idx],
-                "midprice": midprice,
-                "inventory": float(self.inventory),
-                "ask_quote": float(orders["ask_price"]),
-                "bid_quote": float(orders["bid_price"]),
-                "spread_bps": float(spread_bps),
-                "bias_bps": float(bias_bps),
-                "ask_distance_bps": float(ask_distance_bps),
-                "bid_distance_bps": float(bid_distance_bps),
-                "fills": float(len(fills)),
-                "reward": reward,
-                "trade_edge_dollars": float(trade_edge_step),
-                "trade_edge_units": float(trade_units),
-                "fees": float(fee_step),
-                "cash": float(self.cash),
-                "value": float(self.value),
-                "turnover": float(self.turnover),
-            }
-        )
 
         self.step_cursor += 1
         done = self.step_cursor >= len(self.episode_decisions)
+        terminal_penalty = 0.0
         if done and not self.config.allow_terminal_inventory and self.inventory != 0:
             flatten_price = float(self.day.bid1[event_idx] if self.inventory > 0 else self.day.ask1[event_idx])
             flatten_volume = -self.inventory
@@ -396,15 +385,47 @@ class MarketMakingEnv:
             self.trading_pnl_units += trade_units
             flatten_reward = float(trade_units)
             reward += flatten_reward
-            self.rewards += flatten_reward
             self.value = self.cash
+        elif done and self.config.allow_terminal_inventory and self.inventory != 0:
+            terminal_penalty = self._terminal_inventory_penalty(midprice, float(orders.get("spread", self.day.spread[event_idx])))
+            reward -= terminal_penalty
+
+        self.rewards += reward
+        self.step_logs.append(
+            {
+                "timestamp": self.day.timestamps[event_idx],
+                "midprice": midprice,
+                "inventory": float(self.inventory),
+                "initial_inventory": float(self.initial_inventory),
+                "ask_quote": float(orders["ask_price"]),
+                "bid_quote": float(orders["bid_price"]),
+                "spread_bps": float(spread_bps),
+                "bias_bps": float(bias_bps),
+                "ask_distance_bps": float(ask_distance_bps),
+                "bid_distance_bps": float(bid_distance_bps),
+                "fills": float(len(fills)),
+                "reward": reward,
+                "trade_edge_dollars": float(trade_edge_step),
+                "trade_edge_units": float(trade_units),
+                "terminal_inventory_penalty": float(terminal_penalty),
+                "fees": float(fee_step),
+                "cash": float(self.cash),
+                "value": float(self.value),
+                "turnover": float(self.turnover),
+            }
+        )
         next_obs = self._build_observation(max(quote_idx, self.config.lookback - 1)) if done else self._build_observation(max(int(self.episode_decisions[self.step_cursor] - self.config.latency), self.config.lookback - 1))
         return next_obs, reward, done, {"fills": len(fills), "inventory": float(self.inventory)}
 
     def episode_result(self, method: str, episode_index: int, latency: int | None = None) -> EpisodeResult:
         avg_spread = float(np.mean([spread for spread in self.quote_spreads if spread > 0])) if self.quote_spreads else 0.0
-        avg_position = float(np.mean(self.inventory_history)) if self.inventory_history else 0.0
-        avg_abs_position = float(np.mean(np.abs(self.inventory_history))) if self.inventory_history else 0.0
+        if self.inventory_history:
+            inventory_offsets = np.asarray(self.inventory_history, dtype=np.float64) - float(self.initial_inventory)
+            avg_position = float(np.mean(inventory_offsets))
+            avg_abs_position = float(np.mean(np.abs(inventory_offsets)))
+        else:
+            avg_position = 0.0
+            avg_abs_position = 0.0
         pnl = float(self.trading_pnl)
         nd_pnl = pnl / avg_spread if avg_spread > 0 else 0.0
         pnl_map = pnl / avg_abs_position if avg_abs_position > 0 else 0.0

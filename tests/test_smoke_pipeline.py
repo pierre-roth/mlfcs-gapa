@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import shutil
 
 from lobmm.config import ExperimentConfig, PretrainConfig, RLTrainConfig
 from lobmm.evaluate import run_evaluation
@@ -10,6 +11,24 @@ from lobmm.pipeline import load_symbol_splits, prepare_run, resolve_symbol_rl_co
 from lobmm.pretrain import run_pretrain
 from lobmm.report import run_report
 from lobmm.train_rl import run_rl_training
+
+
+def _test_data_dir(tmp_path: Path, symbols: list[str]) -> str:
+    full_root = Path("data/processed")
+    if all((full_root / symbol).exists() for symbol in symbols):
+        return str(full_root)
+    sample_root = Path("data/sample/AAPL/20260302")
+    if not sample_root.exists():
+        raise FileNotFoundError("Neither full processed data nor the tracked sample dataset is available.")
+    synthetic_root = tmp_path / "processed"
+    for symbol in symbols:
+        for day in ["20260302", "20260303", "20260304", "20260305"]:
+            target = synthetic_root / symbol / day
+            target.mkdir(parents=True, exist_ok=True)
+            for file in sample_root.iterdir():
+                if file.is_file():
+                    shutil.copy2(file, target / file.name)
+    return str(synthetic_root)
 
 
 def test_mode_defaults_keep_method_shape() -> None:
@@ -46,8 +65,9 @@ def test_mode_defaults_keep_method_shape() -> None:
     assert full_cfg.max_eval_episodes_per_day is None
 
 
-def test_load_symbol_splits_smoke() -> None:
-    cfg = ExperimentConfig(mode="smoke", symbols=["AAPL", "GOOGL"]).apply_mode_defaults()
+def test_load_symbol_splits_smoke(tmp_path: Path) -> None:
+    symbols = ["AAPL", "GOOGL"]
+    cfg = ExperimentConfig(mode="smoke", symbols=symbols, data_dir=_test_data_dir(tmp_path, symbols)).apply_mode_defaults()
     for symbol in cfg.symbols:
         splits = load_symbol_splits(cfg, symbol)
         assert len(splits["train"]) == 2
@@ -61,8 +81,8 @@ def test_load_symbol_splits_smoke() -> None:
         assert sample.timestamps[-1].strftime("%H:%M:%S") < "15:30:00"
 
 
-def test_env_one_step_smoke() -> None:
-    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+def test_env_one_step_smoke(tmp_path: Path) -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"], data_dir=_test_data_dir(tmp_path, ["AAPL"])).apply_mode_defaults()
     splits = load_symbol_splits(cfg, "AAPL")
     env = MarketMakingEnv(splits["train"][0], cfg)
     span = env.available_episodes()[0]
@@ -78,8 +98,8 @@ def test_env_one_step_smoke() -> None:
     assert hasattr(result, "avg_spread_bps")
 
 
-def test_selected_episodes_spread_across_day() -> None:
-    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+def test_selected_episodes_spread_across_day(tmp_path: Path) -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"], data_dir=_test_data_dir(tmp_path, ["AAPL"])).apply_mode_defaults()
     splits = load_symbol_splits(cfg, "AAPL")
     env = MarketMakingEnv(splits["train"][0], cfg)
     episodes = env.available_episodes()
@@ -89,15 +109,15 @@ def test_selected_episodes_spread_across_day() -> None:
     assert selected[-1] == episodes[-1]
 
 
-def test_symbol_episode_length_targets_about_two_minutes() -> None:
-    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+def test_symbol_episode_length_targets_about_two_minutes(tmp_path: Path) -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"], data_dir=_test_data_dir(tmp_path, ["AAPL"])).apply_mode_defaults()
     splits = load_symbol_splits(cfg, "AAPL")
     resolved = resolve_symbol_rl_config(cfg, splits["train"])
     assert 25_000 <= resolved.episode_length <= 120_000
 
 
-def test_bps_quotes_scale_with_midprice() -> None:
-    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+def test_bps_quotes_scale_with_midprice(tmp_path: Path) -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"], data_dir=_test_data_dir(tmp_path, ["AAPL"])).apply_mode_defaults()
     splits = load_symbol_splits(cfg, "AAPL")
     resolved = resolve_symbol_rl_config(cfg, splits["train"])
     env = MarketMakingEnv(splits["train"][0], resolved)
@@ -109,8 +129,8 @@ def test_bps_quotes_scale_with_midprice() -> None:
     assert abs(orders["spread"] - expected) <= 0.03
 
 
-def test_inventory_penalty_is_normalized_to_limit() -> None:
-    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"]).apply_mode_defaults()
+def test_inventory_penalty_is_normalized_to_limit(tmp_path: Path) -> None:
+    cfg = RLTrainConfig(mode="smoke", symbols=["AAPL"], data_dir=_test_data_dir(tmp_path, ["AAPL"])).apply_mode_defaults()
     splits = load_symbol_splits(cfg, "AAPL")
     env = MarketMakingEnv(splits["train"][0], cfg)
     span = env.available_episodes()[0]
@@ -126,6 +146,7 @@ def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="test_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
@@ -142,6 +163,7 @@ def test_pretrain_and_ppo_smoke(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="test_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         algorithm="ppo",
         state_mode="full",
         use_stable_hours=False,
@@ -163,6 +185,7 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="variant_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
@@ -174,6 +197,7 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="variant_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         algorithm="ppo",
         state_mode="full",
         use_stable_hours=False,
@@ -189,6 +213,7 @@ def test_ppo_variants_use_distinct_output_dirs(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="variant_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         algorithm="ppo",
         state_mode="full",
         wo_lob_state=True,
@@ -212,6 +237,7 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="report_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         use_stable_hours=False,
         pretrain_epochs=1,
         max_rows_per_day=4_000,
@@ -223,6 +249,7 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
         symbols=["AAPL"],
         output_root=str(tmp_path),
         run_name="report_run",
+        data_dir=_test_data_dir(tmp_path, ["AAPL"]),
         algorithm="ppo",
         state_mode="full",
         use_stable_hours=False,
@@ -235,7 +262,15 @@ def test_report_includes_baselines_and_outputs_tables(tmp_path: Path) -> None:
     ).apply_mode_defaults()
     run_rl_training(ppo_cfg)
     run_evaluation(ppo_cfg)
-    report_dir = run_report(ExperimentConfig(mode="smoke", symbols=["AAPL"], output_root=str(tmp_path), run_name="report_run").apply_mode_defaults())
+    report_dir = run_report(
+        ExperimentConfig(
+            mode="smoke",
+            symbols=["AAPL"],
+            output_root=str(tmp_path),
+            run_name="report_run",
+            data_dir=_test_data_dir(tmp_path, ["AAPL"]),
+        ).apply_mode_defaults()
+    )
     method_summary = (report_dir / "method_summary.csv").read_text()
     assert "AS" in method_summary
     assert "C-PPO" in (report_dir / "continuous_paper_table.md").read_text()

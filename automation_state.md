@@ -79,53 +79,7 @@ Status:
 
 ## Active Runs
 
-Queue snapshot from 2026-03-28 11:50 CET:
-
-### Mainline exploitation runs
-
-- `euler_full_stage7_competitive_seed7`
-  - AAPL pretrain: `61631914` (`COMPLETED`)
-  - AAPL train: `61631916` (`RUNNING`)
-  - AAPL eval: `61631918` (`DEPENDENCY`)
-  - GOOGL pretrain: `61631920` (`COMPLETED`)
-  - GOOGL train: `61631944` (`RUNNING`)
-  - GOOGL eval: `61631946` (`DEPENDENCY`)
-  - report: `61631954` (`DEPENDENCY`)
-
-- `euler_full_stage7_competitive_seed13`
-  - AAPL pretrain: `61631915` (`COMPLETED`)
-  - AAPL train: `61631929` (`RUNNING`)
-  - AAPL eval: `61631938` (`DEPENDENCY`)
-  - GOOGL pretrain: `61631942` (`COMPLETED`)
-  - GOOGL train: `61632005` (`RUNNING`)
-  - GOOGL eval: `61632007` (`DEPENDENCY`)
-  - report: `61632010` (`DEPENDENCY`)
-
-### Creative exploration runs
-
-- shared pretrain: `euler_lobmmx_aapl_shared_pretrain`
-  - pretrain: `61632675` (`COMPLETED`)
-
-- `euler_lobmmx_aapl_spread_base`
-  - train: `61632677` (`RUNNING`)
-  - early eval: `61632679` (`COMPLETED`, baseline-only; fired too early)
-  - early report: `61632681` (`COMPLETED`, baseline-only; fired too early)
-  - repaired eval: `61636126` (`DEPENDENCY` on train)
-  - repaired report: `61636128` (`DEPENDENCY` on train+eval)
-
-- `euler_lobmmx_aapl_ticks_base`
-  - train: `61632682` (`RUNNING`)
-  - early eval: `61632684` (`COMPLETED`, baseline-only; fired too early)
-  - early report: `61632686` (`COMPLETED`, baseline-only; fired too early)
-  - repaired eval: `61636130` (`DEPENDENCY` on train)
-  - repaired report: `61636132` (`DEPENDENCY` on train+eval)
-
-- `euler_lobmmx_aapl_spread_alpha`
-  - train: `61632692` (`RUNNING`)
-  - early eval: `61632696` (`COMPLETED`, baseline-only; fired too early)
-  - early report: `61632704` (`COMPLETED`, baseline-only; fired too early)
-  - repaired eval: `61636134` (`DEPENDENCY` on train)
-  - repaired report: `61636135` (`DEPENDENCY` on train+eval)
+No active Euler jobs as of the latest check.
 
 ## Important Findings
 
@@ -140,6 +94,13 @@ Queue snapshot from 2026-03-28 11:50 CET:
 - Heavy RL budget increases regressed performance; more training was not automatically better.
 - Checkpoint selection is still not trustworthy in mainline `lobmm`; checkpointed runs often selected `epoch 0`, so selection logic should not be treated as validated there.
 - `cluster/submit_lobmmx_aapl.sh` had an env-ordering bug that let `lobmmx` evaluate/report inherit the pretrain dependency instead of the train dependency; fixed in commit `324770a`, and corrected downstream jobs were resubmitted as `61636126/28/30/32/34/35`.
+- Stage-7 full runs finished cleanly and were highly consistent across seeds:
+  - `AAPL` stayed mildly profitable with the stage-6 competitive setup.
+  - `GOOGL` PPO produced effectively zero fills and zero PnL in both seeds.
+- First `lobmmx` creative runs finished cleanly but underperformed mainline `lobmm`:
+  - pretraining stayed healthy (`best_f1 ≈ 0.648`)
+  - all three variants were slower than mainline and landed near `AAPL pnl ≈ 0.0055-0.0058`
+  - the spread/tick reward variants produced strongly negative `reward_mean`, so the current inventory-scaled reward is dominating episode learning in an unhelpful way.
 
 ## Experiment History And Results
 
@@ -194,6 +155,40 @@ Use this section to avoid rerunning dead ends. The point is not to perfectly log
   - `GOOGL` became slightly profitable, but overall still far from paper-level results.
 - Main lesson:
   - More data and a somewhat wider US-appropriate action space helped, but did not solve the main RL problem.
+
+### Stage-7 full two-symbol competitive runs
+
+- Runs:
+  - `euler_full_stage7_competitive_seed7`
+  - `euler_full_stage7_competitive_seed13`
+- Outcome:
+  - very consistent across seeds
+  - `AAPL PPO` remained mildly profitable:
+    - seed 7: `pnl = 0.01063`, `nd_pnl = 0.11158`, `sharpe = 0.2436`
+    - seed 13: `pnl = 0.00906`, `nd_pnl = 0.09143`, `sharpe = 0.2573`
+  - `GOOGL PPO` failed behaviorally:
+    - both seeds: `pnl = 0`, `fill_rate = 0`, `trades = 0`
+- Main lesson:
+  - the stage-6 competitive setup is stable on `AAPL`
+  - it does not transfer to `GOOGL` without symbol-specific changes, most likely tighter quoting or spread-relative parameterization
+  - another full AAPL+GOOGL run should not be launched before fixing `GOOGL`
+
+### First `lobmmx` creative AAPL batch
+
+- Runs:
+  - `euler_lobmmx_aapl_spread_base`
+  - `euler_lobmmx_aapl_ticks_base`
+  - `euler_lobmmx_aapl_spread_alpha`
+- Outcome:
+  - shared multitask pretrain remained healthy: `best_f1 = 0.6475`
+  - PPO was slower than mainline and weaker:
+    - `spread_base`: `pnl = 0.00579`, `nd_pnl = 0.05992`, `sharpe = 0.1409`
+    - `ticks_base`: `pnl = 0.00554`, `nd_pnl = 0.05675`, `sharpe = 0.1348`
+    - `spread_alpha`: `pnl = 0.00579`, `nd_pnl = 0.05893`, `sharpe = 0.1409`
+- Main lesson:
+  - the large creative changes did not help yet
+  - the current `lobmmx` reward construction is mis-scaled: profitable episodes still have strongly negative `reward_mean`
+  - validation-based PPO selection is still weak in `lobmmx` because the selection metric is tied to that distorted reward
 
 ### Stage-2 AAPL sweep
 

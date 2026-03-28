@@ -60,11 +60,12 @@ class ExperimentConfig:
     initial_inventory_max: int = 125
     allow_terminal_inventory: bool = True
     eta: float = 0.5
-    zeta: float = 0.01
+    zeta: float = 0.0
     zeta_start: float | None = None
     zeta_end: float | None = None
     zeta_l1: float = 0.0
     zeta_l2: float | None = None
+    terminal_inventory_cost_scale: float = 1.0
     gamma: float = 0.99
     normalize_advantages: bool = True
     gradient_clip_norm: float = 1.0
@@ -82,7 +83,7 @@ class ExperimentConfig:
     gae_lambda: float = 0.95
     ppo_checkpoint_every: int = 0
     ppo_select_best_model: bool = False
-    ppo_selection_metric: str = "reward_mean"
+    ppo_selection_metric: str = "pnl_mean"
     dqn_epochs: int = 10
     dqn_batches_per_epoch: int = 64
     dqn_batch_size: int = 128

@@ -66,7 +66,7 @@ COMMON_PRETRAIN=(
 )
 
 COMMON_RL=(
-    BACKBONE_RUN_NAME=euler_lobmmx_aapl_shared_pretrain
+    BACKBONE_RUN_NAME=euler_lobmmx_aapl_stage2_shared_pretrain
     TRAIN_TIME=18:00:00
     TRAIN_CPUS=8
     TRAIN_MEM_PER_CPU=6G
@@ -106,21 +106,23 @@ COMMON_RL=(
     BACKBONE_TRAINABLE=1
     PPO_SELECT_BEST_MODEL=1
     PPO_CHECKPOINT_EVERY=1
-    PPO_SELECTION_METRIC=reward_mean
+    PPO_SELECTION_METRIC=pnl_mean
     QUOTE_SCALE_MODE=bps
     MAX_SPREAD_BPS=7.0
     MAX_BIAS_BPS=3.0
     MAX_INVENTORY_SKEW_BPS=4.0
     MAX_INVENTORY=250
-    ZETA=0.004
+    ZETA=0.0
+    TERMINAL_INVENTORY_COST_SCALE=1.0
     ETA=0.0
 )
 
 PRETRAIN_JOB_ID="$(
-    submit_cmd euler_lobmmx_aapl_shared_pretrain "${COMMON_PRETRAIN[@]}" pretrain
+    submit_cmd euler_lobmmx_aapl_stage2_shared_pretrain "${COMMON_PRETRAIN[@]}" pretrain
 )"
 echo "Submitted creative shared pretrain: ${PRETRAIN_JOB_ID}"
 
-submit_variant "euler_lobmmx_aapl_spread_base" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}"
-submit_variant "euler_lobmmx_aapl_ticks_base" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}" REWARD_SCALE_MODE=ticks
-submit_variant "euler_lobmmx_aapl_spread_alpha" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}" MAX_BIAS_BPS=4.0 MAX_INVENTORY_SKEW_BPS=3.0
+submit_variant "euler_lobmmx_aapl_stage2_spread_base" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}"
+submit_variant "euler_lobmmx_aapl_stage2_ticks_base" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}" REWARD_SCALE_MODE=ticks
+submit_variant "euler_lobmmx_aapl_stage2_spread_aggr" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}" MAX_SPREAD_BPS=6.0 MAX_BIAS_BPS=4.0 MAX_INVENTORY_SKEW_BPS=3.0
+submit_variant "euler_lobmmx_aapl_stage2_spread_halfcost" DEPENDENCY="afterok:${PRETRAIN_JOB_ID}" "${COMMON_RL[@]}" TERMINAL_INVENTORY_COST_SCALE=0.5
