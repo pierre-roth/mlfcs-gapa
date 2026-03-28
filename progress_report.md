@@ -73,10 +73,9 @@ Copy this block for each new week.
   - Added resumable pretraining, deterministic evaluation, PPO checkpoint plumbing, policy diagnostics, and multiple Euler submission helpers.
   - Ran the full tuning sequence on Euler from `medium` and `full` runs through stage-2/3/4/5/6 AAPL sweeps, then launched two larger stage-7 full runs and a new creative `lobmmx/` fork.
   - Created `lobmmx/` as a sibling experimental package with random initial inventory, terminal inventory allowed, trading-edge reward, spread/tick-unit reward scaling, US-timescale features, decoupled directional vs inventory skew, multitask pretraining, maker/taker fees, and aggressive validation-time PPO checkpointing.
-  - Diagnosed and fixed a `lobmmx` Slurm dependency-ordering bug that had released creative `evaluate`/`report` jobs right after pretrain, then resubmitted corrected downstream jobs behind the still-running train jobs.
 - In progress:
   - Stage-7 full runs on `AAPL+GOOGL` are running on Euler with the current best `lobmm` setup.
-  - The first `lobmmx` creative AAPL batch is running on Euler, with repaired `evaluate`/`report` jobs now queued behind the active train jobs.
+  - The first `lobmmx` creative AAPL batch is running on Euler.
 - Blocked:
   - Current PPO still tends toward low directional bias, so further gains likely require environment/state changes rather than more standard hyperparameter tuning.
 - Next week:
