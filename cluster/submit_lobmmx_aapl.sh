@@ -34,12 +34,12 @@ submit_variant() {
     echo "Submitted train for ${run_name}: ${train_id}"
 
     evaluate_id="$(
-        submit_cmd "${run_name}" DEPENDENCY="afterok:${train_id}" "$@" evaluate
+        submit_cmd "${run_name}" "$@" DEPENDENCY="afterok:${train_id}" evaluate
     )"
     echo "Submitted evaluate for ${run_name}: ${evaluate_id}"
 
     report_id="$(
-        submit_cmd "${run_name}" DEPENDENCY="afterok:${train_id}:${evaluate_id}" "$@" report
+        submit_cmd "${run_name}" "$@" DEPENDENCY="afterok:${train_id}:${evaluate_id}" report
     )"
     echo "Submitted report for ${run_name}: ${report_id}"
 }
