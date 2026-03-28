@@ -123,5 +123,6 @@ euler_run_kind() {
     shift || true
 
     cd "${REPO_ROOT}"
-    srun python "${REPO_ROOT}/cluster/euler_run.py" "${kind}" "$@"
+    local runner="${EULER_RUNNER_SCRIPT:-cluster/euler_run.py}"
+    srun python "${REPO_ROOT}/${runner}" "${kind}" "$@"
 }
