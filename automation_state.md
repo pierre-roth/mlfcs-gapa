@@ -79,7 +79,52 @@ Status:
 
 ## Active Runs
 
-No active Euler jobs as of the latest check.
+Queue snapshot from 2026-03-28 after the `lobmmx` reward fix and the new stage-8 submissions:
+
+### Mainline exploitation runs
+
+- `euler_full_stage8_competitive_seed29`
+  - AAPL pretrain: `61671088` (`RUNNING`)
+  - AAPL train: `61671090` (`DEPENDENCY`)
+  - AAPL eval: `61671092` (`DEPENDENCY`)
+  - GOOGL pretrain: `61671094` (`RUNNING`)
+  - GOOGL train: `61671096` (`DEPENDENCY`)
+  - GOOGL eval: `61671099` (`DEPENDENCY`)
+  - report: `61671146` (`DEPENDENCY`)
+
+- `euler_full_stage8_competitive_seed41`
+  - AAPL pretrain: `61671151` (`PENDING`)
+  - AAPL train: `61671154` (`DEPENDENCY`)
+  - AAPL eval: `61671155` (`DEPENDENCY`)
+  - GOOGL pretrain: `61671157` (`PENDING`)
+  - GOOGL train: `61671160` (`DEPENDENCY`)
+  - GOOGL eval: `61671162` (`DEPENDENCY`)
+  - report: `61671164` (`DEPENDENCY`)
+
+### Creative exploration runs
+
+- shared pretrain: `euler_lobmmx_aapl_stage2_shared_pretrain`
+  - pretrain: `61671093` (`RUNNING`)
+
+- `euler_lobmmx_aapl_stage2_spread_base`
+  - train: `61671095` (`DEPENDENCY`)
+  - eval: `61671098` (`DEPENDENCY`)
+  - report: `61671103` (`DEPENDENCY`)
+
+- `euler_lobmmx_aapl_stage2_ticks_base`
+  - train: `61671147` (`DEPENDENCY`)
+  - eval: `61671149` (`DEPENDENCY`)
+  - report: `61671153` (`DEPENDENCY`)
+
+- `euler_lobmmx_aapl_stage2_spread_aggr`
+  - train: `61671156` (`DEPENDENCY`)
+  - eval: `61671158` (`DEPENDENCY`)
+  - report: `61671161` (`DEPENDENCY`)
+
+- `euler_lobmmx_aapl_stage2_spread_halfcost`
+  - train: `61671163` (`DEPENDENCY`)
+  - eval: `61671165` (`DEPENDENCY`)
+  - report: `61671166` (`DEPENDENCY`)
 
 ## Important Findings
 
@@ -101,6 +146,12 @@ No active Euler jobs as of the latest check.
   - pretraining stayed healthy (`best_f1 ≈ 0.648`)
   - all three variants were slower than mainline and landed near `AAPL pnl ≈ 0.0055-0.0058`
   - the spread/tick reward variants produced strongly negative `reward_mean`, so the current inventory-scaled reward is dominating episode learning in an unhelpful way.
+- `lobmmx` reward/selection fixes now in place:
+  - default PPO selection metric changed from `reward_mean` to `pnl_mean`
+  - default per-step inventory penalty removed for `trade_inventory`
+  - terminal inventory is now penalized by explicit liquidation cost in spread/tick units
+  - `PnLMAP`-related position stats now use inventory changes relative to the random initial inventory, not the raw starting position
+  - local `lobmmx` smoke pretrain/train/evaluate/report path was exercised successfully against a temporary sample-backed dataset
 
 ## Experiment History And Results
 

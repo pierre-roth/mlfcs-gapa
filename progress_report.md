@@ -73,14 +73,18 @@ Copy this block for each new week.
   - Added resumable pretraining, deterministic evaluation, PPO checkpoint plumbing, policy diagnostics, and multiple Euler submission helpers.
   - Ran two larger stage-7 full runs on `AAPL+GOOGL` using the best current mainline competitive configuration.
   - Created and exercised `lobmmx/` as a sibling experimental package with random initial inventory, terminal inventory allowed, trading-edge reward, spread/tick-unit reward scaling, US-timescale features, decoupled directional vs inventory skew, multitask pretraining, maker/taker fees, and aggressive validation-time PPO checkpointing.
+  - Fixed the remaining `lobmmx` objective issues by switching PPO selection to `pnl_mean`, removing the default per-step inventory punishment, and replacing it with an explicit terminal liquidation-cost penalty.
+  - Fixed the local smoke verification path so tests run from the tracked sample dataset when the full local processed dataset is absent.
+  - Submitted a corrected stage-2 `lobmmx` AAPL sweep and new large mainline stage-8 full runs.
 - In progress:
-  - Deciding the next experimental branch after the finished stage-7 and `lobmmx` runs.
+  - Stage-8 mainline full runs are active on Euler.
+  - The corrected stage-2 `lobmmx` AAPL sweep is active on Euler.
 - Blocked:
   - `GOOGL` has zero PPO fills under the current shared mainline configuration.
   - `lobmmx` currently optimizes a distorted reward signal, so PPO selection and learning are not trustworthy there yet.
 - Next week:
-  - Run a targeted `GOOGL` rescue sweep in mainline `lobmm` with symbol-specific quoting.
-  - Fix `lobmmx` reward scaling and selection metric before giving it another large budget.
+  - Evaluate whether the corrected `lobmmx` objective materially improves AAPL.
+  - Compare the two new full mainline seeds against the stage-7 baseline.
 - Relevant findings from runs:
   - `euler_aapl_medium`: pipeline healthy; end-to-end runtime about `23.5m`.
   - `euler_full_12h`: first full run failed in PPO due to CUDA OOM; fixed by moving only minibatches to GPU.
@@ -92,6 +96,7 @@ Copy this block for each new week.
   - Stage-6 AAPL sweep: stage-4-sized budget plus competitive quotes was the best current result; `euler_aapl_stage6_ultra_competitive_ckpt` reached `pnl 0.01406`, `nd_pnl 0.14454`, `sharpe 0.2576`, while the plain control lagged clearly.
   - Stage-7 full runs: `AAPL` stayed mildly profitable and consistent across seeds, but `GOOGL` PPO had `0` fills and `0` PnL in both runs.
   - First `lobmmx` runs: multitask pretraining was healthy (`best_f1 ≈ 0.648`), but PPO regressed to about `pnl 0.0055-0.0058` and the reward stayed strongly negative, so the current creative reward/selection setup is not yet viable.
+  - `lobmmx` fix set: selection now uses `pnl_mean`, default `trade_inventory` reward now pays only realized trading edge during the episode plus an explicit terminal inventory liquidation cost, and random-start inventory no longer pollutes `PnLMAP`-style position stats.
   - Global conclusion so far: competitive quote scales matter a lot, deterministic evaluation was necessary, pretraining is now good enough, and the immediate next bottlenecks are symbol-specific `GOOGL` quoting and `lobmmx` reward calibration rather than generic PPO tuning.
 - Links:
   - `lobmm/`
