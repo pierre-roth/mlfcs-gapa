@@ -1,6 +1,6 @@
 # Automation State
 
-Last updated: 2026-03-28 (Europe/Zurich)
+Last updated: 2026-04-01 (Europe/Zurich)
 
 ## Canonical Paths
 
@@ -9,11 +9,15 @@ Last updated: 2026-03-28 (Europe/Zurich)
 - Canonical cluster data: `/cluster/work/math/piroth/mlfcs-gapa/data/processed`
 - Canonical cluster artifacts: `/cluster/project/math/piroth/mlfcs-gapa/artifacts`
 - Canonical cluster logs: `/cluster/project/math/piroth/mlfcs-gapa/logs`
+- Canonical compressed data backup: `/cluster/work/math/piroth/mlfcs-gapa/data_20260330.tar.zst`
+- Public teammate-facing archive copy: `/cluster/home/piroth/public/mlfcs-gapa/data_20260330.tar.zst`
 
 Rules:
 - Do not use the laptop dataset for real runs.
 - Prefer the permanent `work` / `project` paths over scratch.
 - Keep the Euler checkout clean so `git pull --ff-only` works.
+- The live `work` data path is still private in practice because `/cluster/work/math/piroth` is not traversable by other users.
+- Use the public home-archive copy for collaborator sharing; do not assume teammates can read the live `work` path.
 
 ## Current Best Known Setup
 
@@ -75,56 +79,24 @@ Main ideas already implemented:
 - aggressive PPO checkpointing / validation selection
 
 Status:
-- First creative batch submitted; no trusted results yet.
+- First corrected `lobmmx` batch finished.
+- `spread_aggr` is the only creative variant that nearly matches the mainline `AAPL` PPO result.
+- Reward scaling / model-selection signal in `lobmmx` is still not coherent enough to trust as a new default.
 
 ## Active Runs
 
-Queue snapshot from 2026-03-28 after the `lobmmx` reward fix and the new stage-8 submissions:
-
-### Mainline exploitation runs
-
-- `euler_full_stage8_competitive_seed29`
-  - AAPL pretrain: `61671088` (`RUNNING`)
-  - AAPL train: `61671090` (`DEPENDENCY`)
-  - AAPL eval: `61671092` (`DEPENDENCY`)
-  - GOOGL pretrain: `61671094` (`RUNNING`)
-  - GOOGL train: `61671096` (`DEPENDENCY`)
-  - GOOGL eval: `61671099` (`DEPENDENCY`)
-  - report: `61671146` (`DEPENDENCY`)
-
-- `euler_full_stage8_competitive_seed41`
-  - AAPL pretrain: `61671151` (`PENDING`)
-  - AAPL train: `61671154` (`DEPENDENCY`)
-  - AAPL eval: `61671155` (`DEPENDENCY`)
-  - GOOGL pretrain: `61671157` (`PENDING`)
-  - GOOGL train: `61671160` (`DEPENDENCY`)
-  - GOOGL eval: `61671162` (`DEPENDENCY`)
-  - report: `61671164` (`DEPENDENCY`)
-
-### Creative exploration runs
-
-- shared pretrain: `euler_lobmmx_aapl_stage2_shared_pretrain`
-  - pretrain: `61671093` (`RUNNING`)
-
-- `euler_lobmmx_aapl_stage2_spread_base`
-  - train: `61671095` (`DEPENDENCY`)
-  - eval: `61671098` (`DEPENDENCY`)
-  - report: `61671103` (`DEPENDENCY`)
-
-- `euler_lobmmx_aapl_stage2_ticks_base`
-  - train: `61671147` (`DEPENDENCY`)
-  - eval: `61671149` (`DEPENDENCY`)
-  - report: `61671153` (`DEPENDENCY`)
-
-- `euler_lobmmx_aapl_stage2_spread_aggr`
-  - train: `61671156` (`DEPENDENCY`)
-  - eval: `61671158` (`DEPENDENCY`)
-  - report: `61671161` (`DEPENDENCY`)
-
-- `euler_lobmmx_aapl_stage2_spread_halfcost`
-  - train: `61671163` (`DEPENDENCY`)
-  - eval: `61671165` (`DEPENDENCY`)
-  - report: `61671166` (`DEPENDENCY`)
+- No active Euler runs.
+- Most recently completed:
+  - mainline full runs:
+    - `euler_full_stage8_competitive_seed29`
+    - `euler_full_stage8_competitive_seed41`
+  - creative AAPL runs:
+    - `euler_lobmmx_aapl_stage2_spread_base`
+    - `euler_lobmmx_aapl_stage2_ticks_base`
+    - `euler_lobmmx_aapl_stage2_spread_aggr`
+    - `euler_lobmmx_aapl_stage2_spread_halfcost`
+- Current transfer state:
+  - a local copy of `data_20260330.tar.zst` is being downloaded into the laptop `Downloads` folder for external sharing upload
 
 ## Important Findings
 
@@ -142,6 +114,12 @@ Queue snapshot from 2026-03-28 after the `lobmmx` reward fix and the new stage-8
 - Stage-7 full runs finished cleanly and were highly consistent across seeds:
   - `AAPL` stayed mildly profitable with the stage-6 competitive setup.
   - `GOOGL` PPO produced effectively zero fills and zero PnL in both seeds.
+- Stage-8 full runs finished cleanly and mostly confirmed stage-7:
+  - `AAPL` remained reproducible across seeds at about `pnl = 0.0106`, `nd_pnl = 0.105-0.112`, `sharpe = 0.244`
+  - `AAPL` PPO still trails `AS` and `Fixed_3`
+  - `GOOGL` remained a weak transfer case:
+    - seed 29: exact `0` fills and `0` PnL
+    - seed 41: tiny positive result (`pnl = 0.00437`) but still almost no trades
 - First `lobmmx` creative runs finished cleanly but underperformed mainline `lobmm`:
   - pretraining stayed healthy (`best_f1 ≈ 0.648`)
   - all three variants were slower than mainline and landed near `AAPL pnl ≈ 0.0055-0.0058`
@@ -152,6 +130,22 @@ Queue snapshot from 2026-03-28 after the `lobmmx` reward fix and the new stage-8
   - terminal inventory is now penalized by explicit liquidation cost in spread/tick units
   - `PnLMAP`-related position stats now use inventory changes relative to the random initial inventory, not the raw starting position
   - local `lobmmx` smoke pretrain/train/evaluate/report path was exercised successfully against a temporary sample-backed dataset
+- Corrected `lobmmx` stage-2 AAPL runs finished cleanly:
+  - shared pretrain remained healthy (`best_f1 = 0.6450`)
+  - `spread_aggr` was clearly best:
+    - `pnl = 0.00954`
+    - `nd_pnl = 0.11283`
+    - `sharpe = 0.2579`
+    - `avg_spread_bps = 3.34`
+    - `avg_bias_bps = 0.33`
+    - `fill_rate = 3.34e-05`
+  - `spread_aggr` nearly matched mainline `AAPL` PPO while learning visibly more directional bias
+  - but all `lobmmx` reward means stayed strongly negative, including baselines, so reward scale / selection calibration is still unresolved
+- Data handoff path now in place:
+  - raw cluster `data/` remains the live source
+  - the old uncompressed backup was removed
+  - compressed backup/share archive is `12G`
+  - public copy under `/cluster/home/piroth/public/mlfcs-gapa/` fits safely within home quota and is the intended collaborator handoff path
 
 ## Experiment History And Results
 

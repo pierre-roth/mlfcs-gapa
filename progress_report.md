@@ -59,10 +59,10 @@ Copy this block for each new week.
 
 ### Weekly Snapshot
 
-- Overall status: The mainline pipeline is stable and reproducible. Stage-7 confirmed a reliable `AAPL` setup, but `GOOGL` still fails behaviorally. The first creative `lobmmx` fork runs completed and underperformed.
-- Main goal for the week: Decide whether to rescue `GOOGL` inside `lobmm`, or continue iterating on `lobmmx` after fixing its reward/selection scaling.
-- Biggest win: Two large stage-7 seeds were consistent, which makes the current `AAPL` result credible rather than a lucky run.
-- Biggest risk or blocker: `GOOGL` PPO produced zero fills in both large runs, and the current `lobmmx` reward is mis-scaled enough that profitable policies still get strongly negative training reward.
+- Overall status: Mainline `lobmm` is stable but near a local ceiling on `AAPL`. The corrected `lobmmx` fork is competitive on `AAPL` in one variant, but its reward scale is still not coherent. Cluster data is now packaged for external sharing.
+- Main goal for the week: Use the finished stage-8 and `lobmmx` stage-2 results to decide the next AAPL-focused experiments, and finish a clean data handoff path for collaborators.
+- Biggest win: `lobmmx` `spread_aggr` nearly matched the mainline `AAPL` PPO result while learning materially larger directional bias, and the full cluster data was compressed from `84G` raw to a `12G` shareable archive.
+- Biggest risk or blocker: `lobmmx` still assigns strongly negative reward to profitable policies, and the live `work` data path itself cannot be made directly team-readable because the parent namespace is private.
 
 ### Contributor Update: Pierre
 
@@ -75,16 +75,22 @@ Copy this block for each new week.
   - Created and exercised `lobmmx/` as a sibling experimental package with random initial inventory, terminal inventory allowed, trading-edge reward, spread/tick-unit reward scaling, US-timescale features, decoupled directional vs inventory skew, multitask pretraining, maker/taker fees, and aggressive validation-time PPO checkpointing.
   - Fixed the remaining `lobmmx` objective issues by switching PPO selection to `pnl_mean`, removing the default per-step inventory punishment, and replacing it with an explicit terminal liquidation-cost penalty.
   - Fixed the local smoke verification path so tests run from the tracked sample dataset when the full local processed dataset is absent.
-  - Submitted a corrected stage-2 `lobmmx` AAPL sweep and new large mainline stage-8 full runs.
+  - Submitted and completed a corrected stage-2 `lobmmx` AAPL sweep and new large mainline stage-8 full runs.
+  - Packaged the canonical cluster dataset into a compressed archive for collaborator handoff:
+    - source live data remains at `/cluster/work/math/piroth/mlfcs-gapa/data`
+    - backup/share archive is `/cluster/work/math/piroth/mlfcs-gapa/data_20260330.tar.zst`
+    - public teammate-accessible copy is `/cluster/home/piroth/public/mlfcs-gapa/data_20260330.tar.zst`
+    - checksum and README were added alongside it
+  - Removed the old uncompressed backup after the compressed archive was created and copied successfully.
 - In progress:
-  - Stage-8 mainline full runs are active on Euler.
-  - The corrected stage-2 `lobmmx` AAPL sweep is active on Euler.
+  - No active runs. Next experiments are being selected from the finished stage-8 and `lobmmx` stage-2 evidence.
+  - A local download of the `12G` archive to the laptop `Downloads` folder is in progress for external file-sharing upload.
 - Blocked:
-  - `GOOGL` has zero PPO fills under the current shared mainline configuration.
-  - `lobmmx` currently optimizes a distorted reward signal, so PPO selection and learning are not trustworthy there yet.
+  - Mainline `lobmm` still trails simple baselines on `AAPL`.
+  - `lobmmx` still optimizes a distorted reward scale, so checkpoint selection is not yet trustworthy there.
 - Next week:
-  - Evaluate whether the corrected `lobmmx` objective materially improves AAPL.
-  - Compare the two new full mainline seeds against the stage-7 baseline.
+  - Decide the next AAPL-focused runs from the finished results.
+  - Prioritize reward-scale calibration and selection logic in `lobmmx`, plus any high-upside AAPL experiments worth a larger budget.
 - Relevant findings from runs:
   - `euler_aapl_medium`: pipeline healthy; end-to-end runtime about `23.5m`.
   - `euler_full_12h`: first full run failed in PPO due to CUDA OOM; fixed by moving only minibatches to GPU.
@@ -95,9 +101,11 @@ Copy this block for each new week.
   - Stage-5 AAPL sweep: larger RL budget and extra reward shaping hurt; competitive quotes were the only promising change.
   - Stage-6 AAPL sweep: stage-4-sized budget plus competitive quotes was the best current result; `euler_aapl_stage6_ultra_competitive_ckpt` reached `pnl 0.01406`, `nd_pnl 0.14454`, `sharpe 0.2576`, while the plain control lagged clearly.
   - Stage-7 full runs: `AAPL` stayed mildly profitable and consistent across seeds, but `GOOGL` PPO had `0` fills and `0` PnL in both runs.
-  - First `lobmmx` runs: multitask pretraining was healthy (`best_f1 ≈ 0.648`), but PPO regressed to about `pnl 0.0055-0.0058` and the reward stayed strongly negative, so the current creative reward/selection setup is not yet viable.
-  - `lobmmx` fix set: selection now uses `pnl_mean`, default `trade_inventory` reward now pays only realized trading edge during the episode plus an explicit terminal inventory liquidation cost, and random-start inventory no longer pollutes `PnLMAP`-style position stats.
-  - Global conclusion so far: competitive quote scales matter a lot, deterministic evaluation was necessary, pretraining is now good enough, and the immediate next bottlenecks are symbol-specific `GOOGL` quoting and `lobmmx` reward calibration rather than generic PPO tuning.
+  - Stage-8 full runs: `AAPL` again landed at about `pnl 0.0106`, `nd_pnl 0.105-0.112`, `sharpe 0.244`, confirming the mainline result is real but not improving further; `GOOGL` remained weak, with one seed still at exact zero fills and the other only barely positive.
+  - Corrected `lobmmx` stage-2 runs: multitask pretraining stayed healthy (`best_f1 = 0.645`), and `spread_aggr` reached `pnl 0.00954`, `nd_pnl 0.11283`, `sharpe 0.2579`, nearly matching mainline `AAPL` PPO while using higher bias and tighter spreads.
+  - `lobmmx` still has a reward-scale issue: every creative variant, and even the creative baselines, retained strongly negative `reward`, so selection and optimization targets are still misaligned with profitability.
+  - Storage/share result: the raw cluster `data/` tree is `84G`, but the compressed archive is only `12G`, which fits comfortably in the home quota and is now available under `/cluster/home/piroth/public/mlfcs-gapa/` for teammates who know the path.
+  - Global conclusion so far: competitive quote scales matter a lot, deterministic evaluation was necessary, pretraining is now good enough, mainline `lobmm` is near its current AAPL ceiling, and the highest-upside work is now AAPL-focused `lobmmx` reward/selection calibration rather than more generic PPO tuning.
 - Links:
   - `lobmm/`
   - `lobmmx/`
