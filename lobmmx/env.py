@@ -316,10 +316,11 @@ class MarketMakingEnv:
         return float(self.config.zeta * inv_norm**2)
 
     def _terminal_inventory_penalty(self, midprice: float, spread: float) -> float:
-        if self.inventory == 0:
+        net_inventory = self.inventory - self.initial_inventory
+        if net_inventory == 0:
             return 0.0
         reward_unit = self._reward_unit(midprice, spread)
-        liquidation_cost = abs(self.inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
+        liquidation_cost = abs(net_inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
         return float(self.config.terminal_inventory_cost_scale * liquidation_cost / reward_unit)
 
     def step(self, action: np.ndarray | int | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
