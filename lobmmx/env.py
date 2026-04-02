@@ -430,6 +430,16 @@ class MarketMakingEnv:
         nd_pnl = pnl / avg_spread if avg_spread > 0 else 0.0
         pnl_map = pnl / avg_abs_position if avg_abs_position > 0 else 0.0
         profit_ratio = pnl / self.turnover if self.turnover > 0 else 0.0
+        implied_terminal_penalty = self.trading_pnl_units - float(self.rewards)
+        print(
+            f"[reward_diag] {self.day.symbol} ep={episode_index}"
+            f" init_inv={self.initial_inventory:+.0f}"
+            f" final_inv={self.inventory:+.0f}"
+            f" trade_edge_units={self.trading_pnl_units:+.3f}"
+            f" terminal_penalty={implied_terminal_penalty:+.3f}"
+            f" total_reward={self.rewards:+.3f}"
+            f" fills={self.fill_steps}"
+        )
         return EpisodeResult(
             symbol=self.day.symbol,
             day=self.day.day,
