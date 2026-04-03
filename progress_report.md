@@ -55,6 +55,24 @@ Copy this block for each new week.
 
 ---
 
+## Week of 2026-03-30
+
+### Weekly Snapshot
+
+- Overall status: `lobmmx` reward distortion fixed; PPO now trains to a profitable policy on AAPL.
+- Biggest win: Identified and fixed the terminal inventory penalty bug in `lobmmx` — terminal penalty was 10-80× larger than trading edge, making the reward signal uninformative.
+
+### Contributor Update: Amine
+
+- Focus area: `lobmmx` reward distortion diagnosis and fix.
+- Diagnosed the terminal inventory penalty bug: penalty was computed on `abs(inventory)` instead of `abs(inventory - initial_inventory)`, causing agents with random initial inventory to receive strongly negative reward regardless of trading quality.
+- Fixed `_terminal_inventory_penalty()` in `lobmmx/env.py` to use net inventory change from episode start.
+- Added `diag_reward.py` diagnostic script to quantify reward components without running full training.
+- Validated fix on Euler (medium mode, CPU): PPO now converges to `pnl_mean=0.026`, `nd_pnl_mean=0.229`, `sharpe=0.827` vs completely broken reward signal before.
+- PR: https://github.com/pierre-roth/mlfcs-gapa/pull/1
+
+---
+
 ## Week of 2026-03-23
 
 ### Weekly Snapshot
