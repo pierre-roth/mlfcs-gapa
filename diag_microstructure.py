@@ -8,7 +8,7 @@ Compare GOOGL vs AAPL microstructure:
 import sys
 import numpy as np
 from lobmm.config import ExperimentConfig
-from lobmm.data import discover_days, load_day
+from lobmm.data import discover_days, load_day_data
 
 data_dir = sys.argv[1] if len(sys.argv) > 1 else "data/processed"
 symbols = sys.argv[2:] if len(sys.argv) > 2 else ["AAPL", "GOOGL"]
@@ -23,7 +23,7 @@ for symbol in symbols:
     mid_prices = []
 
     for day in days[:5]:
-        d = load_day(data_dir, symbol, day, config)
+        d = load_day_data(symbol, day, config)
         mid = d.midprice
         ask1 = d.ask1
         bid1 = d.bid1
