@@ -55,6 +55,18 @@ Copy this block for each new week.
 
 ---
 
+## Week of 2026-03-30
+
+### Contributor Update: Amine
+
+- Focus area: GOOGL zero-fills bug diagnosis and fix.
+- Diagnosed GOOGL zero-fills: microstructure analysis showed GOOGL and AAPL have near-identical spread (1.6 vs 1.7 bps) and trade rate (3.2% vs 2.9%), ruling out data differences as the cause.
+- Root cause: PPO converges to wide passive quoting (4.5 bps spread, 0.006% fill rate) on GOOGL. Baseline comparison shows Fixed_1 at 1.2 bps is profitable — PPO needs tighter quote constraints.
+- Fix: `max_spread_bps=3.0, max_bias_bps=1.5` brings GOOGL PPO fill rate from 0.006% to 0.157% (+26×) and PnL from -1.20 to +0.038.
+- Implemented symbol-specific quote override in `lobmm/pipeline.py:resolve_symbol_rl_config()`.
+
+---
+
 ## Week of 2026-03-23
 
 ### Weekly Snapshot
