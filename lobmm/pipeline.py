@@ -51,6 +51,11 @@ def load_symbol_splits(config: ExperimentConfig, symbol: str) -> dict[str, list[
     return loaded
 
 
+_SYMBOL_QUOTE_OVERRIDES: dict[str, dict[str, float]] = {
+    "GOOGL": {"max_spread_bps": 3.0, "max_bias_bps": 1.5},
+}
+
+
 def resolve_symbol_rl_config(config: RLTrainConfig, train_days: list[DayData]) -> RLTrainConfig:
     resolved = RLTrainConfig(**asdict(config))
     resolved.episode_length = estimate_episode_length(
@@ -60,6 +65,13 @@ def resolve_symbol_rl_config(config: RLTrainConfig, train_days: list[DayData]) -
         latency=config.latency,
         fallback=config.episode_length,
     )
+    symbol = train_days[0].symbol if train_days else None
+    if symbol and symbol in _SYMBOL_QUOTE_OVERRIDES:
+        overrides = _SYMBOL_QUOTE_OVERRIDES[symbol]
+        for key, value in overrides.items():
+            if not hasattr(resolved, key):
+                raise AttributeError(f"Unknown config field in symbol override: {key}")
+            setattr(resolved, key, value)
     return resolved
 
 
