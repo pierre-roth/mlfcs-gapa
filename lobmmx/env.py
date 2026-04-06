@@ -316,10 +316,11 @@ class MarketMakingEnv:
         return float(self.config.zeta * inv_norm**2)
 
     def _terminal_inventory_penalty(self, midprice: float, spread: float) -> float:
-        if self.inventory == 0:
+        net_inventory = self.inventory - self.initial_inventory
+        if net_inventory == 0:
             return 0.0
         reward_unit = self._reward_unit(midprice, spread)
-        liquidation_cost = abs(self.inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
+        liquidation_cost = abs(net_inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
         return float(self.config.terminal_inventory_cost_scale * liquidation_cost / reward_unit)
 
     def step(self, action: np.ndarray | int | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
@@ -430,6 +431,16 @@ class MarketMakingEnv:
         nd_pnl = pnl / avg_spread if avg_spread > 0 else 0.0
         pnl_map = pnl / avg_abs_position if avg_abs_position > 0 else 0.0
         profit_ratio = pnl / self.turnover if self.turnover > 0 else 0.0
+        implied_terminal_penalty = self.trading_pnl_units - float(self.rewards)
+        print(
+            f"[reward_diag] {self.day.symbol} ep={episode_index}"
+            f" init_inv={self.initial_inventory:+.0f}"
+            f" final_inv={self.inventory:+.0f}"
+            f" trade_edge_units={self.trading_pnl_units:+.3f}"
+            f" terminal_penalty={implied_terminal_penalty:+.3f}"
+            f" total_reward={self.rewards:+.3f}"
+            f" fills={self.fill_steps}"
+        )
         return EpisodeResult(
             symbol=self.day.symbol,
             day=self.day.day,
