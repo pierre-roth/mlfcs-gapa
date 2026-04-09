@@ -33,6 +33,7 @@ class EpisodeResult:
 
 
 def sharpe(values: list[float]) -> float:
+    """Per-episode Sharpe (NOT annualized). Initial way of computing it in this paper"""
     if len(values) < 2:
         return 0.0
     arr = np.asarray(values, dtype=np.float64)
@@ -40,3 +41,45 @@ def sharpe(values: list[float]) -> float:
     if std == 0:
         return 0.0
     return float(arr.mean() / std)
+
+# Annualized Sharpe helpers
+_TRADING_DAYS_PER_YEAR = 252
+ 
+ 
+def sharpe_annualized_episodes(
+    values: list[float],
+    episodes_per_day: float,
+) -> float:
+    """Annualized Sharpe from per-episode PnLs. Scales by sqrt(episodes_per_day * 252) so the number is comparable
+    across different episode lengths and test-set sizes.
+    """
+    if len(values) < 2 or episodes_per_day <= 0:
+        return 0.0
+    arr = np.asarray(values, dtype=np.float64)
+    std = arr.std(ddof=1)
+    if std == 0:
+        return 0.0
+    per_episode_sharpe = float(arr.mean() / std)
+    return per_episode_sharpe * np.sqrt(episodes_per_day * _TRADING_DAYS_PER_YEAR)
+ 
+def sharpe_daily(
+    pnls: list[float],
+    days: list[str],
+) -> float:
+    """Annualized Sharpe from daily aggregated PnLs. (industry standard)
+ 
+    Groups episode PnLs by day, sums within each day, then computes
+    annualized Sharpe = mean(daily_pnl) / std(daily_pnl) * sqrt(252).
+    """
+    if len(pnls) < 2:
+        return 0.0
+    import pandas as pd  # local import to keep module lightweight
+    df = pd.DataFrame({"pnl": pnls, "day": days})
+    daily = df.groupby("day")["pnl"].sum()
+    if len(daily) < 2:
+        return 0.0
+    std = float(daily.std(ddof=1))
+    if std == 0:
+        return 0.0
+    return float(daily.mean() / std * np.sqrt(_TRADING_DAYS_PER_YEAR))
+ 

@@ -16,13 +16,13 @@ from .utils import price_legal_check
 class Observation:
     lob: np.ndarray | None
     flat: np.ndarray
-
-
+    
 @dataclass
 class Fill:
     price: float
     volume: float
     taker: bool = False
+ 
 
 
 class MarketMakingEnv:
@@ -80,6 +80,7 @@ class MarketMakingEnv:
     def set_eval_context(self, episode_index: int | None) -> None:
         self.eval_episode_index = episode_index
 
+
     def reset(self, episode_span: tuple[int, int]) -> Observation:
         self.episode_span = episode_span
         self.episode_decisions = self.decision_indices[episode_span[0] : episode_span[1]]
@@ -120,7 +121,7 @@ class MarketMakingEnv:
         self.inventory_history: list[float] = []
         self.step_logs: list[dict[str, float]] = []
         return self._build_observation(self.episode_decisions[self.step_cursor] - self.config.latency)
-
+    
     def _build_flat_features(self, data_idx: int) -> np.ndarray:
         time_ratio = self.step_cursor / max(len(self.episode_decisions), 1)
         agent = np.array([self.inventory / max(self.config.max_inventory * self.config.trade_unit, 1), time_ratio], dtype=np.float32)
@@ -233,7 +234,7 @@ class MarketMakingEnv:
         key = f"{self.eval_context_key}|{event_idx}|{side}|{tick_index}"
         digest = hashlib.blake2b(key.encode("utf-8"), digest_size=8).digest()
         return int.from_bytes(digest, byteorder="big", signed=False) / float(1 << 64)
-
+ 
     def _initial_inventory_units(self) -> int:
         max_units = max(0, min(self.config.initial_inventory_max, self.config.max_inventory))
         if max_units <= 0:
@@ -244,10 +245,18 @@ class MarketMakingEnv:
         digest = hashlib.blake2b(key.encode("utf-8"), digest_size=8).digest()
         draw = int.from_bytes(digest, byteorder="big", signed=False)
         return int(draw % (2 * max_units + 1)) - max_units
-
+    
     def _match_one_side(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
         if volume == 0 or price == 0:
             return []
+        if self.config.fill_model == "legacy":
+            return self._match_legacy(event_idx, side, price, volume)
+        return self._match_queue(event_idx, side, price, volume)
+    
+    # ------------------------------------------------------------------
+    # Legacy fill model (original paper logic and the model we used before)
+    # ------------------------------------------------------------------
+    def _match_legacy(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
         trades = self.day.trades_by_index.get(event_idx)
         if trades is None or trades.price.size == 0:
             return []
@@ -294,12 +303,129 @@ class MarketMakingEnv:
                 if self._fill_draw(event_idx, side, price) < probability:
                     fills.append(Fill(price, signed_volume, taker=False))
         return fills
-
+    
+    # ------------------------------------------------------------------
+    # Queue-position-aware fill model
+    # ------------------------------------------------------------------
+    # MSG_COLUMNS indices for direct numpy access:
+    #   0: market_buy_volume   4: limit_buy_volume   8: withdraw_buy_volume
+    #   2: market_sell_volume   6: limit_sell_volume  10: withdraw_sell_volume
+    _MSG_WITHDRAW_BUY_VOL = 8
+    _MSG_WITHDRAW_SELL_VOL = 10
+ 
+    def _queue_ahead(self, quote_idx: int, event_idx: int, side: str, price: float) -> float:
+        """Estimate how many shares are ahead of the agent in the queue.
+ 
+        1. Start with the displayed depth at the agent's price level when
+           the order was placed (quote_idx).
+        2. Subtract cancellations (withdrawals) that occurred between
+           quote_idx and event_idx — these are orders ahead of us that
+           left the queue, improving our position.
+ 
+        With ``queue_position="back"`` we assume the agent is behind all
+        existing depth.  With ``queue_position="uniform"`` we assume a
+        random position in the queue (more optimistic).
+        """
+        depth_at_placement = self._level_volume(quote_idx, side, price)
+ 
+        if self.config.queue_position == "uniform":
+            # Random position: on average half the queue is ahead
+            draw = self._fill_draw(event_idx, side, price)
+            depth_at_placement = depth_at_placement * draw
+ 
+        # Estimate queue attrition from cancellations between placement
+        # and the current event.  msg has per-event withdraw volumes but
+        # they are aggregated across all price levels, so we scale by the
+        # fraction of total depth at our level.  This is approximate but
+        # directionally correct.
+        if event_idx > quote_idx and hasattr(self.day, 'msg') and self.day.msg is not None:
+            col = self._MSG_WITHDRAW_SELL_VOL if side == "ask" else self._MSG_WITHDRAW_BUY_VOL
+            # Sum all withdrawals between quote placement and fill check
+            start = quote_idx + 1
+            end = event_idx + 1  # inclusive of event_idx
+            if start < end and end <= len(self.day.msg):
+                total_withdrawals = float(self.day.msg[start:end, col].sum())
+                # Fraction of total side depth at our price level
+                total_depth = self._total_side_depth(quote_idx, side)
+                if total_depth > 0:
+                    level_fraction = depth_at_placement / total_depth
+                    attrition = total_withdrawals * level_fraction
+                    depth_at_placement = max(0.0, depth_at_placement - attrition)
+ 
+        return depth_at_placement
+ 
+    def _total_side_depth(self, event_idx: int, side: str) -> float:
+        """Sum of displayed volume across all 10 levels on one side."""
+        row = self.day.lob[event_idx]
+        total = 0.0
+        for level in range(10):
+            base = level * 4
+            vol = row[base + 1] if side == "ask" else row[base + 3]
+            total += float(vol)
+        return total
+ 
+    def _match_queue(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
+        agent_size = abs(volume)
+        quote_idx = max(int(event_idx - self.config.latency), self.config.lookback - 1)
+ 
+        #agent crosses the spread 
+        if side == "ask":
+            book_cross_price = float(self.day.bid1[event_idx])
+            if price <= book_cross_price:
+                return [Fill(book_cross_price, -agent_size, taker=True)]
+        else:
+            book_cross_price = float(self.day.ask1[event_idx])
+            if price >= book_cross_price:
+                return [Fill(book_cross_price, agent_size, taker=True)]
+ 
+        #check if market trades reach our queue position
+        trades = self.day.trades_by_index.get(event_idx)
+        if trades is None or trades.price.size == 0:
+            return []
+ 
+        traded_prices = trades.price
+        traded_sizes = trades.size
+        if trades.aggressor_side is not None:
+            desired_side = "B" if side == "ask" else "A"
+            side_mask = trades.aggressor_side == desired_side
+            if not np.any(side_mask):
+                return []
+            traded_prices = traded_prices[side_mask]
+            traded_sizes = traded_sizes[side_mask]
+ 
+        # Trades that swept through our price level (traded at a worse
+        # price for the aggressor than our quote) guarantee a fill.
+        if side == "ask":
+            through = traded_prices > price + self.config.tick_size / 2
+        else:
+            through = traded_prices < price - self.config.tick_size / 2
+ 
+        if np.any(through):
+            signed = -agent_size if side == "ask" else agent_size
+            return [Fill(price, signed, taker=False)]
+ 
+        # Trades at our exact price level: check queue position
+        exact = np.isclose(traded_prices, price, atol=self.config.tick_size / 2)
+        if not np.any(exact):
+            return []
+ 
+        exact_volume = float(traded_sizes[exact].sum())
+        queue_ahead = self._queue_ahead(quote_idx, event_idx, side, price)
+ 
+        # Volume that reaches past the orders ahead of us
+        volume_reaching_us = exact_volume - queue_ahead
+        if volume_reaching_us <= 0:
+            return []
+ 
+        filled = min(agent_size, volume_reaching_us)
+        signed = -filled if side == "ask" else filled
+        return [Fill(price, signed, taker=False)]
+    
     def _reward_unit(self, midprice: float, spread: float) -> float:
         if self.config.reward_scale_mode == "ticks":
             return max(self.config.tick_size, 1e-8)
         return max(spread, self.config.tick_size, 1e-8)
-
+ 
     def _inventory_penalty(self) -> float:
         inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
         inv_norm = float(self.inventory / inv_limit)
@@ -314,13 +440,15 @@ class MarketMakingEnv:
             l2_coeff = self.config.zeta_l2 if self.config.zeta_l2 is not None else self.config.zeta
             return float(l2_coeff * inv_norm**2 + self.config.zeta_l1 * abs(inv_norm))
         return float(self.config.zeta * inv_norm**2)
-
+ 
     def _terminal_inventory_penalty(self, midprice: float, spread: float) -> float:
-        if self.inventory == 0:
+        net_inventory = self.inventory - self.initial_inventory
+        if net_inventory == 0:
             return 0.0
         reward_unit = self._reward_unit(midprice, spread)
-        liquidation_cost = abs(self.inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
+        liquidation_cost = abs(net_inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
         return float(self.config.terminal_inventory_cost_scale * liquidation_cost / reward_unit)
+ 
 
     def step(self, action: np.ndarray | int | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
         event_idx = int(self.episode_decisions[self.step_cursor])
@@ -343,7 +471,7 @@ class MarketMakingEnv:
         self.quote_biases_bps.append(float(bias_bps))
         self.ask_distance_bps.append(float(ask_distance_bps))
         self.bid_distance_bps.append(float(bid_distance_bps))
-
+ 
         reward_unit = self._reward_unit(midprice, float(orders.get("spread", self.day.spread[event_idx])))
         trade_edge_step = 0.0
         fee_step = 0.0
@@ -358,14 +486,14 @@ class MarketMakingEnv:
             fee_step += fee
         if fills:
             self.fill_steps += 1
-
+ 
         self.value = self.cash + self.inventory * midprice
         self.trading_pnl += trade_edge_step
         trade_units = trade_edge_step / reward_unit
         self.trading_pnl_units += trade_units
         reward = float(trade_units - self._inventory_penalty())
         self.inventory_history.append(float(self.inventory))
-
+ 
         self.step_cursor += 1
         done = self.step_cursor >= len(self.episode_decisions)
         terminal_penalty = 0.0
@@ -389,7 +517,7 @@ class MarketMakingEnv:
         elif done and self.config.allow_terminal_inventory and self.inventory != 0:
             terminal_penalty = self._terminal_inventory_penalty(midprice, float(orders.get("spread", self.day.spread[event_idx])))
             reward -= terminal_penalty
-
+ 
         self.rewards += reward
         self.step_logs.append(
             {
@@ -416,17 +544,12 @@ class MarketMakingEnv:
         )
         next_obs = self._build_observation(max(quote_idx, self.config.lookback - 1)) if done else self._build_observation(max(int(self.episode_decisions[self.step_cursor] - self.config.latency), self.config.lookback - 1))
         return next_obs, reward, done, {"fills": len(fills), "inventory": float(self.inventory)}
-
+    
     def episode_result(self, method: str, episode_index: int, latency: int | None = None) -> EpisodeResult:
         avg_spread = float(np.mean([spread for spread in self.quote_spreads if spread > 0])) if self.quote_spreads else 0.0
-        if self.inventory_history:
-            inventory_offsets = np.asarray(self.inventory_history, dtype=np.float64) - float(self.initial_inventory)
-            avg_position = float(np.mean(inventory_offsets))
-            avg_abs_position = float(np.mean(np.abs(inventory_offsets)))
-        else:
-            avg_position = 0.0
-            avg_abs_position = 0.0
-        pnl = float(self.trading_pnl)
+        avg_position = float(np.mean(self.inventory_history)) if self.inventory_history else 0.0
+        avg_abs_position = float(np.mean(np.abs(self.inventory_history))) if self.inventory_history else 0.0
+        pnl = float(self.value)
         nd_pnl = pnl / avg_spread if avg_spread > 0 else 0.0
         pnl_map = pnl / avg_abs_position if avg_abs_position > 0 else 0.0
         profit_ratio = pnl / self.turnover if self.turnover > 0 else 0.0
