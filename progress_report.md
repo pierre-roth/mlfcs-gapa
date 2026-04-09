@@ -152,8 +152,93 @@ Copy this block for each new week.
 - Warning: data normalization is still different than in the paper. (log instead of divide by max volume, no perfect stationarity, but assume paper doesn't have it either)
 
 
-## Week of 2026-03-16
+
+
+## Week of 2026-03-30
 
 ### Weekly Snapshot
 
-TODO
+- Overall status: `lobmmx` reward distortion fixed; PPO now trains to a profitable policy on AAPL.
+- Biggest win: Identified and fixed the terminal inventory penalty bug in `lobmmx` — terminal penalty was 10-80× larger than trading edge, making the reward signal uninformative.
+
+### Contributor Update: Amine
+
+- Focus area: `lobmmx` reward distortion diagnosis and fix.
+- Diagnosed the terminal inventory penalty bug: penalty was computed on `abs(inventory)` instead of `abs(inventory - initial_inventory)`, causing agents with random initial inventory to receive strongly negative reward regardless of trading quality.
+- Fixed `_terminal_inventory_penalty()` in `lobmmx/env.py` to use net inventory change from episode start.
+- Added `diag_reward.py` diagnostic script to quantify reward components without running full training.
+- Validated fix on Euler (medium mode, CPU): PPO now converges to `pnl_mean=0.026`, `nd_pnl_mean=0.229`, `sharpe=0.827` vs completely broken reward signal before.
+- PR: https://github.com/pierre-roth/mlfcs-gapa/pull/1
+
+
+### Contributor Update: Anja
+
+- Focus area: Sharpe ratio computation in `lobmmx`.
+- Context:
+  - The paper (Guo et al., IJCNN 2023) computes Sharpe as `mean(episode_pnls) / std(episode_pnls)` across all test episodes. This is not annualized and not aggregated by day — the number depends on how many episodes you have and how long they are, so it is not comparable across setups or to standard finance Sharpe ratios.
+  
+- Completed:
+  - Added two annualized Sharpe functions in `lobmmx/metrics.py` alongside the original `sharpe()` (kept for backward compatibility):
+    - `sharpe_annualized_episodes(values, episodes_per_day)`: scales the per-episode Sharpe by `sqrt(episodes_per_day * 252)`. Useful as a diagnostic but not the recommended headline metric.
+    - `sharpe_daily(pnls, days)`: groups episode PnLs by day, sums within each day, then computes `mean(daily_pnl) / std(daily_pnl) * sqrt(252)`. This is the industry-standard definition and the recommended primary metric.
+  - Updated `summarize_results()` in `lobmmx/pipeline.py`:
+    - now emits `sharpe_annual_ep` and `sharpe_annual_daily` alongside the original `sharpe` in every summary dict.
+   - Updated `run_report()` in `lobmmx/report.py`:
+    - `method_summary`, `symbol_summary`, and `paper_table` now compute and include `sharpe_annual_daily` alongside the original `sharpe`.
+  - Updated `_format_overall_results()` in `lobmmx/report.py`:
+    - computes and includes `sharpe_annual_daily` and `sharpe_annual_ep` columns in both the raw summary DataFrame and the formatted output table.
+  - Same changes applied to `lobmm/metrics.py`, `lobmm/pipeline.py`, and `lobmm/report.py` for consistency.
+  - All existing results remain comparable — the original `sharpe` field is unchanged, the new fields are additive.
+- Links:
+  - `lobmmx/metrics.py`, `lobmmx/pipeline.py`, `lobmmx/report.py`
+  - `lobmm/metrics.py`, `lobmm/pipeline.py`, `lobmm/report.py`
+
+
+## Week of 2026-04-04
+
+### Weekly Snapshot
+
+- Overall status: `lobmmx` fill model replaced with a queue-position-aware model that uses the L3 (MBO) cancellation data from Databento. The original model was too generous for US large-cap equities.
+- Main goal for the week: Fix the fill simulator as it was the weakest link, make use of Level 3 (MBO) data and improve the model to make it aware of the position in the queue.
+- Biggest win: Replaced the paper-style probabilistic fill rule with a queue-aware model that uses actual cancellation flow from `msg.csv`.
+- Biggest risk or blocker: The more realistic `queue/back` setting produces much sparser fills, which may make PPO training harder. This likely requires either: training under `queue/uniform` and evaluating under `queue/back`, or increasing `trade_unit` and retuning inventory and reward scaling.
+
+### Contributor Update: Anja
+
+- Focus area: Making the `lobmmx` fill simulator more realistic for NASDAQ data.
+- Context:
+  - The paper (Guo et al., IJCNN 2023) was designed for the Shenzhen Stock Exchange, where tick sizes are sub-penny relative to the stock price, spreads are wider, and the microstructure is fundamentally different from US large-cap equities.
+  - When we apply the same simulator to AAPL and GOOGL using Databento Level 3 (MBO) data, the fill model produces unrealistic results.
+  - The original fill model uses a simple probabilistic rule: when a trade occurs at the agent's quoted price, the fill probability is `P(fill) = traded_volume / (traded_volume + depth)`. This formula implicitly assumes the agent's order is uniformly distributed in the queue. In reality, the agent's order was just placed and sits at the back of the queue.
+  - This update proposes a new queue-position-aware model that uses the Level 3 (MBO) data. The key idea is: when the agent places an order, it joins the back of the queue at that price level. It only gets filled when the incoming trade volume exhausts all orders ahead of it.
+- Findings from AAPL sample day analysis (20260302):
+  - When 32 shares trade at ask1 against 91 shares of displayed depth, the original model gives `P(fill) = 32 / (32 + 91) = 26%`.
+  - Under a back-of-queue model, the fill is `0%` because the trade does not reach through the 91 shares already ahead of the agent.
+  - In AAPL, `0%` of trades were trade-throughs, so the original guaranteed-fill path (`if np.any(better)`) never triggers.
+  - Conclusion: original model is too generous.
+- Completed:
+  - Implemented a new queue-position-aware fill model in `lobmmx/env.py`:
+    - Replaced `_match_one_side` with a dispatcher between `_match_legacy` (original, preserved for backward compatibility) and `_match_queue` (new).
+    - `_match_queue` processes each fill decision in three steps:
+      1. Taker check: if the agent's price crosses the spread (e.g. ask quote ≤ best bid), it executes immediately as a taker. This is unchanged from the original.
+      2. Trade-through check: if any trades at this event executed at a price worse than the agent's quote (from the aggressor's perspective), the agent's order is guaranteed filled. In practice this never happens for AAPL at the inside spread.
+      3. Queue position check: for trades at the agent's exact price level, we compute how many shares were ahead of the agent in the queue. The agent only gets filled by the portion of traded volume that penetrates past the queue ahead.
+    - Added `_queue_ahead` for queue position estimation:
+      - When the agent places an order at `t_quote`, the displayed depth at that price is treated as queue ahead.
+      - Between `t_quote` and the fill-check time `t_event`, cancellations reduce queue ahead.
+      - Cancellation attrition is estimated from Level 3 message data in `msg.csv`: `attrition = total_withdrawals * (depth_at_our_level / total_side_depth)`.
+      - This is approximate because withdrawals are aggregated across price levels (not per-level), but it uses real information available from the MBO feed (so it is directionally correct).
+      - Effective queue ahead becomes: `queue_ahead = max(0, depth_at_placement - attrition)`.
+    - Unlike the original model (all-or-nothing fill), the queue model naturally supports partial fills.
+  - Added `msg` array (raw per-event message flow columns) to `DayData` in `lobmmx/data.py`:
+    - Previously this data was loaded from `msg.csv` for computing rolling dynamic features (OSI, RV, RSI) and then discarded.
+    - Now retained on `DayData` so the environment can access `withdraw_buy_volume` and `withdraw_sell_volume` for queue attrition.
+    - Columns follow `MSG_COLUMNS` order: market buy/sell volume and count, limit buy/sell volume and count, withdraw buy/sell volume and count.
+  - Added `fill_model` and `queue_position` configuration parameters in `lobmmx/config.py`:
+    - `fill_model`: `"legacy"` (original paper model) or `"queue"` (new, default).
+    - `queue_position`: `"back"` (agent joins end of queue, most realistic) or `"uniform"` (random queue position, more optimistic).
+  - All previous runs used the legacy fill model and remain valid for comparison by setting `fill_model="legacy"`.
+- Links:
+  - `lobmmx/env.py`
+  - `lobmmx/data.py`
+  - `lobmmx/config.py`
