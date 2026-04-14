@@ -36,6 +36,7 @@ Current synthetic status:
 - Synthetic pretraining now reloads the best checkpoint correctly and supports auxiliary regime supervision.
 - PPO now supports a legal behavior-cloning warm start from a baseline teacher.
 - Acceptance checking exists and writes multi-seed baseline summaries under `artifacts_sim/.../acceptance/`.
+- A reusable one-symbol learning matrix now exists in `lobmmsim/learning_matrix.py`.
 
 Most recent synthetic evidence:
 - One-symbol `000001` pretrain probe:
@@ -49,10 +50,34 @@ Most recent synthetic evidence:
   - `bc_samples = 4000`
   - `bc_final_loss ~= 0.0625`
   - PPO still collapsed to `pnl_mean = 0` and `trades_mean = 0` under smoke budget
+- Medium one-symbol comparison on shared synthetic data:
+  - matrix run: `artifacts_sim/synthetic_medium_000001/`
+  - `scratch_noaux`:
+    - `best_f1 ~= 0.326`
+    - `ppo_pnl_mean ~= -0.666`
+    - `ppo_sharpe ~= -0.043`
+    - `ppo_trades_mean ~= 69.3`
+  - `scratch_aux`:
+    - `best_f1 ~= 0.302`
+    - `test_regime_accuracy ~= 0.486`
+    - PPO outcome effectively unchanged from `scratch_noaux`
+  - `bc_aux`:
+    - `bc_samples = 35742`
+    - `bc_final_loss ~= 0.0052`
+    - `ppo_pnl_mean ~= 0.222`
+    - `ppo_sharpe ~= 0.333`
+    - `ppo_trades_mean ~= 0.22`
+  - medium acceptance scan on the same branch configuration:
+    - `fixed1_pnl_mean_avg ~= -149.1`
+    - `oracle_paper_pnl_mean_avg ~= -34.6`
+    - `fixed1_positive_seed_fraction = 0.2`
+    - `oracle_better_than_fixed_fraction = 0.8`
 
 Interpretation:
 - Synthetic branch plumbing is complete enough for serious learning experiments.
-- The next step is medium-budget one-symbol PPO, not more broad simulator work.
+- Auxiliary regime supervision improves interpretability metrics a bit, but did not improve PPO by itself.
+- Behavior cloning is the first change that made PPO profitable in the medium one-symbol study, but it is still too conservative to be a satisfactory learned market-making policy.
+- The simulator remains seed-sensitive under the medium acceptance gate, so it is not yet safe to scale experiments broadly without another calibration pass.
 
 ### Mainline `lobmm` best AAPL configuration
 
@@ -134,6 +159,12 @@ Status:
         - `bc_samples = 4000`
         - `bc_final_loss ~= 0.0625`
         - PPO still produced `0` trades under smoke budget
+  - synthetic medium matrix:
+    - `synthetic_medium_000001`
+    - purpose: compare PPO-from-scratch, auxiliary supervision, and BC warm start on one fixed synthetic dataset
+    - result:
+      - BC improved sign and Sharpe, but only by collapsing to almost no trading
+      - auxiliary supervision alone did not move PPO outcomes
   - integrated branch-validation runs:
     - `euler_lobmmx_stage3_legacy_control`
       - train: `63388924`
@@ -210,10 +241,11 @@ Status:
   - `lobmmsim/acceptance.py` provides a repeatable multi-seed acceptance gate for the simulator
   - synthetic pretraining now supports auxiliary regime supervision from `latent.csv`
   - PPO now supports behavior-cloning warm start from a legal teacher policy
+  - `lobmmsim/learning_matrix.py` provides a fixed-data comparison workflow for one-symbol synthetic studies
   - current synthetic conclusion:
-    - simulator quality is good enough to continue
-    - smoke-budget PPO is still too weak to judge learning quality
-    - next run should be medium-budget, one-symbol, with BC enabled
+    - BC helps more than auxiliary supervision, but current BC+PPO is too inactive
+    - smoke-budget PPO is too weak, and the medium matrix is now the right local evaluation loop
+    - before scaling up, the synthetic market should be recalibrated until the acceptance scan shows a stable positive passive edge
 - Corrected `lobmmx` stage-2 AAPL runs finished cleanly:
   - shared pretrain remained healthy (`best_f1 = 0.6450`)
   - `spread_aggr` was clearly best:

@@ -31,6 +31,10 @@ class SyntheticPretrainModel(nn.Module):
         return self.mid_head(features), self.regime_head(features)
 
 
+def _use_auxiliary_task(config: PretrainConfig) -> bool:
+    return config.pretrain_aux_task != "none" and config.pretrain_aux_weight > 0.0
+
+
 def _dataset_class_weights(dataset: PretrainDataset) -> torch.Tensor:
     counts = dataset.class_counts()
     safe = torch.tensor([max(counts[idx], 1) for idx in range(3)], dtype=torch.float32)
@@ -111,6 +115,7 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
         optimizer = Adam(model.parameters(), lr=config.pretrain_lr)
         mid_criterion = nn.CrossEntropyLoss(weight=_dataset_class_weights(train_ds).to(config.device))
         regime_criterion = nn.CrossEntropyLoss()
+        use_auxiliary_task = _use_auxiliary_task(config)
         best_f1 = -1.0
         best_state = None
         history = []
@@ -121,8 +126,8 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
                 mid_logits, regime_logits = model(lob.to(config.device))
                 labels = labels.to(config.device)
                 mid_loss = mid_criterion(mid_logits, labels[:, 0])
-                regime_loss = regime_criterion(regime_logits, labels[:, 1])
-                loss = mid_loss + config.pretrain_aux_weight * regime_loss
+                regime_loss = regime_criterion(regime_logits, labels[:, 1]) if use_auxiliary_task else torch.zeros((), device=config.device)
+                loss = mid_loss + config.pretrain_aux_weight * regime_loss if use_auxiliary_task else mid_loss
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
@@ -144,6 +149,7 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
             "path": str(symbol_dir / config.backbone_name),
             "pretrain_aux_task": config.pretrain_aux_task,
             "pretrain_aux_weight": config.pretrain_aux_weight,
+            "auxiliary_enabled": use_auxiliary_task,
             "split_metrics": {
                 "train": _evaluate_classifier(model, train_loader, config.device),
                 "val": _evaluate_classifier(model, val_loader, config.device),

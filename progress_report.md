@@ -85,10 +85,19 @@ Copy this block for each new week.
     - `Fixed_1 positive seed fraction = 0.4`
     - `OraclePaper >= Fixed_1 fraction = 0.6`
   - Behavior cloning is wired through and produced `bc_samples = 4000`, but the smoke-budget PPO probe still ended with `pnl_mean = 0` and `trades_mean = 0`.
+  - Medium one-symbol comparison on a fixed `000001` synthetic dataset (`synthetic_medium_000001`) now exists with three learning variants:
+    - `scratch_noaux`: `best_f1 ~= 0.326`, `ppo_pnl ~= -0.666`, `sharpe ~= -0.043`, `trades ~= 69.3`
+    - `scratch_aux`: `best_f1 ~= 0.302`, `regime_accuracy ~= 0.486`, but identical PPO outcome to `scratch_noaux`
+    - `bc_aux`: `bc_samples = 35,742`, `bc_final_loss ~= 0.0052`, `ppo_pnl ~= 0.222`, `sharpe ~= 0.333`, `trades ~= 0.22`
+  - The same medium matrix also ran a fresh acceptance scan and found the synthetic market is still too seed-sensitive under this setup:
+    - `Fixed_1 pnl_mean_avg ~= -149.1`
+    - `OraclePaper pnl_mean_avg ~= -34.6`
+    - `Fixed_1 positive seed fraction = 0.2`
 - Conclusion:
   - The branch is now structurally complete enough for real synthetic-learning experiments.
-  - The simulator is no longer the dominant blocker.
-  - The next useful work is medium-budget one-symbol training and policy diagnostics, not more general simulator engineering.
+  - Auxiliary regime supervision helps latent recoverability a bit, but did not improve PPO behavior on its own.
+  - Behavior cloning is the first change that made PPO profitable on the medium one-symbol experiment, but it did so by collapsing to an overly conservative policy with almost no trades.
+  - The simulator is still not robust enough across seeds to be treated as “solved”; the next work should be a targeted simulator acceptance recalibration plus a less conservative baseline-guided policy update.
 - Links:
   - `lobmmsim/`
   - `tests/test_lobmmsim_simulator.py`
