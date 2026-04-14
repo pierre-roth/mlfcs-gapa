@@ -548,3 +548,23 @@ This section is for fast duplicate avoidance.
 - `ssh euler 'cd /cluster/home/piroth/mlfcs-gapa && git pull --ff-only'`
 - `ssh euler 'cd /cluster/home/piroth/mlfcs-gapa && cluster/submit_euler.sh ...'`
 - `ssh euler 'cd /cluster/home/piroth/mlfcs-gapa && cluster/submit_lobmmx_aapl.sh'`
+
+## 2026-04-14 Synthetic Branch
+
+- New active code path:
+  - `lobmmsim/`
+  - isolated synthetic-data branch intended to stay close to the paper's continuous implementation
+- Implemented:
+  - synthetic top-10 LOB generator with paper-style session windows and stable windows
+  - per-event `latent.csv` sidecar with efficient price, latent alpha, regime, signed flow, queue pressure, and event labels
+  - paper-style continuous environment with 2-action quote control and hybrid reward
+  - synthetic pretraining, PPO training, and diagnostics/report pipeline
+  - oracle latent baseline and fixed-level baseline for synthetic evaluation
+- Verified locally:
+  - `uv run pytest tests/test_lobmmsim_simulator.py tests/test_lobmmsim_env.py tests/test_lobmmsim_smoke.py -q`
+  - result: `5 passed`
+- Current branch:
+  - `codex/simulated-continuous-paper`
+- Current conclusion:
+  - the synthetic path is runnable end to end and isolated from the main real-data experimentation code
+  - next work on this branch should focus on calibration quality and whether learned policies recover the planted latent signal

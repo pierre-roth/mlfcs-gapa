@@ -214,3 +214,24 @@ Copy this block for each new week.
 ### Weekly Snapshot
 
 TODO
+
+## Week of 2026-04-14
+
+### Synthetic Continuous Branch
+
+- Implemented a new isolated `lobmmsim/` package on branch `codex/simulated-continuous-paper`.
+- Added a lightweight event-driven synthetic top-10 LOB generator that writes paper-like processed day folders plus `latent.csv` sidecar metadata.
+- Added a paper-faithful continuous environment:
+  - 2-action continuous quoting
+  - `2000`-event episodes
+  - zero initial cash/inventory
+  - terminal liquidation
+  - hybrid reward using dampened PnL, trading PnL, and inventory penalty
+- Added synthetic-data pretraining, PPO training, baseline evaluation, and report generation on top of the existing PyTorch Attn-LOB / PPO core.
+- Added tests for:
+  - simulator determinism and book invariants
+  - reward-component correctness and terminal liquidation
+  - end-to-end synthetic smoke pipeline
+- Verification:
+  - `uv run pytest tests/test_lobmmsim_simulator.py tests/test_lobmmsim_env.py tests/test_lobmmsim_smoke.py -q`
+  - result: `5 passed`
