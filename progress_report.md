@@ -240,5 +240,12 @@ TODO
   - Added a synthetic-specific PPO action prior so the continuous policy starts with neutral bias but a much narrower spread and actually receives fills.
   - Verified on a branch-level one-symbol smoke run for `000001` that the market is now economically sane:
     - `Fixed_1` profitable with `pnl_mean ~= 1544.5`
-    - `OracleAlpha` profitable with `pnl_mean ~= 3578.5`
+    - the earlier non-paper oracle was profitable, but it violated the paper action semantics and was removed
     - PPO still negative in smoke, so the simulator is now usable for research but not yet a solved learning problem.
+- Paper-faithfulness correction:
+  - Replaced the illegal directional oracle with a paper-compatible `OraclePaper` baseline that only adjusts reservation-price bias magnitude via inventory sign and uses the latent signal to modulate aggressiveness.
+  - Stabilized the synthetic market further with less drift-dominated repricing and more time at 2 ticks.
+  - Multi-seed smoke baseline scan on `000001` now shows a much better-behaved market:
+    - `Fixed_1` moved from strongly negative / unstable to near break-even or modestly positive depending on seed
+    - `OraclePaper` is consistently less negative than before and close to break-even across seeds
+  - The main remaining gap is learning quality, not basic simulator sanity.

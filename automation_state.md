@@ -573,6 +573,13 @@ This section is for fast duplicate avoidance.
   - after retuning the event-flow logic and slowing displayed-book repricing, the synthetic market became sane enough for research
   - on a one-symbol `000001` smoke run:
     - `Fixed_1` became profitable (`pnl_mean ~= 1544.5`)
-    - `OracleAlpha` became more profitable (`pnl_mean ~= 3578.5`)
+    - the old directional oracle became more profitable, but that oracle was not paper-faithful and has since been removed
     - PPO still underperformed and remained negative in smoke, which is acceptable at this stage because the main blocker moved from simulator realism to learning quality
   - added a synthetic-specific PPO prior so the 2-action continuous policy starts close enough to the touch to receive fills
+  - corrected a paper-faithfulness issue:
+    - the synthetic oracle baseline now respects the paper action space and is called `OraclePaper`
+    - it no longer uses illegal directional reservation-price skew
+  - latest baseline stability check on `000001` over seeds `11, 19, 31, 37, 43`:
+    - `Fixed_1` PnL moved to `[33.5, 309.5, -40.0, -87.5, -152.5]`
+    - `OraclePaper` PnL moved to `[-33.5, -55.5, -0.5, -24.0, -15.5]`
+    - conclusion: the synthetic market is now close to usable and no longer grossly adversarial, but it still needs learning-side improvement more than more simulator repair

@@ -104,9 +104,10 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
             history.append(epoch_row)
             if float(val_metrics["f1"]) > best_f1:
                 best_f1 = float(val_metrics["f1"])
-                best_state = {key: value.detach().cpu() for key, value in model.backbone.state_dict().items()}
+                best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         assert best_state is not None
-        torch.save(best_state, symbol_dir / config.backbone_name)
+        model.load_state_dict(best_state)
+        torch.save(model.backbone.state_dict(), symbol_dir / config.backbone_name)
         pd.DataFrame(history).to_csv(symbol_dir / "history.csv", index=False)
         summary = {
             "symbol": symbol,
@@ -132,4 +133,3 @@ def main(config: PretrainConfig) -> None:
 
 if __name__ == "__main__":
     main()
-

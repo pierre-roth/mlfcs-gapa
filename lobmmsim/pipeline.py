@@ -7,7 +7,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from .baselines import BaselinePolicy, FixedLevelPolicy, OracleAlphaPolicy
+from .baselines import BaselinePolicy, FixedLevelPolicy, OraclePaperPolicy
 from .config import ExperimentConfig, RLTrainConfig
 from .data import DayData, apply_lob_normalizer, discover_days, fit_lob_normalizer, load_day_data, split_days
 from .env import MarketMakingEnv
@@ -67,7 +67,7 @@ def summarize_results(frame: pd.DataFrame) -> dict[str, float]:
 
 
 def standard_baselines(config: ExperimentConfig) -> list[BaselinePolicy]:
-    return [FixedLevelPolicy(config, 1), OracleAlphaPolicy(config)]
+    return [FixedLevelPolicy(config, 1), OraclePaperPolicy(config)]
 
 
 def evaluate_baseline_policy(policy: BaselinePolicy, days: list[DayData], config: RLTrainConfig) -> tuple[list[EpisodeResult], dict[str, float]]:

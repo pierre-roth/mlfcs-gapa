@@ -42,9 +42,9 @@ class SymbolProfile:
 
 
 _SYMBOL_PROFILES: dict[str, SymbolProfile] = {
-    "000001": SymbolProfile(base_price=12.5, events_per_day=120_000, depth_scale=1.25, alpha_persistence=0.97, alpha_noise=0.045, market_order_bias=0.16, add_rate=1.0, cancel_rate=0.85),
-    "000858": SymbolProfile(base_price=135.0, events_per_day=90_000, depth_scale=1.0, alpha_persistence=0.975, alpha_noise=0.04, market_order_bias=0.14, add_rate=0.95, cancel_rate=0.8),
-    "002415": SymbolProfile(base_price=32.0, events_per_day=60_000, depth_scale=0.8, alpha_persistence=0.98, alpha_noise=0.035, market_order_bias=0.12, add_rate=0.9, cancel_rate=0.75),
+    "000001": SymbolProfile(base_price=12.5, events_per_day=120_000, depth_scale=1.25, alpha_persistence=0.97, alpha_noise=0.035, market_order_bias=0.08, add_rate=1.05, cancel_rate=0.82),
+    "000858": SymbolProfile(base_price=135.0, events_per_day=90_000, depth_scale=1.0, alpha_persistence=0.975, alpha_noise=0.032, market_order_bias=0.07, add_rate=1.0, cancel_rate=0.78),
+    "002415": SymbolProfile(base_price=32.0, events_per_day=60_000, depth_scale=0.8, alpha_persistence=0.98, alpha_noise=0.03, market_order_bias=0.06, add_rate=0.96, cancel_rate=0.72),
 }
 
 
@@ -127,13 +127,13 @@ class SyntheticOrderBook:
             self.regime = int(self.rng.choice([-1, 0, 1], p=[0.3, 0.4, 0.3]))
             self._regime_clock = 0
             regime_shift = True
-        target = self.signal_scale * 0.45 * self.regime
+        target = self.signal_scale * 0.35 * self.regime
         self.alpha = (
             self.profile.alpha_persistence * self.alpha
             + (1.0 - self.profile.alpha_persistence) * target
-            + self.rng.normal(0.0, 0.7 * self.profile.alpha_noise * self.signal_scale)
+            + self.rng.normal(0.0, 0.55 * self.profile.alpha_noise * self.signal_scale)
         )
-        efficient_move = 0.008 * self.alpha + self.rng.normal(0.0, 0.6 * self.noise_scale)
+        efficient_move = 0.0035 * self.alpha + self.rng.normal(0.0, 0.28 * self.noise_scale)
         self.efficient_price = max(self.tick_size, self.efficient_price + efficient_move)
         return regime_shift, efficient_move
 
@@ -142,7 +142,7 @@ class SyntheticOrderBook:
 
     def _desired_spread_ticks(self) -> int:
         imbalance = abs(self._top_imbalance())
-        if imbalance > 0.55 or abs(self.alpha) > 0.35 * self.signal_scale:
+        if imbalance > 0.30 or abs(self.alpha) > 0.18 * self.signal_scale or self.rng.random() < 0.32:
             return 2
         return 1
 
@@ -151,8 +151,8 @@ class SyntheticOrderBook:
         alpha = self.alpha
         # Positive latent alpha should favor profitable bid-side fills before the future upward move,
         # rather than immediate same-direction adverse selection.
-        mb = np.exp(self.profile.market_order_bias - 0.45 * alpha - 0.15 * imbalance)
-        ms = np.exp(self.profile.market_order_bias + 0.45 * alpha + 0.15 * imbalance)
+        mb = np.exp(self.profile.market_order_bias - 0.25 * alpha - 0.12 * imbalance)
+        ms = np.exp(self.profile.market_order_bias + 0.25 * alpha + 0.12 * imbalance)
         lb = np.exp(self.profile.add_rate - 0.20 * alpha + 0.35 * max(imbalance, 0.0))
         ls = np.exp(self.profile.add_rate + 0.20 * alpha + 0.35 * max(-imbalance, 0.0))
         cb = np.exp(self.profile.cancel_rate + 0.15 * alpha - 0.15 * max(imbalance, 0.0))
@@ -226,7 +226,7 @@ class SyntheticOrderBook:
                 msg["market_buy_volume"] = size
                 msg["market_buy_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state + size / self.trade_unit
-                self.efficient_price += 0.025 * self.tick_size + 0.01 * self.alpha
+                self.efficient_price += 0.004 * self.tick_size + 0.002 * self.alpha
             else:
                 trade["price"] = self.bid1
                 trade["size"] = size
@@ -235,7 +235,7 @@ class SyntheticOrderBook:
                 msg["market_sell_volume"] = size
                 msg["market_sell_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state - size / self.trade_unit
-                self.efficient_price -= 0.025 * self.tick_size - 0.01 * self.alpha
+                self.efficient_price -= 0.004 * self.tick_size - 0.002 * self.alpha
         elif event_type == "limit":
             level = _weighted_level(self.rng)
             if side == "buy":

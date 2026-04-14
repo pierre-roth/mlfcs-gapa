@@ -39,8 +39,8 @@ class FixedLevelPolicy(BaselinePolicy):
         return QuoteDecision(ask, -self.config.trade_unit, bid, self.config.trade_unit, ask - bid)
 
 
-class OracleAlphaPolicy(BaselinePolicy):
-    name = "OracleAlpha"
+class OraclePaperPolicy(BaselinePolicy):
+    name = "OraclePaper"
 
     def __init__(self, config: ExperimentConfig) -> None:
         self.config = config
@@ -49,11 +49,21 @@ class OracleAlphaPolicy(BaselinePolicy):
         latent = day.latent.iloc[idx]
         mid = float(day.midprice[idx])
         alpha = float(latent["latent_alpha"])
-        fair_value = float(latent["efficient_price"])
-        fair_delta = np.clip(fair_value - mid, -self.config.max_bias, self.config.max_bias)
-        alpha_delta = np.clip(alpha, -1.0, 1.0) * self.config.max_bias * 0.5
-        delta = float(np.clip(0.7 * fair_delta + 0.3 * alpha_delta, -self.config.max_bias, self.config.max_bias))
-        reservation = mid + delta - np.sign(inventory) * min(abs(delta), self.config.max_bias * 0.25)
-        spread = max(self.config.tick_size, min(float(day.spread[idx]) + self.config.tick_size, 2.0 * self.config.tick_size))
+        realized_vol = float(day.dynamic[idx, 0]) if day.dynamic.shape[1] > 0 else 0.0
+        risk_scale = min(1.0, abs(alpha) / 0.5 + realized_vol / 0.02)
+        # Paper-faithful: bias direction is controlled only by inventory sign.
+        if inventory == 0:
+            delta = 0.0
+            reservation = mid
+            spread = max(self.config.tick_size, float(day.spread[idx]))
+        else:
+            inventory_sign = np.sign(inventory)
+            favorable = inventory_sign * alpha < 0.0
+            delta = self.config.max_bias * (0.15 if favorable else 0.85)
+            reservation = mid - np.sign(inventory) * delta
+            spread = max(
+                self.config.tick_size,
+                float(day.spread[idx]) * (0.75 + 0.75 * risk_scale),
+            )
         ask, bid = price_legal_check(reservation + spread / 2.0, reservation - spread / 2.0, self.config.tick_size)
         return QuoteDecision(ask, -self.config.trade_unit, bid, self.config.trade_unit, ask - bid)

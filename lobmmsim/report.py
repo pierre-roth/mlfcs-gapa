@@ -121,7 +121,7 @@ def run_report(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         summary = {
             **summarize_results(ppo_frame),
             **diagnostics,
-            "oracle_pnl_mean": float(baseline_summary.get("OracleAlpha", {}).get("pnl_mean", 0.0)),
+            "oracle_pnl_mean": float(baseline_summary.get("OraclePaper", {}).get("pnl_mean", 0.0)),
             "fixed1_pnl_mean": float(baseline_summary.get("Fixed_1", {}).get("pnl_mean", 0.0)),
         }
         save_json(symbol_dir / "summary.json", summary)
