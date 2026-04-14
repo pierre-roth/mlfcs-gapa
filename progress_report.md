@@ -235,3 +235,10 @@ TODO
 - Verification:
   - `uv run pytest tests/test_lobmmsim_simulator.py tests/test_lobmmsim_env.py tests/test_lobmmsim_smoke.py -q`
   - result: `5 passed`
+- Follow-up calibration work:
+  - Retuned the synthetic event model so latent alpha acts more like a future-drift signal instead of immediate same-direction adverse selection.
+  - Added a synthetic-specific PPO action prior so the continuous policy starts with neutral bias but a much narrower spread and actually receives fills.
+  - Verified on a branch-level one-symbol smoke run for `000001` that the market is now economically sane:
+    - `Fixed_1` profitable with `pnl_mean ~= 1544.5`
+    - `OracleAlpha` profitable with `pnl_mean ~= 3578.5`
+    - PPO still negative in smoke, so the simulator is now usable for research but not yet a solved learning problem.

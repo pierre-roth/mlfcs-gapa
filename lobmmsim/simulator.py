@@ -123,13 +123,17 @@ class SyntheticOrderBook:
     def _step_latent(self) -> tuple[bool, float]:
         self._regime_clock += 1
         regime_shift = False
-        if self._regime_clock > 600 and self.rng.random() < 0.0025:
+        if self._regime_clock > 350 and self.rng.random() < 0.004:
             self.regime = int(self.rng.choice([-1, 0, 1], p=[0.3, 0.4, 0.3]))
             self._regime_clock = 0
             regime_shift = True
-        target = self.signal_scale * 0.35 * self.regime
-        self.alpha = self.profile.alpha_persistence * self.alpha + (1.0 - self.profile.alpha_persistence) * target + self.rng.normal(0.0, self.profile.alpha_noise * self.signal_scale)
-        efficient_move = 0.018 * self.alpha + self.rng.normal(0.0, self.noise_scale)
+        target = self.signal_scale * 0.45 * self.regime
+        self.alpha = (
+            self.profile.alpha_persistence * self.alpha
+            + (1.0 - self.profile.alpha_persistence) * target
+            + self.rng.normal(0.0, 0.7 * self.profile.alpha_noise * self.signal_scale)
+        )
+        efficient_move = 0.008 * self.alpha + self.rng.normal(0.0, 0.6 * self.noise_scale)
         self.efficient_price = max(self.tick_size, self.efficient_price + efficient_move)
         return regime_shift, efficient_move
 
@@ -145,12 +149,14 @@ class SyntheticOrderBook:
     def _choose_event(self) -> tuple[str, str]:
         imbalance = self._top_imbalance()
         alpha = self.alpha
-        mb = np.exp(self.profile.market_order_bias + 0.85 * alpha - 0.25 * imbalance)
-        ms = np.exp(self.profile.market_order_bias - 0.85 * alpha + 0.25 * imbalance)
-        lb = np.exp(self.profile.add_rate - 0.55 * alpha + 0.35 * max(imbalance, 0.0))
-        ls = np.exp(self.profile.add_rate + 0.55 * alpha + 0.35 * max(-imbalance, 0.0))
-        cb = np.exp(self.profile.cancel_rate + 0.35 * alpha - 0.25 * max(imbalance, 0.0))
-        cs = np.exp(self.profile.cancel_rate - 0.35 * alpha - 0.25 * max(-imbalance, 0.0))
+        # Positive latent alpha should favor profitable bid-side fills before the future upward move,
+        # rather than immediate same-direction adverse selection.
+        mb = np.exp(self.profile.market_order_bias - 0.45 * alpha - 0.15 * imbalance)
+        ms = np.exp(self.profile.market_order_bias + 0.45 * alpha + 0.15 * imbalance)
+        lb = np.exp(self.profile.add_rate - 0.20 * alpha + 0.35 * max(imbalance, 0.0))
+        ls = np.exp(self.profile.add_rate + 0.20 * alpha + 0.35 * max(-imbalance, 0.0))
+        cb = np.exp(self.profile.cancel_rate + 0.15 * alpha - 0.15 * max(imbalance, 0.0))
+        cs = np.exp(self.profile.cancel_rate - 0.15 * alpha - 0.15 * max(-imbalance, 0.0))
         weights = np.asarray([mb, ms, lb, ls, cb, cs], dtype=np.float64)
         weights = weights / weights.sum()
         event_idx = int(self.rng.choice(np.arange(6), p=weights))
@@ -171,20 +177,25 @@ class SyntheticOrderBook:
 
     def _recenter(self) -> None:
         target_mid = round(self.efficient_price / self.tick_size) * self.tick_size
-        mid_shift_ticks = int(round((target_mid - self.mid) / self.tick_size))
-        if mid_shift_ticks != 0:
-            if mid_shift_ticks > 0:
-                self.bid_volumes = np.roll(self.bid_volumes, -mid_shift_ticks)
-                self.ask_volumes = np.roll(self.ask_volumes, -mid_shift_ticks)
-                self.bid_volumes[-mid_shift_ticks:] = self._init_depth(self.profile.depth_scale)[:mid_shift_ticks]
-                self.ask_volumes[-mid_shift_ticks:] = self._init_depth(self.profile.depth_scale)[:mid_shift_ticks]
+        gap_ticks = int(round((target_mid - self.mid) / self.tick_size))
+        move_mid = 0
+        if gap_ticks != 0:
+            gap_abs = abs(gap_ticks)
+            follow_prob = min(0.9, 0.12 + 0.18 * gap_abs + 0.10 * min(abs(self.alpha), 1.0))
+            if self.rng.random() < follow_prob:
+                move_mid = 1 if gap_ticks > 0 else -1
+        if move_mid != 0:
+            if move_mid > 0:
+                self.bid_volumes = np.roll(self.bid_volumes, -1)
+                self.ask_volumes = np.roll(self.ask_volumes, -1)
+                self.bid_volumes[-1] = self._init_depth(self.profile.depth_scale)[0]
+                self.ask_volumes[-1] = self._init_depth(self.profile.depth_scale)[0]
             else:
-                shift = abs(mid_shift_ticks)
-                self.bid_volumes = np.roll(self.bid_volumes, shift)
-                self.ask_volumes = np.roll(self.ask_volumes, shift)
-                self.bid_volumes[:shift] = self._init_depth(self.profile.depth_scale)[:shift]
-                self.ask_volumes[:shift] = self._init_depth(self.profile.depth_scale)[:shift]
-            self.mid = target_mid
+                self.bid_volumes = np.roll(self.bid_volumes, 1)
+                self.ask_volumes = np.roll(self.ask_volumes, 1)
+                self.bid_volumes[0] = self._init_depth(self.profile.depth_scale)[0]
+                self.ask_volumes[0] = self._init_depth(self.profile.depth_scale)[0]
+            self.mid = round(self.mid + move_mid * self.tick_size, 6)
         self.spread_ticks = self._desired_spread_ticks()
         if self.bid_volumes[0] <= 0:
             self.bid_volumes[:-1] = self.bid_volumes[1:]
@@ -215,7 +226,7 @@ class SyntheticOrderBook:
                 msg["market_buy_volume"] = size
                 msg["market_buy_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state + size / self.trade_unit
-                self.efficient_price += 0.12 * self.tick_size + 0.04 * self.alpha
+                self.efficient_price += 0.025 * self.tick_size + 0.01 * self.alpha
             else:
                 trade["price"] = self.bid1
                 trade["size"] = size
@@ -224,7 +235,7 @@ class SyntheticOrderBook:
                 msg["market_sell_volume"] = size
                 msg["market_sell_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state - size / self.trade_unit
-                self.efficient_price -= 0.12 * self.tick_size - 0.04 * self.alpha
+                self.efficient_price -= 0.025 * self.tick_size - 0.01 * self.alpha
         elif event_type == "limit":
             level = _weighted_level(self.rng)
             if side == "buy":

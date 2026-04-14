@@ -568,3 +568,11 @@ This section is for fast duplicate avoidance.
 - Current conclusion:
   - the synthetic path is runnable end to end and isolated from the main real-data experimentation code
   - next work on this branch should focus on calibration quality and whether learned policies recover the planted latent signal
+- Follow-up calibration result:
+  - the initial synthetic market was too adverse-selection-heavy; even the oracle baseline lost money
+  - after retuning the event-flow logic and slowing displayed-book repricing, the synthetic market became sane enough for research
+  - on a one-symbol `000001` smoke run:
+    - `Fixed_1` became profitable (`pnl_mean ~= 1544.5`)
+    - `OracleAlpha` became more profitable (`pnl_mean ~= 3578.5`)
+    - PPO still underperformed and remained negative in smoke, which is acceptable at this stage because the main blocker moved from simulator realism to learning quality
+  - added a synthetic-specific PPO prior so the 2-action continuous policy starts close enough to the touch to receive fills

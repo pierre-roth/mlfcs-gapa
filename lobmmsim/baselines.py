@@ -48,9 +48,12 @@ class OracleAlphaPolicy(BaselinePolicy):
     def act(self, day: DayData, idx: int, inventory: float, step_cursor: int, total_steps: int) -> QuoteDecision:
         latent = day.latent.iloc[idx]
         mid = float(day.midprice[idx])
+        alpha = float(latent["latent_alpha"])
         fair_value = float(latent["efficient_price"])
-        delta = float(np.clip(fair_value - mid, -self.config.max_bias, self.config.max_bias))
+        fair_delta = np.clip(fair_value - mid, -self.config.max_bias, self.config.max_bias)
+        alpha_delta = np.clip(alpha, -1.0, 1.0) * self.config.max_bias * 0.5
+        delta = float(np.clip(0.7 * fair_delta + 0.3 * alpha_delta, -self.config.max_bias, self.config.max_bias))
         reservation = mid + delta - np.sign(inventory) * min(abs(delta), self.config.max_bias * 0.25)
-        spread = max(self.config.tick_size, float(day.spread[idx]))
+        spread = max(self.config.tick_size, min(float(day.spread[idx]) + self.config.tick_size, 2.0 * self.config.tick_size))
         ask, bid = price_legal_check(reservation + spread / 2.0, reservation - spread / 2.0, self.config.tick_size)
         return QuoteDecision(ask, -self.config.trade_unit, bid, self.config.trade_unit, ask - bid)

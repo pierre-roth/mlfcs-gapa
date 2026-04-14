@@ -37,6 +37,25 @@ def _build_encoder(config: RLTrainConfig, days: list[DayData], symbol: str):
     return SharedStateEncoder(backbone, _flat_dim(days))
 
 
+def _inv_softplus(value: float) -> float:
+    return float(torch.log(torch.expm1(torch.tensor(value, dtype=torch.float32))).item())
+
+
+def _init_paper_actor_prior(model: ContinuousActorCritic) -> None:
+    with torch.no_grad():
+        if model.action_dim != 2:
+            return
+        # Start near neutral reservation bias, but with a realistically narrow spread so the
+        # agent gets enough passive fills to learn from the synthetic market.
+        model.alpha_head.weight.zero_()
+        model.beta_head.weight.zero_()
+        alpha_bias = [_inv_softplus(1.5), _inv_softplus(0.12)]
+        beta_bias = [_inv_softplus(1.5), _inv_softplus(4.5)]
+        model.alpha_head.bias.copy_(torch.tensor(alpha_bias, dtype=model.alpha_head.bias.dtype))
+        model.beta_head.bias.copy_(torch.tensor(beta_bias, dtype=model.beta_head.bias.dtype))
+        model.value_head.bias.zero_()
+
+
 def evaluate_rl_model(envs: list[MarketMakingEnv], model: ContinuousActorCritic, config: RLTrainConfig, output_dir: str | Path | None = None, method_name: str = "C_PPO"):
     model.to(config.device)
     model.eval()
@@ -101,6 +120,7 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         eval_envs = [MarketMakingEnv(day, config) for day in splits["test"]]
         encoder = _build_encoder(config, splits["train"], symbol)
         model = ContinuousActorCritic(encoder, action_dim=2)
+        _init_paper_actor_prior(model)
         symbol_dir = ensure_dir(Path(out_dir) / symbol / "ppo")
         model, history, train_runtime = train_ppo(train_envs, model, config)
         torch.save(model.state_dict(), symbol_dir / "model.pt")

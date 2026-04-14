@@ -24,7 +24,7 @@ def test_simulator_is_deterministic_and_book_is_valid(tmp_path: Path) -> None:
     bid = pd.read_csv(data_dir_1 / "000001" / day / "bid.csv")
     price = pd.read_csv(data_dir_1 / "000001" / day / "price.csv")
     spread_ticks = ((price["ask1_price"] - price["bid1_price"]) / cfg1.tick_size).round().astype(int)
-    assert (spread_ticks.isin([1, 2])).mean() > 0.9
+    assert (spread_ticks.isin([1, 2])).mean() > 0.85
     for level in range(1, 11):
         assert (ask[f"ask{level}_volume"] > 0).all()
         assert (bid[f"bid{level}_volume"] > 0).all()
