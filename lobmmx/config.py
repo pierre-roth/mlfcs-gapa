@@ -68,6 +68,8 @@ class ExperimentConfig:
     zeta_l1: float = 0.0
     zeta_l2: float | None = None
     terminal_inventory_cost_scale: float = 1.0
+    terminal_inventory_reference: str = "net_change"
+    reward_inventory_potential: bool = False
     gamma: float = 0.99
     normalize_advantages: bool = True
     gradient_clip_norm: float = 1.0

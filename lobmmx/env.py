@@ -388,12 +388,27 @@ class MarketMakingEnv:
             return max(self.config.tick_size, 1e-8)
         return max(spread, self.config.tick_size, 1e-8)
 
+    def _inventory_excess_abs(self, inventory: float) -> float:
+        return max(0.0, abs(float(inventory)) - abs(float(self.initial_inventory)))
+
+    def _inventory_excess_norm(self, inventory: float) -> float:
+        inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
+        return float(self._inventory_excess_abs(inventory) / inv_limit)
+
+    def _inventory_shaping(self, prev_excess_norm: float, curr_excess_norm: float) -> float:
+        if self.reward_mode != "trade_inventory_initial_excess" or not self.config.reward_inventory_potential:
+            return 0.0
+        return float(self.config.eta * (prev_excess_norm - curr_excess_norm))
+
     def _inventory_penalty(self) -> float:
         inv_limit = max(self.config.max_inventory * self.config.trade_unit, 1)
         inv_norm = float(self.inventory / inv_limit)
         progress = float(self.step_cursor / max(len(self.episode_decisions) - 1, 1))
         if self.reward_mode == "trade_inventory":
             return 0.0
+        if self.reward_mode == "trade_inventory_initial_excess":
+            excess_norm = self._inventory_excess_norm(self.inventory)
+            return float(self.config.zeta * excess_norm**2)
         if self.reward_mode == "trade_inventory_ramp":
             start = self.config.zeta_start if self.config.zeta_start is not None else self.config.zeta
             end = self.config.zeta_end if self.config.zeta_end is not None else start
@@ -404,11 +419,16 @@ class MarketMakingEnv:
         return float(self.config.zeta * inv_norm**2)
 
     def _terminal_inventory_penalty(self, midprice: float, spread: float) -> float:
-        net_inventory = self.inventory - self.initial_inventory
-        if net_inventory == 0:
+        if self.config.terminal_inventory_reference == "net_change":
+            terminal_inventory = self.inventory - self.initial_inventory
+        elif self.config.terminal_inventory_reference == "excess_from_initial_abs":
+            terminal_inventory = self._inventory_excess_abs(self.inventory)
+        else:
+            raise ValueError(f"Unknown terminal_inventory_reference: {self.config.terminal_inventory_reference}")
+        if terminal_inventory == 0:
             return 0.0
         reward_unit = self._reward_unit(midprice, spread)
-        liquidation_cost = abs(net_inventory) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
+        liquidation_cost = abs(float(terminal_inventory)) * (0.5 * max(spread, self.config.tick_size) + self.config.taker_fee_per_share)
         return float(self.config.terminal_inventory_cost_scale * liquidation_cost / reward_unit)
 
     def step(self, action: np.ndarray | int | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
@@ -434,6 +454,7 @@ class MarketMakingEnv:
         self.bid_distance_bps.append(float(bid_distance_bps))
 
         reward_unit = self._reward_unit(midprice, float(orders.get("spread", self.day.spread[event_idx])))
+        prev_excess_norm = self._inventory_excess_norm(self.inventory)
         trade_edge_step = 0.0
         fee_step = 0.0
         for fill in fills:
@@ -452,7 +473,10 @@ class MarketMakingEnv:
         self.trading_pnl += trade_edge_step
         trade_units = trade_edge_step / reward_unit
         self.trading_pnl_units += trade_units
-        reward = float(trade_units - self._inventory_penalty())
+        inventory_penalty = self._inventory_penalty()
+        curr_excess_norm = self._inventory_excess_norm(self.inventory)
+        inventory_shaping = self._inventory_shaping(prev_excess_norm, curr_excess_norm)
+        reward = float(trade_units - inventory_penalty + inventory_shaping)
         self.inventory_history.append(float(self.inventory))
 
         self.step_cursor += 1
@@ -496,6 +520,9 @@ class MarketMakingEnv:
                 "reward": reward,
                 "trade_edge_dollars": float(trade_edge_step),
                 "trade_edge_units": float(trade_units),
+                "inventory_excess_norm": float(curr_excess_norm),
+                "inventory_penalty": float(inventory_penalty),
+                "inventory_shaping": float(inventory_shaping),
                 "terminal_inventory_penalty": float(terminal_penalty),
                 "fees": float(fee_step),
                 "cash": float(self.cash),

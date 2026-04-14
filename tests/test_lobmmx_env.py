@@ -50,6 +50,8 @@ def test_lobmmx_defaults_select_on_pnl() -> None:
     assert cfg.zeta == 0.0
     assert cfg.terminal_inventory_cost_scale == 1.0
     assert cfg.fill_model == "legacy"
+    assert cfg.terminal_inventory_reference == "net_change"
+    assert cfg.reward_inventory_potential is False
 
 
 def test_lobmmx_deterministic_random_initial_inventory() -> None:
@@ -139,3 +141,65 @@ def test_lobmmx_queue_fill_model_requires_volume_through_queue() -> None:
     assert len(fills) == 1
     assert fills[0].volume == -1.0
     assert fills[0].taker is False
+
+
+def test_lobmmx_initial_excess_penalty_ignores_starting_inventory() -> None:
+    day = _synthetic_day()
+    cfg = RLTrainConfig(
+        mode="smoke",
+        symbols=["AAPL"],
+        lookback=2,
+        latency=1,
+        reward_mode="trade_inventory_initial_excess",
+        zeta=1.0,
+        max_inventory=10,
+        random_initial_inventory=False,
+    ).apply_mode_defaults()
+    env = MarketMakingEnv(day, cfg, reward_mode=cfg.reward_mode)
+    env.reset(env.available_episodes()[0])
+    env.initial_inventory = 5.0
+    env.inventory = 5.0
+    assert env._inventory_penalty() == 0.0
+    env.inventory = 7.0
+    assert abs(env._inventory_penalty() - (0.2**2)) < 1e-9
+
+
+def test_lobmmx_terminal_penalty_can_use_inventory_increase_only() -> None:
+    day = _synthetic_day()
+    cfg = RLTrainConfig(
+        mode="smoke",
+        symbols=["AAPL"],
+        lookback=2,
+        latency=1,
+        reward_mode="trade_inventory_initial_excess",
+        terminal_inventory_reference="excess_from_initial_abs",
+        random_initial_inventory=False,
+    ).apply_mode_defaults()
+    env = MarketMakingEnv(day, cfg, reward_mode=cfg.reward_mode)
+    env.reset(env.available_episodes()[0])
+    env.initial_inventory = 5.0
+    env.inventory = 3.0
+    assert env._terminal_inventory_penalty(100.0, 0.02) == 0.0
+    env.inventory = 7.0
+    assert env._terminal_inventory_penalty(100.0, 0.02) > 0.0
+
+
+def test_lobmmx_initial_excess_potential_rewards_reduction() -> None:
+    day = _synthetic_day()
+    cfg = RLTrainConfig(
+        mode="smoke",
+        symbols=["AAPL"],
+        lookback=2,
+        latency=1,
+        reward_mode="trade_inventory_initial_excess",
+        reward_inventory_potential=True,
+        eta=1.0,
+        zeta=0.0,
+        max_inventory=10,
+        random_initial_inventory=False,
+    ).apply_mode_defaults()
+    env = MarketMakingEnv(day, cfg, reward_mode=cfg.reward_mode)
+    env.reset(env.available_episodes()[0])
+    env.initial_inventory = 5.0
+    assert abs(env._inventory_shaping(0.2, 0.1) - 0.1) < 1e-9
+    assert abs(env._inventory_shaping(0.1, 0.2) + 0.1) < 1e-9
