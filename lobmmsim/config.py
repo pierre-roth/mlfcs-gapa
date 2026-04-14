@@ -46,6 +46,8 @@ class ExperimentConfig:
     episode_length: int = 2000
     max_bias: float = 0.05
     max_spread: float = 0.10
+    action_mode: str = "absolute"
+    residual_spread_range: float = 0.02
     eta: float = 0.5
     zeta: float = 0.01
     zero_transaction_cost: bool = True

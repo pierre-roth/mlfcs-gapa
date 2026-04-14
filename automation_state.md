@@ -72,11 +72,31 @@ Most recent synthetic evidence:
     - `oracle_paper_pnl_mean_avg ~= -34.6`
     - `fixed1_positive_seed_fraction = 0.2`
     - `oracle_better_than_fixed_fraction = 0.8`
+- Residual baseline-guided PPO follow-up:
+  - run: `artifacts_sim/synthetic_medium_000001_bc_aux_residual/`
+  - config:
+    - `action_mode = residual_fixed1`
+    - `residual_spread_range = 0.02`
+    - auxiliary regime pretraining enabled
+    - behavior cloning enabled
+  - result:
+    - `best_f1 ~= 0.669`
+    - `bc_samples = 27746`
+    - `bc_final_loss ~= 0.0259`
+    - `ppo_pnl_mean ~= 0.250`
+    - `ppo_sharpe ~= 0.540`
+    - `ppo_trades_mean ~= 0.75`
+    - `alpha_probe_r2 ~= 0.0715`
+    - `regime_probe_accuracy ~= 0.584`
+  - baseline context on that seed:
+    - `Fixed_1 pnl_mean ~= -280.9`
+    - `OraclePaper pnl_mean ~= -37.0`
 
 Interpretation:
 - Synthetic branch plumbing is complete enough for serious learning experiments.
 - Auxiliary regime supervision improves interpretability metrics a bit, but did not improve PPO by itself.
 - Behavior cloning is the first change that made PPO profitable in the medium one-symbol study, but it is still too conservative to be a satisfactory learned market-making policy.
+- Residual spread control around `Fixed_1` is the strongest synthetic learning direction so far. It preserved the positive sign from BC, improved Sharpe further, and increased trading activity modestly without reintroducing the earlier large negative PnL.
 - The simulator remains seed-sensitive under the medium acceptance gate, so it is not yet safe to scale experiments broadly without another calibration pass.
 
 ### Mainline `lobmm` best AAPL configuration
@@ -165,6 +185,12 @@ Status:
     - result:
       - BC improved sign and Sharpe, but only by collapsing to almost no trading
       - auxiliary supervision alone did not move PPO outcomes
+  - synthetic residual follow-up:
+    - `synthetic_medium_000001_bc_aux_residual`
+    - purpose: keep PPO close to `Fixed_1` via residual spread control instead of absolute spread learning
+    - result:
+      - best synthetic learned result so far
+      - positive PnL and Sharpe with more activity than plain BC
   - integrated branch-validation runs:
     - `euler_lobmmx_stage3_legacy_control`
       - train: `63388924`
@@ -242,8 +268,10 @@ Status:
   - synthetic pretraining now supports auxiliary regime supervision from `latent.csv`
   - PPO now supports behavior-cloning warm start from a legal teacher policy
   - `lobmmsim/learning_matrix.py` provides a fixed-data comparison workflow for one-symbol synthetic studies
+  - `action_mode = residual_fixed1` now keeps PPO spread control near the working touch baseline while still learning inventory-aware bias
   - current synthetic conclusion:
-    - BC helps more than auxiliary supervision, but current BC+PPO is too inactive
+    - BC helps more than auxiliary supervision, but plain BC+PPO is too inactive
+    - residual baseline-guided PPO is now the best current synthetic path
     - smoke-budget PPO is too weak, and the medium matrix is now the right local evaluation loop
     - before scaling up, the synthetic market should be recalibrated until the acceptance scan shows a stable positive passive edge
 - Corrected `lobmmx` stage-2 AAPL runs finished cleanly:

@@ -97,18 +97,28 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
             "pretrain_aux_task": "none",
             "pretrain_aux_weight": 0.0,
             "bc_epochs": 0,
+            "action_mode": "absolute",
         },
         {
             "name": "scratch_aux",
             "pretrain_aux_task": "regime",
             "pretrain_aux_weight": config.pretrain_aux_weight,
             "bc_epochs": 0,
+            "action_mode": "absolute",
         },
         {
             "name": "bc_aux",
             "pretrain_aux_task": "regime",
             "pretrain_aux_weight": config.pretrain_aux_weight,
             "bc_epochs": config.bc_epochs,
+            "action_mode": "absolute",
+        },
+        {
+            "name": "bc_aux_residual",
+            "pretrain_aux_task": "regime",
+            "pretrain_aux_weight": config.pretrain_aux_weight,
+            "bc_epochs": config.bc_epochs,
+            "action_mode": "residual_fixed1",
         },
     ]
     rows = []
@@ -122,6 +132,7 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
                 data_dir=str(data_dir),
                 pretrain_aux_task=variant["pretrain_aux_task"],
                 pretrain_aux_weight=variant["pretrain_aux_weight"],
+                action_mode=variant["action_mode"],
             )
         )
         variant_rl = run_rl_training(
@@ -133,6 +144,7 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
                 pretrain_aux_task=variant["pretrain_aux_task"],
                 pretrain_aux_weight=variant["pretrain_aux_weight"],
                 bc_epochs=variant["bc_epochs"],
+                action_mode=variant["action_mode"],
             )
         )
         variant_report = run_report(
@@ -144,6 +156,7 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
                 pretrain_aux_task=variant["pretrain_aux_task"],
                 pretrain_aux_weight=variant["pretrain_aux_weight"],
                 bc_epochs=variant["bc_epochs"],
+                action_mode=variant["action_mode"],
             )
         )
         rows.append(_variant_summary(variant["name"], variant_pretrain, variant_rl, variant_report, symbol))

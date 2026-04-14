@@ -149,14 +149,15 @@ class SyntheticOrderBook:
     def _choose_event(self) -> tuple[str, str]:
         imbalance = self._top_imbalance()
         alpha = self.alpha
+        flow_pressure = float(np.tanh(self.signed_flow_state / 18.0))
         # Positive latent alpha should favor profitable bid-side fills before the future upward move,
         # rather than immediate same-direction adverse selection.
-        mb = np.exp(self.profile.market_order_bias - 0.25 * alpha - 0.12 * imbalance)
-        ms = np.exp(self.profile.market_order_bias + 0.25 * alpha + 0.12 * imbalance)
-        lb = np.exp(self.profile.add_rate - 0.20 * alpha + 0.35 * max(imbalance, 0.0))
-        ls = np.exp(self.profile.add_rate + 0.20 * alpha + 0.35 * max(-imbalance, 0.0))
-        cb = np.exp(self.profile.cancel_rate + 0.15 * alpha - 0.15 * max(imbalance, 0.0))
-        cs = np.exp(self.profile.cancel_rate - 0.15 * alpha - 0.15 * max(-imbalance, 0.0))
+        mb = np.exp(self.profile.market_order_bias - 0.14 * alpha - 0.08 * imbalance - 0.35 * flow_pressure)
+        ms = np.exp(self.profile.market_order_bias + 0.14 * alpha + 0.08 * imbalance + 0.35 * flow_pressure)
+        lb = np.exp(self.profile.add_rate - 0.10 * alpha + 0.25 * max(imbalance, 0.0) + 0.10 * flow_pressure)
+        ls = np.exp(self.profile.add_rate + 0.10 * alpha + 0.25 * max(-imbalance, 0.0) - 0.10 * flow_pressure)
+        cb = np.exp(self.profile.cancel_rate + 0.08 * alpha - 0.10 * max(imbalance, 0.0) - 0.06 * flow_pressure)
+        cs = np.exp(self.profile.cancel_rate - 0.08 * alpha - 0.10 * max(-imbalance, 0.0) + 0.06 * flow_pressure)
         weights = np.asarray([mb, ms, lb, ls, cb, cs], dtype=np.float64)
         weights = weights / weights.sum()
         event_idx = int(self.rng.choice(np.arange(6), p=weights))
@@ -181,7 +182,7 @@ class SyntheticOrderBook:
         move_mid = 0
         if gap_ticks != 0:
             gap_abs = abs(gap_ticks)
-            follow_prob = min(0.9, 0.12 + 0.18 * gap_abs + 0.10 * min(abs(self.alpha), 1.0))
+            follow_prob = min(0.75, 0.06 + 0.12 * gap_abs + 0.05 * min(abs(self.alpha), 1.0))
             if self.rng.random() < follow_prob:
                 move_mid = 1 if gap_ticks > 0 else -1
         if move_mid != 0:
@@ -226,7 +227,7 @@ class SyntheticOrderBook:
                 msg["market_buy_volume"] = size
                 msg["market_buy_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state + size / self.trade_unit
-                self.efficient_price += 0.004 * self.tick_size + 0.002 * self.alpha
+                self.efficient_price += 0.0015 * self.tick_size + 0.0008 * self.alpha
             else:
                 trade["price"] = self.bid1
                 trade["size"] = size
@@ -235,7 +236,7 @@ class SyntheticOrderBook:
                 msg["market_sell_volume"] = size
                 msg["market_sell_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state - size / self.trade_unit
-                self.efficient_price -= 0.004 * self.tick_size - 0.002 * self.alpha
+                self.efficient_price -= 0.0015 * self.tick_size - 0.0008 * self.alpha
         elif event_type == "limit":
             level = _weighted_level(self.rng)
             if side == "buy":

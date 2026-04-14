@@ -93,11 +93,20 @@ Copy this block for each new week.
     - `Fixed_1 pnl_mean_avg ~= -149.1`
     - `OraclePaper pnl_mean_avg ~= -34.6`
     - `Fixed_1 positive seed fraction = 0.2`
+  - Residual-baseline PPO follow-up on `000001` (`synthetic_medium_000001_bc_aux_residual`) produced the best learned synthetic result so far:
+    - `best_f1 ~= 0.669`
+    - `bc_samples = 27,746`
+    - `bc_final_loss ~= 0.0259`
+    - `ppo_pnl ~= 0.250`
+    - `sharpe ~= 0.540`
+    - `trades ~= 0.75`
+    - `alpha_probe_r2 ~= 0.072`
+    - `regime_probe_accuracy ~= 0.584`
 - Conclusion:
   - The branch is now structurally complete enough for real synthetic-learning experiments.
   - Auxiliary regime supervision helps latent recoverability a bit, but did not improve PPO behavior on its own.
-  - Behavior cloning is the first change that made PPO profitable on the medium one-symbol experiment, but it did so by collapsing to an overly conservative policy with almost no trades.
-  - The simulator is still not robust enough across seeds to be treated as “solved”; the next work should be a targeted simulator acceptance recalibration plus a less conservative baseline-guided policy update.
+  - Plain BC was too conservative, but the new residual spread mode around `Fixed_1` materially improved the learned policy without drifting back into the earlier high-turnover negative-PnL regime.
+  - The simulator is still not robust enough across seeds to be treated as “solved”; the next work should focus on residual-policy experiments and targeted acceptance recalibration, not more unconstrained PPO-from-scratch runs.
 - Links:
   - `lobmmsim/`
   - `tests/test_lobmmsim_simulator.py`

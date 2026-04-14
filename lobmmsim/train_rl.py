@@ -55,7 +55,10 @@ def _init_paper_actor_prior(model: ContinuousActorCritic) -> None:
         model.alpha_head.weight.zero_()
         model.beta_head.weight.zero_()
         alpha_bias = [_inv_softplus(1.5), _inv_softplus(0.12)]
-        beta_bias = [_inv_softplus(1.5), _inv_softplus(4.5)]
+        if getattr(model, "_action_mode", "absolute") == "residual_fixed1":
+            beta_bias = [_inv_softplus(2.0), _inv_softplus(2.0)]
+        else:
+            beta_bias = [_inv_softplus(1.5), _inv_softplus(4.5)]
         model.alpha_head.bias.copy_(torch.tensor(alpha_bias, dtype=model.alpha_head.bias.dtype))
         model.beta_head.bias.copy_(torch.tensor(beta_bias, dtype=model.beta_head.bias.dtype))
         model.value_head.bias.zero_()
@@ -67,17 +70,21 @@ def _teacher_policy(config: RLTrainConfig):
     return FixedLevelPolicy(config, 1)
 
 
-def _decision_to_action(config: RLTrainConfig, mid: float, inventory: float, ask_price: float, bid_price: float) -> np.ndarray:
+def _decision_to_action(config: RLTrainConfig, mid: float, inventory: float, ask_price: float, bid_price: float, base_spread: float) -> np.ndarray:
     reservation = 0.5 * (ask_price + bid_price)
     spread = ask_price - bid_price
     if inventory == 0:
         delta = 0.0
     else:
         delta = np.sign(inventory) * (mid - reservation)
+    if config.action_mode == "residual_fixed1":
+        spread_action = 0.5 + 0.5 * (spread - base_spread) / max(config.residual_spread_range, config.tick_size)
+    else:
+        spread_action = spread / max(config.max_spread, config.tick_size)
     return np.asarray(
         [
             float(np.clip(delta / max(config.max_bias, 1e-8), 0.0, 1.0)),
-            float(np.clip(spread / max(config.max_spread, config.tick_size), 0.0, 1.0)),
+            float(np.clip(spread_action, 0.0, 1.0)),
         ],
         dtype=np.float32,
     )
@@ -100,7 +107,16 @@ def _collect_imitation_dataset(days: list[DayData], config: RLTrainConfig) -> tu
                 decision = policy.act(day, quote_idx, env.inventory, env.step_cursor, len(env.episode_decisions))
                 lob_rows.append(np.array(obs.lob, copy=True))
                 flat_rows.append(np.array(obs.flat, copy=True))
-                targets.append(_decision_to_action(config, float(day.midprice[quote_idx]), float(env.inventory), decision.ask_price, decision.bid_price))
+                targets.append(
+                    _decision_to_action(
+                        config,
+                        float(day.midprice[quote_idx]),
+                        float(env.inventory),
+                        decision.ask_price,
+                        decision.bid_price,
+                        float(day.spread[quote_idx]),
+                    )
+                )
                 obs, _, done, _ = env.step(
                     {
                         "ask_price": decision.ask_price,
@@ -213,6 +229,7 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         eval_envs = [MarketMakingEnv(day, config) for day in splits["test"]]
         encoder = _build_encoder(config, splits["train"], symbol)
         model = ContinuousActorCritic(encoder, action_dim=2)
+        model._action_mode = config.action_mode
         _init_paper_actor_prior(model)
         symbol_dir = ensure_dir(Path(out_dir) / symbol / "ppo")
         bc_summary = _run_behavior_cloning(model, splits["train"], config, symbol_dir)

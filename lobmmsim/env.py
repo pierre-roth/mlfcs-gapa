@@ -111,7 +111,12 @@ class MarketMakingEnv:
         action = np.clip(np.asarray(action, dtype=np.float32), 0.0, 1.0)
         mid = float(self.day.midprice[quote_idx])
         delta = float(action[0]) * self.config.max_bias
-        spread = max(self.config.tick_size, float(action[1]) * self.config.max_spread)
+        if self.config.action_mode == "residual_fixed1":
+            base_spread = max(self.config.tick_size, float(self.day.spread[quote_idx]))
+            spread_adjust = (float(action[1]) - 0.5) * 2.0 * self.config.residual_spread_range
+            spread = float(np.clip(base_spread + spread_adjust, self.config.tick_size, self.config.max_spread))
+        else:
+            spread = max(self.config.tick_size, float(action[1]) * self.config.max_spread)
         reservation = mid - np.sign(self.inventory) * delta
         ask_price, bid_price = price_legal_check(reservation + spread / 2.0, reservation - spread / 2.0, self.config.tick_size)
         ask_volume = -float(self.config.trade_unit)
