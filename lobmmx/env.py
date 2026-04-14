@@ -248,6 +248,13 @@ class MarketMakingEnv:
     def _match_one_side(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
         if volume == 0 or price == 0:
             return []
+        if self.config.fill_model == "legacy":
+            return self._match_legacy(event_idx, side, price, volume)
+        if self.config.fill_model == "queue":
+            return self._match_queue(event_idx, side, price, volume)
+        raise ValueError(f"Unknown fill_model: {self.config.fill_model}")
+
+    def _match_legacy(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
         trades = self.day.trades_by_index.get(event_idx)
         if trades is None or trades.price.size == 0:
             return []
@@ -294,6 +301,87 @@ class MarketMakingEnv:
                 if self._fill_draw(event_idx, side, price) < probability:
                     fills.append(Fill(price, signed_volume, taker=False))
         return fills
+
+    _MSG_WITHDRAW_BUY_VOL = 8
+    _MSG_WITHDRAW_SELL_VOL = 10
+
+    def _total_side_depth(self, event_idx: int, side: str) -> float:
+        row = self.day.lob[event_idx]
+        total = 0.0
+        for level in range(10):
+            base = level * 4
+            total += float(row[base + 1] if side == "ask" else row[base + 3])
+        return total
+
+    def _queue_ahead(self, quote_idx: int, event_idx: int, side: str, price: float) -> float:
+        depth_at_placement = self._level_volume(quote_idx, side, price)
+        if self.config.queue_position == "uniform":
+            depth_at_placement *= self._fill_draw(event_idx, side, price)
+        elif self.config.queue_position != "back":
+            raise ValueError(f"Unknown queue_position: {self.config.queue_position}")
+
+        if event_idx <= quote_idx:
+            return depth_at_placement
+
+        if self.day.msg is None:
+            return depth_at_placement
+        col = self._MSG_WITHDRAW_SELL_VOL if side == "ask" else self._MSG_WITHDRAW_BUY_VOL
+        start = quote_idx + 1
+        end = min(event_idx + 1, len(self.day.msg))
+        if start >= end:
+            return depth_at_placement
+
+        total_depth = self._total_side_depth(quote_idx, side)
+        if total_depth <= 0:
+            return depth_at_placement
+        level_fraction = depth_at_placement / total_depth
+        attrition = float(self.day.msg[start:end, col].sum()) * level_fraction
+        return max(0.0, depth_at_placement - attrition)
+
+    def _match_queue(self, event_idx: int, side: str, price: float, volume: float) -> list[Fill]:
+        agent_size = abs(volume)
+        quote_idx = max(int(event_idx - self.config.latency), self.config.lookback - 1)
+        if side == "ask":
+            book_cross_price = float(self.day.bid1[event_idx])
+            if price <= book_cross_price:
+                return [Fill(book_cross_price, -agent_size, taker=True)]
+        else:
+            book_cross_price = float(self.day.ask1[event_idx])
+            if price >= book_cross_price:
+                return [Fill(book_cross_price, agent_size, taker=True)]
+
+        trades = self.day.trades_by_index.get(event_idx)
+        if trades is None or trades.price.size == 0:
+            return []
+
+        traded_prices = trades.price
+        traded_sizes = trades.size
+        if trades.aggressor_side is not None:
+            desired_side = "B" if side == "ask" else "A"
+            side_mask = trades.aggressor_side == desired_side
+            if not np.any(side_mask):
+                return []
+            traded_prices = traded_prices[side_mask]
+            traded_sizes = traded_sizes[side_mask]
+
+        if side == "ask":
+            through = traded_prices > price + self.config.tick_size / 2
+        else:
+            through = traded_prices < price - self.config.tick_size / 2
+        if np.any(through):
+            signed = -agent_size if side == "ask" else agent_size
+            return [Fill(price, signed, taker=False)]
+
+        exact = np.isclose(traded_prices, price, atol=self.config.tick_size / 2)
+        if not np.any(exact):
+            return []
+        exact_volume = float(traded_sizes[exact].sum())
+        volume_reaching_agent = exact_volume - self._queue_ahead(quote_idx, event_idx, side, price)
+        if volume_reaching_agent <= 0:
+            return []
+        filled = min(agent_size, volume_reaching_agent)
+        signed = -filled if side == "ask" else filled
+        return [Fill(price, signed, taker=False)]
 
     def _reward_unit(self, midprice: float, spread: float) -> float:
         if self.config.reward_scale_mode == "ticks":

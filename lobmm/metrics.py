@@ -33,6 +33,7 @@ class EpisodeResult:
 
 
 def sharpe(values: list[float]) -> float:
+    """Per-episode Sharpe; not annualized."""
     if len(values) < 2:
         return 0.0
     arr = np.asarray(values, dtype=np.float64)
@@ -40,3 +41,33 @@ def sharpe(values: list[float]) -> float:
     if std == 0:
         return 0.0
     return float(arr.mean() / std)
+
+
+_TRADING_DAYS_PER_YEAR = 252
+
+
+def sharpe_annualized_episodes(values: list[float], episodes_per_day: float) -> float:
+    """Annualize a per-episode Sharpe using the observed episodes per day."""
+    if len(values) < 2 or episodes_per_day <= 0:
+        return 0.0
+    arr = np.asarray(values, dtype=np.float64)
+    std = arr.std(ddof=1)
+    if std == 0:
+        return 0.0
+    return float(arr.mean() / std * np.sqrt(episodes_per_day * _TRADING_DAYS_PER_YEAR))
+
+
+def sharpe_daily(pnls: list[float], days: list[str]) -> float:
+    """Annualized Sharpe from daily aggregated PnL."""
+    if len(pnls) < 2 or len(pnls) != len(days):
+        return 0.0
+    daily_pnl: dict[str, float] = {}
+    for day, pnl in zip(days, pnls, strict=True):
+        daily_pnl[str(day)] = daily_pnl.get(str(day), 0.0) + float(pnl)
+    if len(daily_pnl) < 2:
+        return 0.0
+    arr = np.asarray(list(daily_pnl.values()), dtype=np.float64)
+    std = arr.std(ddof=1)
+    if std == 0:
+        return 0.0
+    return float(arr.mean() / std * np.sqrt(_TRADING_DAYS_PER_YEAR))

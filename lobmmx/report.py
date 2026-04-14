@@ -9,7 +9,7 @@ import pyrallis
 import seaborn as sns
 
 from .config import ExperimentConfig
-from .metrics import sharpe
+from .metrics import sharpe, sharpe_annualized_episodes, sharpe_daily
 from .pipeline import prepare_run
 from .utils import ensure_dir
 
@@ -131,7 +131,16 @@ def _format_overall_results(combined: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         for column in summary.columns.to_flat_index()
     ]
     rows = []
-    sharpe_map = combined.groupby(["symbol", "method"])["pnl"].apply(lambda values: sharpe(values.tolist())).to_dict()
+    groups = {key: group for key, group in combined.groupby(["symbol", "method"])}
+    sharpe_map = {key: sharpe(group["pnl"].tolist()) for key, group in groups.items()}
+    sharpe_daily_map = {
+        key: sharpe_daily(group["pnl"].tolist(), group["day"].astype(str).tolist())
+        for key, group in groups.items()
+    }
+    sharpe_annual_ep_map = {
+        key: sharpe_annualized_episodes(group["pnl"].tolist(), len(group) / max(int(group["day"].nunique()), 1))
+        for key, group in groups.items()
+    }
     for _, row in summary.iterrows():
         formatted = {
             "symbol": row["symbol"],
@@ -145,9 +154,13 @@ def _format_overall_results(combined: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
                 std = 0.0
             formatted[metric] = f"{mean:.3f}±{std:.3f}"
         formatted["sharpe"] = f"{sharpe_map[(row['symbol'], row['method'])]:.3f}"
+        formatted["sharpe_annual_daily"] = f"{sharpe_daily_map.get((row['symbol'], row['method']), 0.0):.2f}"
+        formatted["sharpe_annual_ep"] = f"{sharpe_annual_ep_map.get((row['symbol'], row['method']), 0.0):.2f}"
         rows.append(formatted)
     formatted_df = pd.DataFrame(rows).sort_values(["symbol", "method"], key=lambda series: series.map(lambda x: _method_sort_key(x)[0]) if series.name == "method" else series)
     summary["sharpe"] = summary.apply(lambda row: sharpe_map[(row["symbol"], row["method"])], axis=1)
+    summary["sharpe_annual_daily"] = summary.apply(lambda row: sharpe_daily_map.get((row["symbol"], row["method"]), 0.0), axis=1)
+    summary["sharpe_annual_ep"] = summary.apply(lambda row: sharpe_annual_ep_map.get((row["symbol"], row["method"]), 0.0), axis=1)
     return summary, formatted_df
 
 

@@ -54,6 +54,7 @@ class DayData:
     trades_by_index: dict[int, "TradeBatch"]
     trade_indices: np.ndarray
     signed_trade_volume: np.ndarray
+    msg: np.ndarray | None = None
     row_multiplier: int = 1
     normalized_lob: np.ndarray | None = None
     norm_mean: np.ndarray | None = None
@@ -389,6 +390,7 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
     trades_by_index = _build_trade_index_map(pd.DatetimeIndex(timestamps), trades)
     trade_indices = np.array(sorted(trades_by_index.keys()), dtype=np.int64)
     signed_trade_volume = _signed_trade_volume_series(len(timestamps), trades_by_index)
+    msg_array = msg[MSG_COLUMNS].to_numpy(dtype=np.float32)
 
     return DayData(
         symbol=symbol,
@@ -404,6 +406,7 @@ def load_day_data(symbol: str, day: str, config: ExperimentConfig) -> DayData:
         trades_by_index=trades_by_index,
         trade_indices=trade_indices,
         signed_trade_volume=signed_trade_volume,
+        msg=msg_array,
         row_multiplier=row_multiplier,
     )
 

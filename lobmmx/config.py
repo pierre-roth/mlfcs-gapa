@@ -56,6 +56,8 @@ class ExperimentConfig:
     reward_scale_mode: str = "spread"
     maker_rebate_per_share: float = 0.0013
     taker_fee_per_share: float = 0.0030
+    fill_model: str = "legacy"
+    queue_position: str = "back"
     random_initial_inventory: bool = True
     initial_inventory_max: int = 125
     allow_terminal_inventory: bool = True
