@@ -88,7 +88,20 @@ Status:
 
 ## Active Runs
 
-- No active Euler runs.
+- Active Euler runs from commit `049caa5`:
+  - `euler_lobmmx_stage4_2000_control`
+    - train: `63416021`
+    - evaluate: `63416029`
+    - report: `63416033`
+  - `euler_lobmmx_stage4_2000_excess_penalty`
+    - train: `63416035`
+    - evaluate: `63416037`
+    - report: `63416039`
+  - `euler_lobmmx_stage4_2000_excess_potential`
+    - train: `63416042`
+    - evaluate: `63416047`
+    - report: `63416051`
+  - purpose: compare a fixed-`2000`-event random-inventory control against initial-inventory-relative inventory control with and without potential-based reward for reducing excess inventory
 - Most recently completed:
   - integrated branch-validation runs:
     - `euler_lobmmx_stage3_legacy_control`
