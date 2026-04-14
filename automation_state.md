@@ -82,24 +82,31 @@ Status:
 - First corrected `lobmmx` batch finished.
 - `spread_aggr` is the only creative variant that nearly matches the mainline `AAPL` PPO result.
 - Reward scaling / model-selection signal in `lobmmx` is still not coherent enough to trust as a new default.
+- Selective branch integrations have now been validated.
+- Annualized Sharpe reporting is worth keeping.
+- The new queue-aware fill model should remain opt-in; it is not a better default yet.
 
 ## Active Runs
 
-- Active Euler validation runs submitted from commit `33cf231` to test integrated branch improvements:
-  - `euler_lobmmx_stage3_legacy_control`
-    - train: `63388924`
-    - evaluate: `63388926`
-    - report: `63388928`
-  - `euler_lobmmx_stage3_queue_back`
-    - train: `63388930`
-    - evaluate: `63388932`
-    - report: `63388934`
-  - `euler_lobmmx_stage3_queue_uniform`
-    - train: `63388936`
-    - evaluate: `63388938`
-    - report: `63388940`
-  - purpose: compare unchanged `lobmmx` legacy fill behavior against the new opt-in queue-aware fill model while preserving existing trading-PnL reward semantics
+- No active Euler runs.
 - Most recently completed:
+  - integrated branch-validation runs:
+    - `euler_lobmmx_stage3_legacy_control`
+      - train: `63388924`
+      - evaluate: `63388926`
+      - report: `63388928`
+      - PPO result: `pnl = 0.01185`, `nd_pnl = 0.13772`, `sharpe = 0.526`, `reward = -0.293`
+    - `euler_lobmmx_stage3_queue_back`
+      - train: `63388930`
+      - evaluate: `63388932`
+      - report: `63388934`
+      - PPO result: `pnl = -0.00511`, `nd_pnl = -0.05741`, `sharpe = -0.0668`, `reward = -0.933`
+    - `euler_lobmmx_stage3_queue_uniform`
+      - train: `63388936`
+      - evaluate: `63388938`
+      - report: `63388940`
+      - PPO result: `pnl = 0.02353`, `nd_pnl = 0.28562`, `sharpe = 0.271`, `reward = -6.161`
+      - interpretation: higher raw PnL, but achieved via much higher churn and much worse terminal-inventory penalties
   - mainline full runs:
     - `euler_full_stage8_competitive_seed29`
     - `euler_full_stage8_competitive_seed41`
@@ -143,6 +150,18 @@ Status:
   - terminal inventory is now penalized by explicit liquidation cost in spread/tick units
   - `PnLMAP`-related position stats now use inventory changes relative to the random initial inventory, not the raw starting position
   - local `lobmmx` smoke pretrain/train/evaluate/report path was exercised successfully against a temporary sample-backed dataset
+- Selective branch integration outcome:
+  - kept:
+    - merged `lobmmx` reward-fix PR from mainline
+    - annualized Sharpe reporting in `lobmm` and `lobmmx`
+    - optional queue-aware `lobmmx` fill model behind `fill_model`
+    - `diag_microstructure.py`
+  - rejected as a new default:
+    - queue-aware fill model
+  - reason:
+    - `queue_back` was too pessimistic and made PPO unprofitable
+    - `queue_uniform` improved raw PnL but increased turnover, position size, and terminal penalties enough that the objective became much worse
+    - current conclusion is to keep `fill_model = legacy` as the default and only revisit queue-aware fills together with reward/terminal-penalty retuning
 - Corrected `lobmmx` stage-2 AAPL runs finished cleanly:
   - shared pretrain remained healthy (`best_f1 = 0.6450`)
   - `spread_aggr` was clearly best:

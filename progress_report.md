@@ -55,6 +55,45 @@ Copy this block for each new week.
 
 ---
 
+## Week of 2026-04-14
+
+### Weekly Snapshot
+
+- Overall status: selective branch integration worked mechanically, but only the reporting changes are clear keepers. The new opt-in queue-aware `lobmmx` fill model did not produce a better default than the current legacy fill model.
+- Main goal for the week: fast-forward to the shared mainline, import safe improvements from side branches, and validate them on Euler with small AAPL-only runs before considering larger sweeps.
+- Biggest win: annualized Sharpe reporting and a reusable fill-model validation workflow are now in place, and the branch integrations were tested end-to-end on Euler without breaking the pipeline.
+- Biggest risk or blocker: the queue-aware fill variants changed trading behavior substantially but did not improve the overall policy in a clean way; `queue_back` was too pessimistic and `queue_uniform` increased churn and terminal-inventory penalties too much.
+
+### Contributor Update: Pierre
+
+- Focus area: selective branch integration, validation infrastructure, and AAPL-only `lobmmx` fill-model experiments.
+- Completed:
+  - Fast-forwarded `mm-drl-lob` to include the merged `lobmmx` reward-fix PR.
+  - Imported annualized Sharpe reporting into both `lobmm/` and `lobmmx/`.
+  - Added an opt-in queue-aware fill model to `lobmmx`, but kept `fill_model="legacy"` as the default so behavior does not silently change.
+  - Added `diag_microstructure.py` as a small reusable diagnostic without merging the hard-coded GOOGL quote override.
+  - Added `cluster/submit_lobmmx_fillmodel_validation.sh` and ran three AAPL-only Euler validation pipelines against the shared stage-2 pretrain:
+    - `euler_lobmmx_stage3_legacy_control`
+    - `euler_lobmmx_stage3_queue_back`
+    - `euler_lobmmx_stage3_queue_uniform`
+- Results:
+  - `legacy_control` PPO: `pnl 0.01185`, `nd_pnl 0.13772`, `sharpe 0.526`, `reward -0.293`, `trades 1.19`
+  - `queue_back` PPO: `pnl -0.00511`, `nd_pnl -0.05741`, `sharpe -0.0668`, `reward -0.933`, `trades 2.13`
+  - `queue_uniform` PPO: `pnl 0.02353`, `nd_pnl 0.28562`, `sharpe 0.271`, `reward -6.161`, `trades 13.13`
+- Conclusion:
+  - The reporting changes helped and should stay.
+  - The queue fill model does not justify becoming the new default.
+  - `queue_back` is a clear regression.
+  - `queue_uniform` improves raw PnL but does so by trading much more aggressively, greatly increasing turnover, position size, and terminal-inventory penalties; under the current reward design, this is not an unambiguous improvement.
+  - Keep `fill_model="legacy"` as default for now and treat queue-aware fills as an experimental branch path that still needs reward/penalty retuning.
+- Links:
+  - `lobmm/`
+  - `lobmmx/`
+  - `cluster/submit_lobmmx_fillmodel_validation.sh`
+  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_legacy_control/`
+  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_queue_back/`
+  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_queue_uniform/`
+
 ## Week of 2026-03-30
 
 ### Weekly Snapshot
