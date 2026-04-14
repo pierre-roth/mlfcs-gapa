@@ -21,6 +21,39 @@ Rules:
 
 ## Current Best Known Setup
 
+### Synthetic continuous branch
+
+Branch:
+- `codex/simulated-continuous-paper`
+
+Scope:
+- isolated paper-faithful synthetic continuous path in `lobmmsim/`
+- synthetic data generation, paper-style continuous env, synthetic-only pretraining/RL, and interpretability metadata
+
+Current synthetic status:
+- The simulator now produces top-10 book data plus `latent.csv` with regime, latent alpha, signed flow, and queue summaries.
+- A legal paper-style baseline suite is in place; the earlier non-paper-faithful directional oracle was removed.
+- Synthetic pretraining now reloads the best checkpoint correctly and supports auxiliary regime supervision.
+- PPO now supports a legal behavior-cloning warm start from a baseline teacher.
+- Acceptance checking exists and writes multi-seed baseline summaries under `artifacts_sim/.../acceptance/`.
+
+Most recent synthetic evidence:
+- One-symbol `000001` pretrain probe:
+  - `best_f1 ~= 0.097`
+- One-symbol acceptance summary across seeds `[11, 19, 31, 37, 43]`:
+  - `fixed1_pnl_mean_avg ~= 12.6`
+  - `oracle_paper_pnl_mean_avg ~= -25.8`
+  - `fixed1_positive_seed_fraction = 0.4`
+  - `oracle_better_than_fixed_fraction = 0.6`
+- One-symbol smoke RL probe with behavior cloning:
+  - `bc_samples = 4000`
+  - `bc_final_loss ~= 0.0625`
+  - PPO still collapsed to `pnl_mean = 0` and `trades_mean = 0` under smoke budget
+
+Interpretation:
+- Synthetic branch plumbing is complete enough for serious learning experiments.
+- The next step is medium-budget one-symbol PPO, not more broad simulator work.
+
 ### Mainline `lobmm` best AAPL configuration
 
 Best current result family: stage-6 competitive runs.
@@ -88,21 +121,19 @@ Status:
 
 ## Active Runs
 
-- Active Euler runs from commit `049caa5`:
-  - `euler_lobmmx_stage4_2000_control`
-    - train: `63416021`
-    - evaluate: `63416029`
-    - report: `63416033`
-  - `euler_lobmmx_stage4_2000_excess_penalty`
-    - train: `63416035`
-    - evaluate: `63416037`
-    - report: `63416039`
-  - `euler_lobmmx_stage4_2000_excess_potential`
-    - train: `63416042`
-    - evaluate: `63416047`
-    - report: `63416051`
-  - purpose: compare a fixed-`2000`-event random-inventory control against initial-inventory-relative inventory control with and without potential-based reward for reducing excess inventory
+- No active synthetic branch runs.
 - Most recently completed:
+  - synthetic branch local probes:
+    - `synthetic_pretrain_probe`
+      - purpose: verify that synthetic pretraining learns a non-trivial signal after checkpoint reload and auxiliary-task fixes
+      - result: `best_f1 ~= 0.054`
+    - `synthetic_next_probe`
+      - purpose: validate acceptance scan, multitask pretraining, and BC warm-start wiring on one symbol
+      - result:
+        - `best_f1 ~= 0.097`
+        - `bc_samples = 4000`
+        - `bc_final_loss ~= 0.0625`
+        - PPO still produced `0` trades under smoke budget
   - integrated branch-validation runs:
     - `euler_lobmmx_stage3_legacy_control`
       - train: `63388924`
@@ -175,6 +206,14 @@ Status:
     - `queue_back` was too pessimistic and made PPO unprofitable
     - `queue_uniform` improved raw PnL but increased turnover, position size, and terminal penalties enough that the objective became much worse
     - current conclusion is to keep `fill_model = legacy` as the default and only revisit queue-aware fills together with reward/terminal-penalty retuning
+- Synthetic branch additions now in place:
+  - `lobmmsim/acceptance.py` provides a repeatable multi-seed acceptance gate for the simulator
+  - synthetic pretraining now supports auxiliary regime supervision from `latent.csv`
+  - PPO now supports behavior-cloning warm start from a legal teacher policy
+  - current synthetic conclusion:
+    - simulator quality is good enough to continue
+    - smoke-budget PPO is still too weak to judge learning quality
+    - next run should be medium-budget, one-symbol, with BC enabled
 - Corrected `lobmmx` stage-2 AAPL runs finished cleanly:
   - shared pretrain remained healthy (`best_f1 = 0.6450`)
   - `spread_aggr` was clearly best:

@@ -16,7 +16,19 @@ from .config import PretrainConfig
 from .data import PretrainDataset
 from .pipeline import load_symbol_splits, prepare_run
 from .utils import save_json
-from lobmmx.models import PretrainClassifier, build_backbone
+from lobmmx.models import build_backbone
+
+
+class SyntheticPretrainModel(nn.Module):
+    def __init__(self, backbone: nn.Module, num_classes: int = 3) -> None:
+        super().__init__()
+        self.backbone = backbone
+        self.mid_head = nn.Linear(backbone.output_dim, num_classes)
+        self.regime_head = nn.Linear(backbone.output_dim, num_classes)
+
+    def forward(self, lob: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.backbone.features(lob)
+        return self.mid_head(features), self.regime_head(features)
 
 
 def _dataset_class_weights(dataset: PretrainDataset) -> torch.Tensor:
@@ -34,21 +46,27 @@ def _dataset_sampler(dataset: PretrainDataset) -> WeightedRandomSampler | None:
     return WeightedRandomSampler(sample_weights.double(), num_samples=len(dataset), replacement=True)
 
 
-def _evaluate_classifier(model: PretrainClassifier, loader: DataLoader, device: str) -> dict[str, float | int | list[int]]:
+def _evaluate_classifier(model: SyntheticPretrainModel, loader: DataLoader, device: str) -> dict[str, float | int | list[int]]:
     preds = []
     targets = []
+    regime_preds = []
+    regime_targets = []
     model.eval()
     with torch.no_grad():
         for lob, labels in loader:
-            logits = model(lob.to(device))
-            preds.extend(logits.argmax(dim=-1).cpu().tolist())
-            targets.extend(labels.tolist())
+            mid_logits, regime_logits = model(lob.to(device))
+            preds.extend(mid_logits.argmax(dim=-1).cpu().tolist())
+            targets.extend(labels[:, 0].tolist())
+            regime_preds.extend(regime_logits.argmax(dim=-1).cpu().tolist())
+            regime_targets.extend(labels[:, 1].tolist())
     if not targets:
         return {
             "precision": 0.0,
             "recall": 0.0,
             "f1": 0.0,
             "accuracy": 0.0,
+            "regime_accuracy": 0.0,
+            "regime_f1": 0.0,
             "target_class_counts": [0, 0, 0],
             "predicted_class_counts": [0, 0, 0],
             "confusion_matrix": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
@@ -56,11 +74,17 @@ def _evaluate_classifier(model: PretrainClassifier, loader: DataLoader, device: 
         }
     precision, recall, f1, _ = precision_recall_fscore_support(targets, preds, average="macro", zero_division=0)
     accuracy = float(sum(int(p == t) for p, t in zip(preds, targets, strict=True)) / len(targets))
+    regime_precision, regime_recall, regime_f1, _ = precision_recall_fscore_support(regime_targets, regime_preds, average="macro", zero_division=0)
+    regime_accuracy = float(sum(int(p == t) for p, t in zip(regime_preds, regime_targets, strict=True)) / len(regime_targets))
     return {
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
         "accuracy": accuracy,
+        "regime_precision": float(regime_precision),
+        "regime_recall": float(regime_recall),
+        "regime_f1": float(regime_f1),
+        "regime_accuracy": regime_accuracy,
         "target_class_counts": [int(value) for value in np.bincount(np.asarray(targets, dtype=np.int64), minlength=3)],
         "predicted_class_counts": [int(value) for value in np.bincount(np.asarray(preds, dtype=np.int64), minlength=3)],
         "confusion_matrix": confusion_matrix(targets, preds, labels=[0, 1, 2]).astype(int).tolist(),
@@ -83,9 +107,10 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
         val_loader = DataLoader(val_ds, batch_size=config.pretrain_batch_size, shuffle=False, num_workers=config.pretrain_num_workers)
         test_loader = DataLoader(test_ds, batch_size=config.pretrain_batch_size, shuffle=False, num_workers=config.pretrain_num_workers)
         backbone = build_backbone(config.pretrain_backbone, config.lookback).to(config.device)
-        model = PretrainClassifier(backbone).to(config.device)
+        model = SyntheticPretrainModel(backbone).to(config.device)
         optimizer = Adam(model.parameters(), lr=config.pretrain_lr)
-        criterion = nn.CrossEntropyLoss(weight=_dataset_class_weights(train_ds).to(config.device))
+        mid_criterion = nn.CrossEntropyLoss(weight=_dataset_class_weights(train_ds).to(config.device))
+        regime_criterion = nn.CrossEntropyLoss()
         best_f1 = -1.0
         best_state = None
         history = []
@@ -93,8 +118,11 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
             model.train()
             losses = []
             for lob, labels in train_loader:
-                logits = model(lob.to(config.device))
-                loss = criterion(logits, labels.to(config.device))
+                mid_logits, regime_logits = model(lob.to(config.device))
+                labels = labels.to(config.device)
+                mid_loss = mid_criterion(mid_logits, labels[:, 0])
+                regime_loss = regime_criterion(regime_logits, labels[:, 1])
+                loss = mid_loss + config.pretrain_aux_weight * regime_loss
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
@@ -114,6 +142,8 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float | str]]:
             "backbone": config.pretrain_backbone,
             "best_f1": best_f1,
             "path": str(symbol_dir / config.backbone_name),
+            "pretrain_aux_task": config.pretrain_aux_task,
+            "pretrain_aux_weight": config.pretrain_aux_weight,
             "split_metrics": {
                 "train": _evaluate_classifier(model, train_loader, config.device),
                 "val": _evaluate_classifier(model, val_loader, config.device),

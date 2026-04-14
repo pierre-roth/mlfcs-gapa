@@ -3,15 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
 import pandas as pd
 import pyrallis
 import torch
+import torch.nn.functional as F
+from torch.optim import Adam
+from torch.utils.data import DataLoader, TensorDataset
 
 from .config import RLTrainConfig
 from .data import DayData
 from .env import MarketMakingEnv
 from .pipeline import load_symbol_splits, prepare_run, save_episode_results, summarize_results
 from .utils import ensure_dir, save_json
+from .baselines import FixedLevelPolicy, OraclePaperPolicy
 from lobmmx.models import ContinuousActorCritic, SharedStateEncoder, build_backbone
 from lobmmx.rl import train_ppo
 
@@ -54,6 +59,94 @@ def _init_paper_actor_prior(model: ContinuousActorCritic) -> None:
         model.alpha_head.bias.copy_(torch.tensor(alpha_bias, dtype=model.alpha_head.bias.dtype))
         model.beta_head.bias.copy_(torch.tensor(beta_bias, dtype=model.beta_head.bias.dtype))
         model.value_head.bias.zero_()
+
+
+def _teacher_policy(config: RLTrainConfig):
+    if config.bc_teacher == "oracle_paper":
+        return OraclePaperPolicy(config)
+    return FixedLevelPolicy(config, 1)
+
+
+def _decision_to_action(config: RLTrainConfig, mid: float, inventory: float, ask_price: float, bid_price: float) -> np.ndarray:
+    reservation = 0.5 * (ask_price + bid_price)
+    spread = ask_price - bid_price
+    if inventory == 0:
+        delta = 0.0
+    else:
+        delta = np.sign(inventory) * (mid - reservation)
+    return np.asarray(
+        [
+            float(np.clip(delta / max(config.max_bias, 1e-8), 0.0, 1.0)),
+            float(np.clip(spread / max(config.max_spread, config.tick_size), 0.0, 1.0)),
+        ],
+        dtype=np.float32,
+    )
+
+
+def _collect_imitation_dataset(days: list[DayData], config: RLTrainConfig) -> tuple[TensorDataset | None, dict[str, float]]:
+    policy = _teacher_policy(config)
+    lob_rows = []
+    flat_rows = []
+    targets = []
+    for day in days:
+        env = MarketMakingEnv(day, config)
+        for episode_index, span in enumerate(env.selected_episodes(config.max_train_episodes_per_day)):
+            env.set_eval_context(episode_index)
+            obs = env.reset(span)
+            done = False
+            while not done:
+                event_idx = int(env.episode_decisions[env.step_cursor])
+                quote_idx = max(event_idx - env.config.latency, env.config.lookback - 1)
+                decision = policy.act(day, quote_idx, env.inventory, env.step_cursor, len(env.episode_decisions))
+                lob_rows.append(np.array(obs.lob, copy=True))
+                flat_rows.append(np.array(obs.flat, copy=True))
+                targets.append(_decision_to_action(config, float(day.midprice[quote_idx]), float(env.inventory), decision.ask_price, decision.bid_price))
+                obs, _, done, _ = env.step(
+                    {
+                        "ask_price": decision.ask_price,
+                        "ask_volume": decision.ask_volume,
+                        "bid_price": decision.bid_price,
+                        "bid_volume": decision.bid_volume,
+                        "spread": decision.spread,
+                        "reservation": 0.5 * (decision.ask_price + decision.bid_price),
+                    }
+                )
+    if not targets:
+        return None, {"bc_samples": 0.0}
+    dataset = TensorDataset(
+        torch.tensor(np.stack(lob_rows), dtype=torch.float32),
+        torch.tensor(np.stack(flat_rows), dtype=torch.float32),
+        torch.tensor(np.stack(targets), dtype=torch.float32),
+    )
+    return dataset, {"bc_samples": float(len(targets))}
+
+
+def _run_behavior_cloning(model: ContinuousActorCritic, days: list[DayData], config: RLTrainConfig, output_dir: Path) -> dict[str, float]:
+    dataset, stats = _collect_imitation_dataset(days, config)
+    if dataset is None or config.bc_epochs <= 0:
+        return {"bc_samples": 0.0, "bc_final_loss": 0.0}
+    loader = DataLoader(dataset, batch_size=config.bc_batch_size, shuffle=True)
+    optimizer = Adam(model.parameters(), lr=config.bc_lr)
+    history = []
+    model.to(config.device)
+    model.train()
+    for epoch in range(config.bc_epochs):
+        losses = []
+        for lob, flat, target in loader:
+            lob = lob.to(config.device)
+            flat = flat.to(config.device)
+            target = target.to(config.device)
+            dist, _ = model.dist_value(lob, flat)
+            loss = F.mse_loss(dist.mean, target)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            if config.gradient_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
+            optimizer.step()
+            losses.append(float(loss.item()))
+        history.append({"epoch": epoch, "bc_loss": float(np.mean(losses) if losses else 0.0)})
+    pd.DataFrame(history).to_csv(output_dir / "behavior_cloning_history.csv", index=False)
+    return {**stats, "bc_final_loss": float(history[-1]["bc_loss"]) if history else 0.0}
 
 
 def evaluate_rl_model(envs: list[MarketMakingEnv], model: ContinuousActorCritic, config: RLTrainConfig, output_dir: str | Path | None = None, method_name: str = "C_PPO"):
@@ -122,12 +215,14 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         model = ContinuousActorCritic(encoder, action_dim=2)
         _init_paper_actor_prior(model)
         symbol_dir = ensure_dir(Path(out_dir) / symbol / "ppo")
+        bc_summary = _run_behavior_cloning(model, splits["train"], config, symbol_dir)
         model, history, train_runtime = train_ppo(train_envs, model, config)
         torch.save(model.state_dict(), symbol_dir / "model.pt")
         pd.DataFrame(history).to_csv(symbol_dir / "history.csv", index=False)
         results, eval_runtime = evaluate_rl_model(eval_envs, model, config, output_dir=symbol_dir, method_name=config.method_name())
         frame = save_episode_results(symbol_dir / "episodes.csv", results)
         summary = summarize_results(frame)
+        summary.update(bc_summary)
         summary.update(train_runtime)
         summary.update(eval_runtime)
         save_json(symbol_dir / "summary.json", summary)

@@ -4,7 +4,8 @@ from dataclasses import asdict, fields
 
 import pyrallis
 
-from .config import GenerateConfig, PretrainConfig, RLTrainConfig, SuiteConfig
+from .acceptance import run_acceptance_check
+from .config import ExperimentConfig, GenerateConfig, PretrainConfig, RLTrainConfig, SuiteConfig
 from .pretrain import run_pretrain
 from .report import run_report
 from .simulator import generate_dataset
@@ -27,6 +28,8 @@ def run_suite(config: SuiteConfig) -> None:
         run_rl_training(_cast_config(config, RLTrainConfig))
     if config.run_report:
         run_report(_cast_config(config, RLTrainConfig))
+    if config.run_acceptance:
+        run_acceptance_check(_cast_config(config, ExperimentConfig))
 
 
 @pyrallis.wrap()

@@ -38,6 +38,8 @@ class ExperimentConfig:
     pretrain_batch_size: int = 128
     pretrain_num_workers: int = 0
     pretrain_lr: float = 1e-3
+    pretrain_aux_task: str = "regime"
+    pretrain_aux_weight: float = 0.35
     backbone_name: str = "attn_lob.pt"
     backbone_trainable: bool = True
 
@@ -67,6 +69,10 @@ class ExperimentConfig:
     gae_lambda: float = 0.95
     normalize_advantages: bool = True
     gradient_clip_norm: float = 1.0
+    bc_teacher: str = "fixed1"
+    bc_epochs: int = 2
+    bc_batch_size: int = 256
+    bc_lr: float = 5e-4
 
     events_per_day: dict[str, int] = field(
         default_factory=lambda: {
@@ -85,6 +91,7 @@ class ExperimentConfig:
     alpha_signal_scale: float = 1.0
     price_noise_scale: float = 0.0025
     report_top_attention_points: int = 50
+    acceptance_seeds: list[int] = field(default_factory=lambda: [11, 19, 31, 37, 43])
 
     def apply_mode_defaults(self) -> "ExperimentConfig":
         if self.mode == "smoke":
@@ -103,6 +110,8 @@ class ExperimentConfig:
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 2)
             self.ppo_updates = min(self.ppo_updates, 1)
             self.ppo_minibatch_size = min(self.ppo_minibatch_size, 64)
+            self.bc_epochs = min(self.bc_epochs, 1)
+            self.bc_batch_size = min(self.bc_batch_size, 128)
         elif self.mode == "medium":
             self.num_days = min(self.num_days, 8)
             self.train_days = min(self.train_days, 4)
@@ -116,6 +125,7 @@ class ExperimentConfig:
             self.pretrain_epochs = min(self.pretrain_epochs, 3)
             self.ppo_epochs = min(self.ppo_epochs, 3)
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 4)
+            self.bc_epochs = min(self.bc_epochs, 2)
         self.device = self._resolve_device()
         return self
 
@@ -159,3 +169,4 @@ class SuiteConfig(ExperimentConfig):
     run_pretrain: bool = True
     run_rl: bool = True
     run_report: bool = True
+    run_acceptance: bool = False

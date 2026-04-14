@@ -59,40 +59,41 @@ Copy this block for each new week.
 
 ### Weekly Snapshot
 
-- Overall status: selective branch integration worked mechanically, but only the reporting changes are clear keepers. The new opt-in queue-aware `lobmmx` fill model did not produce a better default than the current legacy fill model.
-- Main goal for the week: fast-forward to the shared mainline, import safe improvements from side branches, and validate them on Euler with small AAPL-only runs before considering larger sweeps.
-- Biggest win: annualized Sharpe reporting and a reusable fill-model validation workflow are now in place, and the branch integrations were tested end-to-end on Euler without breaking the pipeline.
-- Biggest risk or blocker: the queue-aware fill variants changed trading behavior substantially but did not improve the overall policy in a clean way; `queue_back` was too pessimistic and `queue_uniform` increased churn and terminal-inventory penalties too much.
+- Overall status: the synthetic continuous branch now has a usable paper-style simulator, acceptance checks, multitask pretraining, and a legal behavior-cloning warm start. The remaining bottleneck is PPO policy learning, not basic simulator integrity.
+- Main goal for the week: finish the isolated synthetic branch and move it from “pipeline exists” to “measurable learning progress with clear acceptance criteria.”
+- Biggest win: synthetic data generation, paper-style continuous RL, auxiliary regime supervision, and baseline-imitation warm start are now all implemented in one branch with passing tests.
+- Biggest risk or blocker: even with the new warm start, smoke-budget PPO still collapses to no trades on the tested seed, so the next serious step is medium-budget one-symbol learning rather than more simulator plumbing.
 
 ### Contributor Update: Pierre
 
-- Focus area: selective branch integration, validation infrastructure, and AAPL-only `lobmmx` fill-model experiments.
+- Focus area: synthetic continuous paper-faithful branch in `lobmmsim/`.
 - Completed:
-  - Fast-forwarded `mm-drl-lob` to include the merged `lobmmx` reward-fix PR.
-  - Imported annualized Sharpe reporting into both `lobmm/` and `lobmmx/`.
-  - Added an opt-in queue-aware fill model to `lobmmx`, but kept `fill_model="legacy"` as the default so behavior does not silently change.
-  - Added `diag_microstructure.py` as a small reusable diagnostic without merging the hard-coded GOOGL quote override.
-  - Added `cluster/submit_lobmmx_fillmodel_validation.sh` and ran three AAPL-only Euler validation pipelines against the shared stage-2 pretrain:
-    - `euler_lobmmx_stage3_legacy_control`
-    - `euler_lobmmx_stage3_queue_back`
-    - `euler_lobmmx_stage3_queue_uniform`
+  - Built the isolated `lobmmsim/` package for the paper-faithful synthetic continuous path.
+  - Implemented synthetic top-10 LOB generation with latent regime, directional alpha, signed-flow state, and sidecar `latent.csv` metadata.
+  - Implemented the continuous paper-style environment with `2000`-event episodes, terminal liquidation, and paper reward semantics.
+  - Added synthetic-only pretraining and RL pipeline entrypoints plus a report path with latent-signal diagnostics.
+  - Fixed synthetic pretraining so the best checkpoint is reloaded before final evaluation instead of reporting only the last epoch.
+  - Replaced the earlier non-paper-faithful directional oracle with a legal paper-style oracle baseline.
+  - Added a synthetic acceptance checker that runs multi-seed baseline scans and writes `acceptance/summary.{csv,json}`.
+  - Added auxiliary regime supervision in synthetic pretraining and behavior-cloning warm start for PPO from a legal baseline policy.
 - Results:
-  - `legacy_control` PPO: `pnl 0.01185`, `nd_pnl 0.13772`, `sharpe 0.526`, `reward -0.293`, `trades 1.19`
-  - `queue_back` PPO: `pnl -0.00511`, `nd_pnl -0.05741`, `sharpe -0.0668`, `reward -0.933`, `trades 2.13`
-  - `queue_uniform` PPO: `pnl 0.02353`, `nd_pnl 0.28562`, `sharpe 0.271`, `reward -6.161`, `trades 13.13`
+  - Synthetic smoke tests pass end to end: `5 passed`.
+  - One-symbol synthetic pretrain probe on `000001` improved to `best_f1 ~= 0.097` with the new multitask setup and larger sample budget.
+  - Acceptance check on `000001` across seeds `[11, 19, 31, 37, 43]`:
+    - `Fixed_1 pnl_mean_avg ~= 12.6`
+    - `OraclePaper pnl_mean_avg ~= -25.8`
+    - `Fixed_1 positive seed fraction = 0.4`
+    - `OraclePaper >= Fixed_1 fraction = 0.6`
+  - Behavior cloning is wired through and produced `bc_samples = 4000`, but the smoke-budget PPO probe still ended with `pnl_mean = 0` and `trades_mean = 0`.
 - Conclusion:
-  - The reporting changes helped and should stay.
-  - The queue fill model does not justify becoming the new default.
-  - `queue_back` is a clear regression.
-  - `queue_uniform` improves raw PnL but does so by trading much more aggressively, greatly increasing turnover, position size, and terminal-inventory penalties; under the current reward design, this is not an unambiguous improvement.
-  - Keep `fill_model="legacy"` as default for now and treat queue-aware fills as an experimental branch path that still needs reward/penalty retuning.
+  - The branch is now structurally complete enough for real synthetic-learning experiments.
+  - The simulator is no longer the dominant blocker.
+  - The next useful work is medium-budget one-symbol training and policy diagnostics, not more general simulator engineering.
 - Links:
-  - `lobmm/`
-  - `lobmmx/`
-  - `cluster/submit_lobmmx_fillmodel_validation.sh`
-  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_legacy_control/`
-  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_queue_back/`
-  - `/cluster/project/math/piroth/mlfcs-gapa/artifacts/euler_lobmmx_stage3_queue_uniform/`
+  - `lobmmsim/`
+  - `tests/test_lobmmsim_simulator.py`
+  - `tests/test_lobmmsim_env.py`
+  - `tests/test_lobmmsim_smoke.py`
 
 ## Week of 2026-03-30
 
@@ -215,9 +216,6 @@ Copy this block for each new week.
 
 TODO
 
-## Week of 2026-04-14
-
-### Synthetic Continuous Branch
 
 - Implemented a new isolated `lobmmsim/` package on branch `codex/simulated-continuous-paper`.
 - Added a lightweight event-driven synthetic top-10 LOB generator that writes paper-like processed day folders plus `latent.csv` sidecar metadata.

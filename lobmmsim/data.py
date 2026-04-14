@@ -287,9 +287,11 @@ class PretrainDataset(Dataset):
         self.lookback = lookback
         self.samples: list[tuple[int, int]] = []
         self.labels: list[np.ndarray] = []
+        self.regime_labels: list[np.ndarray] = []
         self.sample_labels: list[int] = []
         for day_idx, day in enumerate(days):
             labels = _midprice_labels(day.midprice, horizon, alpha)
+            regimes = (day.latent["regime"].to_numpy(dtype=np.int64, copy=True) + 1).clip(0, 2)
             valid = day.valid_label_indices(lookback, horizon)
             valid = valid[labels[valid] >= 0]
             if max_samples_per_day is not None and len(valid) > max_samples_per_day:
@@ -299,6 +301,7 @@ class PretrainDataset(Dataset):
                 self.samples.append((day_idx, int(idx)))
                 self.sample_labels.append(int(labels[idx]))
             self.labels.append(labels)
+            self.regime_labels.append(regimes)
         self.sample_labels_np = np.asarray(self.sample_labels, dtype=np.int64)
 
     def class_counts(self) -> dict[int, int]:
@@ -316,5 +319,11 @@ class PretrainDataset(Dataset):
         assert day.normalized_lob is not None
         start = idx - self.lookback + 1
         window = day.normalized_lob[start : idx + 1]
-        label = self.labels[day_idx][idx]
+        label = np.asarray(
+            [
+                self.labels[day_idx][idx],
+                self.regime_labels[day_idx][idx],
+            ],
+            dtype=np.int64,
+        )
         return torch.tensor(window, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
