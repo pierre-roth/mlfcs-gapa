@@ -32,8 +32,8 @@ def _apply_medium_matrix_defaults(config: LearningMatrixConfig) -> LearningMatri
     config.apply_mode_defaults()
     config.symbols = config.symbols[:1]
     config.num_days = 8
-    config.train_days = 5
-    config.val_days = 0
+    config.train_days = 4
+    config.val_days = 1
     config.test_days = 3
     config.events_per_day = {symbol: min(config.events_per_day.get(symbol, 60_000), 12_000) for symbol in config.symbols}
     config.max_rows_per_day = min(config.max_rows_per_day or 12_000, 12_000)
@@ -46,6 +46,7 @@ def _apply_medium_matrix_defaults(config: LearningMatrixConfig) -> LearningMatri
     config.ppo_rollouts_per_epoch = max(config.ppo_rollouts_per_epoch, 6)
     config.ppo_updates = max(config.ppo_updates, 2)
     config.ppo_minibatch_size = min(config.ppo_minibatch_size, 128)
+    config.ppo_select_best_model = True
     config.bc_epochs = max(config.bc_epochs, 2)
     config.bc_batch_size = min(config.bc_batch_size, 256)
     config.device = "cpu"

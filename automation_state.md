@@ -91,12 +91,31 @@ Most recent synthetic evidence:
   - baseline context on that seed:
     - `Fixed_1 pnl_mean ~= -280.9`
     - `OraclePaper pnl_mean ~= -37.0`
+- Euler cluster matrix (`synthetic_medium_000001_cluster`, job `63468047`, completed in `43m`):
+  - `scratch_noaux`:
+    - `ppo_pnl_mean ~= 11.89`
+    - `ppo_sharpe ~= 0.769`
+    - `ppo_trades_mean ~= 70.0`
+  - `scratch_aux`:
+    - same PPO outcome as `scratch_noaux`
+    - stronger pretrain metrics: `best_f1 ~= 0.631`, `test_regime_accuracy ~= 0.726`
+  - `bc_aux`:
+    - `ppo_pnl_mean ~= 5.00`
+    - `ppo_sharpe ~= 0.486`
+    - `ppo_trades_mean ~= 0.44`
+  - `bc_aux_residual`:
+    - collapsed to `0` trades and `0` PnL
+  - acceptance:
+    - `fixed1_pnl_mean_avg ~= -277.8`
+    - `oracle_paper_pnl_mean_avg ~= -31.8`
+    - `fixed1_positive_seed_fraction = 0.2`
 
 Interpretation:
 - Synthetic branch plumbing is complete enough for serious learning experiments.
 - Auxiliary regime supervision improves interpretability metrics a bit, but did not improve PPO by itself.
 - Behavior cloning is the first change that made PPO profitable in the medium one-symbol study, but it is still too conservative to be a satisfactory learned market-making policy.
 - Residual spread control around `Fixed_1` is the strongest synthetic learning direction so far. It preserved the positive sign from BC, improved Sharpe further, and increased trading activity modestly without reintroducing the earlier large negative PnL.
+- The Euler matrix revealed a missing control: without validation-based selection, PPO can destroy the useful BC/residual initialization and end at a dead zero-trade policy.
 - The simulator remains seed-sensitive under the medium acceptance gate, so it is not yet safe to scale experiments broadly without another calibration pass.
 
 ### Mainline `lobmm` best AAPL configuration
@@ -191,6 +210,13 @@ Status:
     - result:
       - best synthetic learned result so far
       - positive PnL and Sharpe with more activity than plain BC
+  - Euler synthetic matrix:
+    - `synthetic_medium_000001_cluster`
+    - purpose: compare all four current one-symbol synthetic variants on Euler
+    - result:
+      - scratch PPO was best on that cluster dataset
+      - BC was profitable but conservative
+      - residual BC collapsed because the runner lacked validation-based model selection
   - integrated branch-validation runs:
     - `euler_lobmmx_stage3_legacy_control`
       - train: `63388924`
@@ -269,11 +295,13 @@ Status:
   - PPO now supports behavior-cloning warm start from a legal teacher policy
   - `lobmmsim/learning_matrix.py` provides a fixed-data comparison workflow for one-symbol synthetic studies
   - `action_mode = residual_fixed1` now keeps PPO spread control near the working touch baseline while still learning inventory-aware bias
+  - `lobmmsim/train_rl.py` now supports validation-based PPO model selection and can retain the BC checkpoint when PPO degrades it
   - current synthetic conclusion:
     - BC helps more than auxiliary supervision, but plain BC+PPO is too inactive
     - residual baseline-guided PPO is now the best current synthetic path
-    - smoke-budget PPO is too weak, and the medium matrix is now the right local evaluation loop
+    - smoke-budget PPO is too weak, and the medium matrix is now the right evaluation loop
     - before scaling up, the synthetic market should be recalibrated until the acceptance scan shows a stable positive passive edge
+    - the next immediate rerun should be the Euler matrix with validation-based selection enabled
 - Corrected `lobmmx` stage-2 AAPL runs finished cleanly:
   - shared pretrain remained healthy (`best_f1 = 0.6450`)
   - `spread_aggr` was clearly best:

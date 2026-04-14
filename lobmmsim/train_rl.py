@@ -8,6 +8,7 @@ import pandas as pd
 import pyrallis
 import torch
 import torch.nn.functional as F
+from copy import deepcopy
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -226,6 +227,8 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
     for symbol in config.symbols:
         splits = load_symbol_splits(config, symbol)
         train_envs = [MarketMakingEnv(day, config) for day in splits["train"]]
+        val_days = splits["val"] or splits["test"]
+        val_envs = [MarketMakingEnv(day, config) for day in val_days]
         eval_envs = [MarketMakingEnv(day, config) for day in splits["test"]]
         encoder = _build_encoder(config, splits["train"], symbol)
         model = ContinuousActorCritic(encoder, action_dim=2)
@@ -233,7 +236,36 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         _init_paper_actor_prior(model)
         symbol_dir = ensure_dir(Path(out_dir) / symbol / "ppo")
         bc_summary = _run_behavior_cloning(model, splits["train"], config, symbol_dir)
-        model, history, train_runtime = train_ppo(train_envs, model, config)
+        pretrain_selected_model = deepcopy(model).cpu()
+
+        def _validation_summary(candidate: ContinuousActorCritic) -> dict[str, float] | None:
+            if not config.ppo_select_best_model or not val_envs:
+                return None
+            results, _ = evaluate_rl_model(val_envs, candidate, config, output_dir=None, method_name="C_PPO_val")
+            frame = pd.DataFrame([result.to_dict() for result in results])
+            return summarize_results(frame)
+
+        initial_selection = _validation_summary(pretrain_selected_model)
+        initial_metric = float(initial_selection.get(config.ppo_selection_metric, float("-inf"))) if initial_selection else float("-inf")
+
+        model, history, train_runtime = train_ppo(
+            train_envs,
+            model,
+            config,
+            select_fn=_validation_summary if config.ppo_select_best_model else None,
+        )
+
+        final_selection = _validation_summary(model)
+        final_metric = float(final_selection.get(config.ppo_selection_metric, float("-inf"))) if final_selection else float("-inf")
+        if initial_selection and initial_metric >= final_metric:
+            model.load_state_dict(pretrain_selected_model.state_dict())
+            train_runtime["selected_epoch"] = -1.0
+            train_runtime["selected_metric"] = initial_metric
+            train_runtime["selection_metric_name"] = config.ppo_selection_metric
+            train_runtime["selection_source"] = "behavior_cloning"
+        elif final_selection:
+            train_runtime["selection_source"] = "ppo"
+
         torch.save(model.state_dict(), symbol_dir / "model.pt")
         pd.DataFrame(history).to_csv(symbol_dir / "history.csv", index=False)
         results, eval_runtime = evaluate_rl_model(eval_envs, model, config, output_dir=symbol_dir, method_name=config.method_name())

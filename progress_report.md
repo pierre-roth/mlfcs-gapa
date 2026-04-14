@@ -102,11 +102,18 @@ Copy this block for each new week.
     - `trades ~= 0.75`
     - `alpha_probe_r2 ~= 0.072`
     - `regime_probe_accuracy ~= 0.584`
+  - Euler medium matrix run (`synthetic_medium_000001_cluster`) completed successfully in `43m` and changed the ranking materially:
+    - `scratch_noaux`: `pnl ~= 11.89`, `sharpe ~= 0.769`, `trades ~= 70.0`
+    - `scratch_aux`: same PPO outcome as `scratch_noaux`, but better pretrain metrics (`best_f1 ~= 0.631`, `test_regime_accuracy ~= 0.726`)
+    - `bc_aux`: profitable but much more conservative (`pnl ~= 5.00`, `trades ~= 0.44`)
+    - `bc_aux_residual`: collapsed to `0` trades and `0` PnL on this run
+    - acceptance remained poor: `Fixed_1 pnl_mean_avg ~= -277.8`
 - Conclusion:
   - The branch is now structurally complete enough for real synthetic-learning experiments.
   - Auxiliary regime supervision helps latent recoverability a bit, but did not improve PPO behavior on its own.
   - Plain BC was too conservative, but the new residual spread mode around `Fixed_1` materially improved the learned policy without drifting back into the earlier high-turnover negative-PnL regime.
-  - The simulator is still not robust enough across seeds to be treated as “solved”; the next work should focus on residual-policy experiments and targeted acceptance recalibration, not more unconstrained PPO-from-scratch runs.
+  - The Euler matrix showed a different failure mode: the residual variant can collapse if PPO training is allowed to overwrite the BC start without validation-based selection.
+  - The next fix is therefore structural, not speculative: use a real validation split and preserve the BC checkpoint when PPO degrades it.
 - Links:
   - `lobmmsim/`
   - `tests/test_lobmmsim_simulator.py`
