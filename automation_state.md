@@ -1,6 +1,6 @@
 # Automation State
 
-Last updated: 2026-04-01 (Europe/Zurich)
+Last updated: 2026-04-14 (Europe/Zurich)
 
 ## Canonical Paths
 
@@ -85,7 +85,20 @@ Status:
 
 ## Active Runs
 
-- No active Euler runs.
+- Active Euler validation runs submitted from commit `33cf231` to test integrated branch improvements:
+  - `euler_lobmmx_stage3_legacy_control`
+    - train: `63388924`
+    - evaluate: `63388926`
+    - report: `63388928`
+  - `euler_lobmmx_stage3_queue_back`
+    - train: `63388930`
+    - evaluate: `63388932`
+    - report: `63388934`
+  - `euler_lobmmx_stage3_queue_uniform`
+    - train: `63388936`
+    - evaluate: `63388938`
+    - report: `63388940`
+  - purpose: compare unchanged `lobmmx` legacy fill behavior against the new opt-in queue-aware fill model while preserving existing trading-PnL reward semantics
 - Most recently completed:
   - mainline full runs:
     - `euler_full_stage8_competitive_seed29`
