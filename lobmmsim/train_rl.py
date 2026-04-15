@@ -238,7 +238,7 @@ def run_rl_training(config: RLTrainConfig) -> dict[str, dict[str, float]]:
         bc_summary = _run_behavior_cloning(model, splits["train"], config, symbol_dir)
         pretrain_selected_model = deepcopy(model).cpu()
 
-        def _validation_summary(candidate: ContinuousActorCritic) -> dict[str, float] | None:
+        def _validation_summary(candidate: ContinuousActorCritic, epoch: int | None = None) -> dict[str, float] | None:
             if not config.ppo_select_best_model or not val_envs:
                 return None
             results, _ = evaluate_rl_model(val_envs, candidate, config, output_dir=None, method_name="C_PPO_val")
