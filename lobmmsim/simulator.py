@@ -84,13 +84,33 @@ def _weighted_level(rng: np.random.Generator, levels: int = 10) -> int:
 
 
 class SyntheticOrderBook:
-    def __init__(self, profile: SymbolProfile, tick_size: float, trade_unit: int, rng: np.random.Generator, signal_scale: float, noise_scale: float) -> None:
+    def __init__(
+        self,
+        profile: SymbolProfile,
+        tick_size: float,
+        trade_unit: int,
+        rng: np.random.Generator,
+        signal_scale: float,
+        noise_scale: float,
+        market_order_impact_scale: float,
+        flow_reversion_scale: float,
+        spread_widen_prob: float,
+        spread_imbalance_threshold: float,
+        spread_alpha_threshold: float,
+        recenter_follow_scale: float,
+    ) -> None:
         self.profile = profile
         self.tick_size = tick_size
         self.trade_unit = trade_unit
         self.rng = rng
         self.signal_scale = signal_scale
         self.noise_scale = noise_scale
+        self.market_order_impact_scale = market_order_impact_scale
+        self.flow_reversion_scale = flow_reversion_scale
+        self.spread_widen_prob = spread_widen_prob
+        self.spread_imbalance_threshold = spread_imbalance_threshold
+        self.spread_alpha_threshold = spread_alpha_threshold
+        self.recenter_follow_scale = recenter_follow_scale
         self.mid = round(profile.base_price / tick_size) * tick_size
         self.efficient_price = self.mid
         self.spread_ticks = 1
@@ -142,7 +162,11 @@ class SyntheticOrderBook:
 
     def _desired_spread_ticks(self) -> int:
         imbalance = abs(self._top_imbalance())
-        if imbalance > 0.30 or abs(self.alpha) > 0.18 * self.signal_scale or self.rng.random() < 0.32:
+        if (
+            imbalance > self.spread_imbalance_threshold
+            or abs(self.alpha) > self.spread_alpha_threshold * self.signal_scale
+            or self.rng.random() < self.spread_widen_prob
+        ):
             return 2
         return 1
 
@@ -150,14 +174,15 @@ class SyntheticOrderBook:
         imbalance = self._top_imbalance()
         alpha = self.alpha
         flow_pressure = float(np.tanh(self.signed_flow_state / 18.0))
+        flow_term = self.flow_reversion_scale * flow_pressure
         # Positive latent alpha should favor profitable bid-side fills before the future upward move,
         # rather than immediate same-direction adverse selection.
-        mb = np.exp(self.profile.market_order_bias - 0.14 * alpha - 0.08 * imbalance - 0.35 * flow_pressure)
-        ms = np.exp(self.profile.market_order_bias + 0.14 * alpha + 0.08 * imbalance + 0.35 * flow_pressure)
-        lb = np.exp(self.profile.add_rate - 0.10 * alpha + 0.25 * max(imbalance, 0.0) + 0.10 * flow_pressure)
-        ls = np.exp(self.profile.add_rate + 0.10 * alpha + 0.25 * max(-imbalance, 0.0) - 0.10 * flow_pressure)
-        cb = np.exp(self.profile.cancel_rate + 0.08 * alpha - 0.10 * max(imbalance, 0.0) - 0.06 * flow_pressure)
-        cs = np.exp(self.profile.cancel_rate - 0.08 * alpha - 0.10 * max(-imbalance, 0.0) + 0.06 * flow_pressure)
+        mb = np.exp(self.profile.market_order_bias - 0.14 * alpha - 0.08 * imbalance - 0.35 * flow_term)
+        ms = np.exp(self.profile.market_order_bias + 0.14 * alpha + 0.08 * imbalance + 0.35 * flow_term)
+        lb = np.exp(self.profile.add_rate - 0.10 * alpha + 0.25 * max(imbalance, 0.0) + 0.10 * flow_term)
+        ls = np.exp(self.profile.add_rate + 0.10 * alpha + 0.25 * max(-imbalance, 0.0) - 0.10 * flow_term)
+        cb = np.exp(self.profile.cancel_rate + 0.08 * alpha - 0.10 * max(imbalance, 0.0) - 0.06 * flow_term)
+        cs = np.exp(self.profile.cancel_rate - 0.08 * alpha - 0.10 * max(-imbalance, 0.0) + 0.06 * flow_term)
         weights = np.asarray([mb, ms, lb, ls, cb, cs], dtype=np.float64)
         weights = weights / weights.sum()
         event_idx = int(self.rng.choice(np.arange(6), p=weights))
@@ -182,7 +207,7 @@ class SyntheticOrderBook:
         move_mid = 0
         if gap_ticks != 0:
             gap_abs = abs(gap_ticks)
-            follow_prob = min(0.75, 0.06 + 0.12 * gap_abs + 0.05 * min(abs(self.alpha), 1.0))
+            follow_prob = min(0.75, self.recenter_follow_scale * (0.06 + 0.12 * gap_abs + 0.05 * min(abs(self.alpha), 1.0)))
             if self.rng.random() < follow_prob:
                 move_mid = 1 if gap_ticks > 0 else -1
         if move_mid != 0:
@@ -227,7 +252,7 @@ class SyntheticOrderBook:
                 msg["market_buy_volume"] = size
                 msg["market_buy_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state + size / self.trade_unit
-                self.efficient_price += 0.0015 * self.tick_size + 0.0008 * self.alpha
+                self.efficient_price += self.market_order_impact_scale * (0.0015 * self.tick_size + 0.0008 * self.alpha)
             else:
                 trade["price"] = self.bid1
                 trade["size"] = size
@@ -236,7 +261,7 @@ class SyntheticOrderBook:
                 msg["market_sell_volume"] = size
                 msg["market_sell_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state - size / self.trade_unit
-                self.efficient_price -= 0.0015 * self.tick_size - 0.0008 * self.alpha
+                self.efficient_price -= self.market_order_impact_scale * (0.0015 * self.tick_size - 0.0008 * self.alpha)
         elif event_type == "limit":
             level = _weighted_level(self.rng)
             if side == "buy":
@@ -309,7 +334,20 @@ def _simulate_day(config: GenerateConfig, symbol: str, day: str) -> dict[str, pd
     seed = int.from_bytes(digest, byteorder="big", signed=False) % 1_000_000_000
     rng = np.random.default_rng(seed)
     timestamps = _session_timestamps(pd.Timestamp(day), config.session_windows, profile.events_per_day, rng)
-    book = SyntheticOrderBook(profile, config.tick_size, config.trade_unit, rng, config.alpha_signal_scale, config.price_noise_scale)
+    book = SyntheticOrderBook(
+        profile,
+        config.tick_size,
+        config.trade_unit,
+        rng,
+        config.alpha_signal_scale,
+        config.price_noise_scale,
+        config.market_order_impact_scale,
+        config.flow_reversion_scale,
+        config.spread_widen_prob,
+        config.spread_imbalance_threshold,
+        config.spread_alpha_threshold,
+        config.recenter_follow_scale,
+    )
 
     ask_rows = []
     bid_rows = []

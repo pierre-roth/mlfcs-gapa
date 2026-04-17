@@ -92,6 +92,12 @@ class ExperimentConfig:
     )
     alpha_signal_scale: float = 1.0
     price_noise_scale: float = 0.0025
+    market_order_impact_scale: float = 1.0
+    flow_reversion_scale: float = 1.0
+    spread_widen_prob: float = 0.32
+    spread_imbalance_threshold: float = 0.30
+    spread_alpha_threshold: float = 0.18
+    recenter_follow_scale: float = 1.0
     report_top_attention_points: int = 50
     acceptance_seeds: list[int] = field(default_factory=lambda: [11, 19, 31, 37, 43])
 

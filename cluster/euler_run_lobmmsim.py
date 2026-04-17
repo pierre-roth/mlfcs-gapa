@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lobmmsim.config import ExperimentConfig, GenerateConfig, PretrainConfig, RLTrainConfig, SuiteConfig
+from lobmmsim.calibration_sweep import CalibrationSweepConfig
 from lobmmsim.learning_matrix import LearningMatrixConfig
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
@@ -24,6 +25,10 @@ def _resolve_runner(kind: str):
         from lobmmsim.acceptance import run_acceptance_check
 
         return ExperimentConfig, run_acceptance_check
+    if kind == "calibration_sweep":
+        from lobmmsim.calibration_sweep import run_calibration_sweep
+
+        return CalibrationSweepConfig, run_calibration_sweep
     if kind == "generate":
         from lobmmsim.simulator import generate_dataset
 
@@ -150,7 +155,7 @@ def _load_overrides(config_cls, set_items: list[str]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dispatch Euler batch jobs into the lobmmsim synthetic entry points.")
-    parser.add_argument("kind", choices=["acceptance", "generate", "matrix", "pretrain", "report", "suite", "train"])
+    parser.add_argument("kind", choices=["acceptance", "calibration_sweep", "generate", "matrix", "pretrain", "report", "suite", "train"])
     parser.add_argument("--dry-run", action="store_true", help="Print the resolved config and exit.")
     parser.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE", help="Override a config field.")
     args = parser.parse_args()
