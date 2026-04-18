@@ -187,10 +187,10 @@ Status:
 
 - Active synthetic branch runs:
   - Euler calibration sweep:
-    - run name: `synthetic_acceptance_sweep_cluster`
-    - job: `63870921`
+    - run name: `synthetic_acceptance_sweep_cluster_fix2`
+    - job: `63948050`
     - purpose: evaluate a small grid of simulator-calibration candidates against the multi-seed acceptance gate on `000001`
-    - expected output: `/cluster/project/math/piroth/mlfcs-gapa/artifacts_sim/synthetic_acceptance_sweep_cluster/summary.{csv,json}`
+    - expected output: `/cluster/project/math/piroth/mlfcs-gapa/artifacts_sim/synthetic_acceptance_sweep_cluster_fix2/summary.{csv,json}`
 - Most recently completed:
   - synthetic branch local probes:
     - `synthetic_pretrain_probe`
