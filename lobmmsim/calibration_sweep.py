@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import pandas as pd
@@ -62,13 +62,15 @@ def run_calibration_sweep(config: CalibrationSweepConfig) -> dict[str, object]:
     config.apply_mode_defaults()
     symbol = config.symbols[0]
     root = ensure_dir(Path(config.output_root) / config.sweep_name)
+    experiment_fields = {field.name for field in fields(ExperimentConfig)}
+    base_config = {key: value for key, value in asdict(config).items() if key in experiment_fields}
     rows: list[dict[str, object]] = []
     for candidate in _candidates():
         name = str(candidate["name"])
         overrides = {key: value for key, value in candidate.items() if key != "name"}
         candidate_cfg = ExperimentConfig(
             **{
-                **asdict(config),
+                **base_config,
                 **overrides,
                 "symbols": [symbol],
                 "run_name": f"{config.sweep_name}_{name}",
