@@ -186,12 +186,16 @@ Status:
 ## Active Runs
 
 - Active synthetic branch runs:
-  - Euler unrestricted-action matrix:
-    - run name: `synthetic_signed_mm_cluster`
-    - job: `64053312`
-    - purpose: test a signed reservation-bias action mode plus MM-only reward shaping on `000001`, against the current paper-constrained synthetic control
-    - expected output: `/cluster/project/math/piroth/mlfcs-gapa/artifacts_sim/synthetic_signed_mm_cluster/summary.{csv,json}`
+  - None
 - Most recently completed:
+  - Euler unrestricted-action matrix:
+    - `synthetic_signed_mm_cluster`
+    - job: `64053312`
+    - result:
+      - `scratch_aux`: `pnl_mean ~= 11.67`, `sharpe ~= 0.765`, `trades_mean ~= 70.0`
+      - `signed_mm_scratch_aux`: `pnl_mean ~= 71.78`, `sharpe ~= 0.157`, `trades_mean ~= 46.67`
+      - `signed_mm_bc_aux`: `pnl_mean ~= 26.67`, `sharpe ~= 0.130`, `trades_mean ~= 14.67`
+      - interpretation: removing the paper action restriction increases raw synthetic PnL but still produces a poor MM objective, with strongly negative reward and weak Sharpe
   - Euler calibration sweep:
     - `synthetic_acceptance_sweep_cluster_fix2`
     - job: `63948050`

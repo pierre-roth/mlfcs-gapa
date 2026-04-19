@@ -108,12 +108,18 @@ Copy this block for each new week.
     - `bc_aux`: profitable but much more conservative (`pnl ~= 5.00`, `trades ~= 0.44`)
     - `bc_aux_residual`: collapsed to `0` trades and `0` PnL on this run
     - acceptance remained poor: `Fixed_1 pnl_mean_avg ~= -277.8`
+  - Euler unrestricted-action synthetic test (`synthetic_signed_mm_cluster`) completed successfully in `51m`:
+    - `scratch_aux` stayed near the earlier baseline: `pnl ~= 11.67`, `sharpe ~= 0.765`, `trades ~= 70.0`
+    - `signed_mm_scratch_aux` increased raw PnL sharply to `pnl ~= 71.78`, but with weak `sharpe ~= 0.157` and very negative training reward, indicating uncontrolled inventory/risk behavior rather than clean market-making
+    - `signed_mm_bc_aux` improved over the old BC path (`pnl ~= 26.67`, `trades ~= 14.67`) but still had weak Sharpe and strongly negative reward
+    - acceptance on the generated dataset was still poor overall, even though `Fixed_1` on the test split itself was positive (`fixed1_pnl_mean ~= 201.56`)
 - Conclusion:
   - The branch is now structurally complete enough for real synthetic-learning experiments.
   - Auxiliary regime supervision helps latent recoverability a bit, but did not improve PPO behavior on its own.
   - Plain BC was too conservative, but the new residual spread mode around `Fixed_1` materially improved the learned policy without drifting back into the earlier high-turnover negative-PnL regime.
   - The Euler matrix showed a different failure mode: the residual variant can collapse if PPO training is allowed to overwrite the BC start without validation-based selection.
-  - The next fix is therefore structural, not speculative: use a real validation split and preserve the BC checkpoint when PPO degrades it.
+  - Removing the paper’s action-space restriction does let PPO manufacture much higher raw synthetic PnL, but the resulting policy still does not optimize a credible market-making objective. It is finding directional/inventory-heavy behavior rather than clean spread capture.
+  - The remaining blocker is therefore still simulator/objective alignment, not just policy expressiveness.
 - Links:
   - `lobmmsim/`
   - `tests/test_lobmmsim_simulator.py`
