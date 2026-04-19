@@ -44,6 +44,8 @@ class ExperimentConfig:
     eta: float = 0.5
     zeta: float = 0.01
     zero_transaction_cost: bool = True
+    use_maker_rebate: bool = False
+    maker_rebate_per_share: float = 0.0020
     deterministic_evaluation: bool = True
     eval_seed_base: int = 20260419
 

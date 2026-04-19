@@ -24,7 +24,16 @@ euler_activate_overlay_env() {
         return
     fi
 
-    local scratch_root="${SCRATCH:-/cluster/scratch/${USER}}"
+    local scratch_root="${SCRATCH:-}"
+    if [[ -z "${scratch_root}" || ! -d "${scratch_root}" || ! -w "${scratch_root}" ]]; then
+        if [[ -d "/cluster/work/math/${USER}" && -w "/cluster/work/math/${USER}" ]]; then
+            scratch_root="/cluster/work/math/${USER}"
+        elif [[ -d "${HOME}" && -w "${HOME}" ]]; then
+            scratch_root="${HOME}/.cache"
+        else
+            scratch_root="/tmp/${USER}"
+        fi
+    fi
     export VENV_DIR="${VENV_DIR:-${scratch_root}/venvs/mlfcs-gapa-euler-py311}"
     mkdir -p "$(dirname "${VENV_DIR}")"
 

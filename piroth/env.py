@@ -175,6 +175,18 @@ class ContinuousMarketEnv:
     def _inventory_penalty(self) -> float:
         return float(self.config.zeta * (self.inventory / max(self.config.trade_unit, 1)) ** 2)
 
+    def _maker_rebate(self, fill: Fill) -> float:
+        if not self.config.use_maker_rebate or fill.taker:
+            return 0.0
+        return float(abs(fill.volume) * self.config.maker_rebate_per_share)
+
+    def _apply_fill(self, fill: Fill) -> None:
+        self.inventory += fill.volume
+        self.cash -= fill.volume * fill.price
+        self.cash += self._maker_rebate(fill)
+        self.turnover += abs(fill.volume * fill.price)
+        self.trades += 1
+
     def _reward(self, fills: list[Fill], mid: float) -> float:
         delta_pnl = self.value - self.prev_value
         dampened = delta_pnl - max(0.0, self.config.eta * delta_pnl)
@@ -187,10 +199,7 @@ class ContinuousMarketEnv:
         mid = float(self.day.midprice[event_idx])
         flatten_price = float(self.day.bid1[event_idx] if self.inventory > 0 else self.day.ask1[event_idx])
         fill = Fill(flatten_price, -self.inventory, taker=True)
-        self.inventory += fill.volume
-        self.cash -= fill.volume * fill.price
-        self.turnover += abs(fill.volume * fill.price)
-        self.trades += 1
+        self._apply_fill(fill)
         self.prev_value = self.value
         self.value = self.cash
         return self._reward([fill], mid)
@@ -208,10 +217,7 @@ class ContinuousMarketEnv:
         self.quote_spreads.append(float(orders["spread"]))
         self.quote_biases.append(float(orders["reservation"] - mid))
         for fill in fills:
-            self.inventory += fill.volume
-            self.cash -= fill.volume * fill.price
-            self.turnover += abs(fill.volume * fill.price)
-            self.trades += 1
+            self._apply_fill(fill)
         self.prev_value = self.value
         self.value = self.cash + self.inventory * mid
         reward = self._reward(fills, mid)

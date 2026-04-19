@@ -39,3 +39,13 @@ def test_terminal_liquidation_flattens_inventory(tmp_path: Path) -> None:
     assert env.inventory == 0.0
     assert obs.flat.shape[0] == 48
 
+
+def test_maker_rebate_only_applies_to_passive_fills(tmp_path: Path) -> None:
+    env = _load_env(tmp_path)
+    env.config.use_maker_rebate = True
+    env.config.maker_rebate_per_share = 0.002
+    env.reset(env.available_episodes()[0])
+    env._apply_fill(Fill(price=10.0, volume=100.0, taker=False))
+    assert abs(env.cash - (-1000.0 + 0.2)) < 1e-8
+    env._apply_fill(Fill(price=10.0, volume=-100.0, taker=True))
+    assert abs(env.cash - 0.2) < 1e-8
