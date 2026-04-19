@@ -50,6 +50,7 @@ class ExperimentConfig:
     residual_spread_range: float = 0.02
     eta: float = 0.5
     zeta: float = 0.01
+    inventory_carry_penalty: float = 0.0
     zero_transaction_cost: bool = True
     deterministic_evaluation: bool = True
     eval_seed_base: int = 20260414

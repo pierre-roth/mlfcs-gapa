@@ -74,17 +74,21 @@ def _teacher_policy(config: RLTrainConfig):
 def _decision_to_action(config: RLTrainConfig, mid: float, inventory: float, ask_price: float, bid_price: float, base_spread: float) -> np.ndarray:
     reservation = 0.5 * (ask_price + bid_price)
     spread = ask_price - bid_price
-    if inventory == 0:
-        delta = 0.0
+    if config.action_mode == "signed_absolute":
+        bias_action = 0.5 + 0.5 * (reservation - mid) / max(config.max_bias, 1e-8)
     else:
-        delta = np.sign(inventory) * (mid - reservation)
+        if inventory == 0:
+            delta = 0.0
+        else:
+            delta = np.sign(inventory) * (mid - reservation)
+        bias_action = delta / max(config.max_bias, 1e-8)
     if config.action_mode == "residual_fixed1":
         spread_action = 0.5 + 0.5 * (spread - base_spread) / max(config.residual_spread_range, config.tick_size)
     else:
         spread_action = spread / max(config.max_spread, config.tick_size)
     return np.asarray(
         [
-            float(np.clip(delta / max(config.max_bias, 1e-8), 0.0, 1.0)),
+            float(np.clip(bias_action, 0.0, 1.0)),
             float(np.clip(spread_action, 0.0, 1.0)),
         ],
         dtype=np.float32,

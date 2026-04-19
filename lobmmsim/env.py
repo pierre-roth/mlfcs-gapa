@@ -110,14 +110,18 @@ class MarketMakingEnv:
             return dict(action)
         action = np.clip(np.asarray(action, dtype=np.float32), 0.0, 1.0)
         mid = float(self.day.midprice[quote_idx])
-        delta = float(action[0]) * self.config.max_bias
+        if self.config.action_mode == "signed_absolute":
+            reservation_offset = (float(action[0]) - 0.5) * 2.0 * self.config.max_bias
+        else:
+            delta = float(action[0]) * self.config.max_bias
+            reservation_offset = -np.sign(self.inventory) * delta
         if self.config.action_mode == "residual_fixed1":
             base_spread = max(self.config.tick_size, float(self.day.spread[quote_idx]))
             spread_adjust = (float(action[1]) - 0.5) * 2.0 * self.config.residual_spread_range
             spread = float(np.clip(base_spread + spread_adjust, self.config.tick_size, self.config.max_spread))
         else:
             spread = max(self.config.tick_size, float(action[1]) * self.config.max_spread)
-        reservation = mid - np.sign(self.inventory) * delta
+        reservation = mid + reservation_offset
         ask_price, bid_price = price_legal_check(reservation + spread / 2.0, reservation - spread / 2.0, self.config.tick_size)
         ask_volume = -float(self.config.trade_unit)
         bid_volume = float(self.config.trade_unit)
@@ -186,7 +190,13 @@ class MarketMakingEnv:
         delta_pnl = self.value - self.prev_value
         dampened = delta_pnl - max(0.0, self.config.eta * delta_pnl)
         trading_pnl = float(sum(fill.volume * (midprice - fill.price) for fill in fills))
-        return float(dampened + trading_pnl - self._inventory_penalty())
+        inventory_penalty = self._inventory_penalty()
+        inventory_carry = float(
+            self.config.inventory_carry_penalty * abs(self.inventory) / max(self.config.trade_unit, 1)
+        )
+        if self.config.reward_mode == "mm_only":
+            return float(trading_pnl - inventory_penalty - inventory_carry)
+        return float(dampened + trading_pnl - inventory_penalty - inventory_carry)
 
     def step(self, action: np.ndarray | dict[str, float]) -> tuple[Observation, float, bool, dict[str, float]]:
         event_idx = int(self.episode_decisions[self.step_cursor])

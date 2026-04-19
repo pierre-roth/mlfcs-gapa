@@ -94,32 +94,31 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
     acceptance_summary = run_acceptance_check(_cast_config(config, ExperimentConfig), symbol=symbol) if config.include_acceptance else {}
     variants = [
         {
-            "name": "scratch_noaux",
-            "pretrain_aux_task": "none",
-            "pretrain_aux_weight": 0.0,
-            "bc_epochs": 0,
-            "action_mode": "absolute",
-        },
-        {
             "name": "scratch_aux",
             "pretrain_aux_task": "regime",
             "pretrain_aux_weight": config.pretrain_aux_weight,
             "bc_epochs": 0,
             "action_mode": "absolute",
+            "reward_mode": "paper",
+            "inventory_carry_penalty": config.inventory_carry_penalty,
         },
         {
-            "name": "bc_aux",
+            "name": "signed_mm_scratch_aux",
+            "pretrain_aux_task": "regime",
+            "pretrain_aux_weight": config.pretrain_aux_weight,
+            "bc_epochs": 0,
+            "action_mode": "signed_absolute",
+            "reward_mode": "mm_only",
+            "inventory_carry_penalty": max(config.inventory_carry_penalty, 0.01),
+        },
+        {
+            "name": "signed_mm_bc_aux",
             "pretrain_aux_task": "regime",
             "pretrain_aux_weight": config.pretrain_aux_weight,
             "bc_epochs": config.bc_epochs,
-            "action_mode": "absolute",
-        },
-        {
-            "name": "bc_aux_residual",
-            "pretrain_aux_task": "regime",
-            "pretrain_aux_weight": config.pretrain_aux_weight,
-            "bc_epochs": config.bc_epochs,
-            "action_mode": "residual_fixed1",
+            "action_mode": "signed_absolute",
+            "reward_mode": "mm_only",
+            "inventory_carry_penalty": max(config.inventory_carry_penalty, 0.01),
         },
     ]
     rows = []
@@ -146,6 +145,8 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
                 pretrain_aux_weight=variant["pretrain_aux_weight"],
                 bc_epochs=variant["bc_epochs"],
                 action_mode=variant["action_mode"],
+                reward_mode=variant["reward_mode"],
+                inventory_carry_penalty=variant["inventory_carry_penalty"],
             )
         )
         variant_report = run_report(
@@ -158,6 +159,8 @@ def run_learning_matrix(config: LearningMatrixConfig) -> dict[str, object]:
                 pretrain_aux_weight=variant["pretrain_aux_weight"],
                 bc_epochs=variant["bc_epochs"],
                 action_mode=variant["action_mode"],
+                reward_mode=variant["reward_mode"],
+                inventory_carry_penalty=variant["inventory_carry_penalty"],
             )
         )
         rows.append(_variant_summary(variant["name"], variant_pretrain, variant_rl, variant_report, symbol))
