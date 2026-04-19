@@ -1,6 +1,6 @@
 # Automation State
 
-Last updated: 2026-04-14 (Europe/Zurich)
+Last updated: 2026-04-19 (Europe/Zurich)
 
 ## Canonical Paths
 
@@ -24,7 +24,7 @@ Rules:
 ### Synthetic continuous branch
 
 Branch:
-- `codex/simulated-continuous-paper`
+- `simulated-continuous-paper`
 
 Scope:
 - isolated paper-faithful synthetic continuous path in `lobmmsim/`
@@ -186,12 +186,20 @@ Status:
 ## Active Runs
 
 - Active synthetic branch runs:
-  - Euler calibration sweep:
-    - run name: `synthetic_acceptance_sweep_cluster_fix2`
-    - job: `63948050`
-    - purpose: evaluate a small grid of simulator-calibration candidates against the multi-seed acceptance gate on `000001`
-    - expected output: `/cluster/project/math/piroth/mlfcs-gapa/artifacts_sim/synthetic_acceptance_sweep_cluster_fix2/summary.{csv,json}`
+  - Euler unrestricted-action matrix:
+    - run name: `synthetic_signed_mm_cluster`
+    - job: `64053312`
+    - purpose: test a signed reservation-bias action mode plus MM-only reward shaping on `000001`, against the current paper-constrained synthetic control
+    - expected output: `/cluster/project/math/piroth/mlfcs-gapa/artifacts_sim/synthetic_signed_mm_cluster/summary.{csv,json}`
 - Most recently completed:
+  - Euler calibration sweep:
+    - `synthetic_acceptance_sweep_cluster_fix2`
+    - job: `63948050`
+    - result:
+      - best candidate: `balanced_passive`
+      - `fixed1_pnl_mean_avg ~= -8.42`
+      - `fixed1_positive_seed_fraction = 0.4`
+      - still below acceptance bar, so simulator calibration remains the main blocker
   - synthetic branch local probes:
     - `synthetic_pretrain_probe`
       - purpose: verify that synthetic pretraining learns a non-trivial signal after checkpoint reload and auxiliary-task fixes
