@@ -6,7 +6,7 @@ import pandas as pd
 import pyrallis
 import torch
 
-from .baselines import AvellanedaStoikovPolicy, FixedLevelPolicy
+from .baselines import AvellanedaStoikovPolicy, FixedLevelPolicy, calibrate_avellaneda_stoikov
 from .config import ReportConfig
 from .data import load_splits
 from .env import ContinuousMarketEnv
@@ -53,7 +53,7 @@ def run_report(config: ReportConfig) -> dict[str, dict[str, float]]:
         baselines = {
             "Fixed_1": _evaluate_baseline(FixedLevelPolicy(config, 1), splits["test"], config),
             "Fixed_2": _evaluate_baseline(FixedLevelPolicy(config, 2), splits["test"], config),
-            "AS": _evaluate_baseline(AvellanedaStoikovPolicy(config), splits["test"], config),
+            "AS": _evaluate_baseline(AvellanedaStoikovPolicy(config, calibrate_avellaneda_stoikov(splits["train"], config)), splits["test"], config),
         }
         summary["fixed1_pnl_mean"] = float(baselines["Fixed_1"].get("pnl_mean", 0.0))
         summary["as_pnl_mean"] = float(baselines["AS"].get("pnl_mean", 0.0))
