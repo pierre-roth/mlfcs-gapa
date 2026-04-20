@@ -43,6 +43,9 @@ class ExperimentConfig:
     max_spread: float = 0.1
     eta: float = 0.5
     zeta: float = 0.01
+    dampened_pnl_weight: float = 1.0
+    trade_reward_weight: float = 1.0
+    inventory_penalty_weight: float = 1.0
     zero_transaction_cost: bool = True
     use_maker_rebate: bool = False
     maker_rebate_per_share: float = 0.0020
@@ -86,10 +89,21 @@ class ExperimentConfig:
     price_noise_scale: float = 0.0025
     market_order_impact_scale: float = 0.85
     flow_reversion_scale: float = 1.0
+    market_order_alpha_sensitivity: float = 0.14
+    market_order_imbalance_sensitivity: float = 0.08
+    market_order_flow_sensitivity: float = 0.35
+    limit_alpha_sensitivity: float = 0.10
+    cancel_alpha_sensitivity: float = 0.08
     spread_widen_prob: float = 0.35
     spread_imbalance_threshold: float = 0.3
     spread_alpha_threshold: float = 0.18
     recenter_follow_scale: float = 0.85
+    recenter_base_prob: float = 0.06
+    recenter_gap_scale: float = 0.12
+    recenter_alpha_scale: float = 0.05
+    market_order_tick_impact: float = 0.0015
+    market_order_alpha_impact: float = 0.0008
+    touch_replenish_fraction: float = 0.0
 
     def apply_mode_defaults(self) -> "ExperimentConfig":
         if self.mode == "smoke":
@@ -161,3 +175,9 @@ class SuiteConfig(ExperimentConfig):
     run_pretrain: bool = True
     run_train: bool = True
     run_report: bool = True
+
+
+@dataclass
+class SweepConfig(SuiteConfig):
+    sweep_name: str = "piroth_sweep"
+    candidate_group: str = "passive_mm"

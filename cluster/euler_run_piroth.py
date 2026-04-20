@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from piroth.config import GenerateConfig, PretrainConfig, ReportConfig, SuiteConfig, TrainConfig
+from piroth.config import GenerateConfig, PretrainConfig, ReportConfig, SuiteConfig, SweepConfig, TrainConfig
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 FALSE_VALUES = {"0", "false", "no", "n", "off"}
@@ -39,6 +39,10 @@ def _resolve_runner(kind: str):
         from piroth.run_suite import run_suite
 
         return SuiteConfig, run_suite
+    if kind == "sweep":
+        from piroth.sweep import run_sweep
+
+        return SweepConfig, run_sweep
     raise KeyError(kind)
 
 
@@ -135,7 +139,7 @@ def _load_overrides(config_cls, set_items: list[str]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dispatch Euler jobs into the piroth simulated continuous pipeline.")
-    parser.add_argument("kind", choices=["generate", "pretrain", "train", "report", "suite"])
+    parser.add_argument("kind", choices=["generate", "pretrain", "train", "report", "suite", "sweep"])
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE")
     args = parser.parse_args()
@@ -152,4 +156,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

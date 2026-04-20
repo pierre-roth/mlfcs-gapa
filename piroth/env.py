@@ -173,7 +173,8 @@ class ContinuousMarketEnv:
         return []
 
     def _inventory_penalty(self) -> float:
-        return float(self.config.zeta * (self.inventory / max(self.config.trade_unit, 1)) ** 2)
+        base = self.config.zeta * (self.inventory / max(self.config.trade_unit, 1)) ** 2
+        return float(self.config.inventory_penalty_weight * base)
 
     def _maker_rebate(self, fill: Fill) -> float:
         if not self.config.use_maker_rebate or fill.taker:
@@ -189,8 +190,9 @@ class ContinuousMarketEnv:
 
     def _reward(self, fills: list[Fill], mid: float) -> float:
         delta_pnl = self.value - self.prev_value
-        dampened = delta_pnl - max(0.0, self.config.eta * delta_pnl)
+        dampened = self.config.dampened_pnl_weight * (delta_pnl - max(0.0, self.config.eta * delta_pnl))
         trading = float(sum(fill.volume * (mid - fill.price) for fill in fills))
+        trading *= self.config.trade_reward_weight
         return float(dampened + trading - self._inventory_penalty())
 
     def _close_position(self, event_idx: int) -> float:

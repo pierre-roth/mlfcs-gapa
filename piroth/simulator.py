@@ -136,12 +136,42 @@ class SyntheticOrderBook:
         flow_pressure = float(np.tanh(self.signed_flow_state / 18.0))
         flow_term = self.config.flow_reversion_scale * flow_pressure
         alpha = self.alpha
-        market_buy = np.exp(self.profile.market_order_bias - 0.14 * alpha - 0.08 * imbalance - 0.35 * flow_term)
-        market_sell = np.exp(self.profile.market_order_bias + 0.14 * alpha + 0.08 * imbalance + 0.35 * flow_term)
-        limit_buy = np.exp(self.profile.add_rate - 0.10 * alpha + 0.25 * max(imbalance, 0.0) + 0.10 * flow_term)
-        limit_sell = np.exp(self.profile.add_rate + 0.10 * alpha + 0.25 * max(-imbalance, 0.0) - 0.10 * flow_term)
-        cancel_buy = np.exp(self.profile.cancel_rate + 0.08 * alpha - 0.10 * max(imbalance, 0.0) - 0.06 * flow_term)
-        cancel_sell = np.exp(self.profile.cancel_rate - 0.08 * alpha - 0.10 * max(-imbalance, 0.0) + 0.06 * flow_term)
+        market_buy = np.exp(
+            self.profile.market_order_bias
+            - self.config.market_order_alpha_sensitivity * alpha
+            - self.config.market_order_imbalance_sensitivity * imbalance
+            - self.config.market_order_flow_sensitivity * flow_term
+        )
+        market_sell = np.exp(
+            self.profile.market_order_bias
+            + self.config.market_order_alpha_sensitivity * alpha
+            + self.config.market_order_imbalance_sensitivity * imbalance
+            + self.config.market_order_flow_sensitivity * flow_term
+        )
+        limit_buy = np.exp(
+            self.profile.add_rate
+            - self.config.limit_alpha_sensitivity * alpha
+            + 0.25 * max(imbalance, 0.0)
+            + self.config.limit_alpha_sensitivity * flow_term
+        )
+        limit_sell = np.exp(
+            self.profile.add_rate
+            + self.config.limit_alpha_sensitivity * alpha
+            + 0.25 * max(-imbalance, 0.0)
+            - self.config.limit_alpha_sensitivity * flow_term
+        )
+        cancel_buy = np.exp(
+            self.profile.cancel_rate
+            + self.config.cancel_alpha_sensitivity * alpha
+            - 0.10 * max(imbalance, 0.0)
+            - 0.06 * flow_term
+        )
+        cancel_sell = np.exp(
+            self.profile.cancel_rate
+            - self.config.cancel_alpha_sensitivity * alpha
+            - 0.10 * max(-imbalance, 0.0)
+            + 0.06 * flow_term
+        )
         weights = np.asarray([market_buy, market_sell, limit_buy, limit_sell, cancel_buy, cancel_sell], dtype=np.float64)
         weights = weights / weights.sum()
         idx = int(self.rng.choice(np.arange(6), p=weights))
@@ -164,7 +194,15 @@ class SyntheticOrderBook:
         gap_ticks = int(round((target_mid - self.mid) / self.config.tick_size))
         if gap_ticks != 0:
             gap_abs = abs(gap_ticks)
-            follow_prob = min(0.75, self.config.recenter_follow_scale * (0.06 + 0.12 * gap_abs + 0.05 * min(abs(self.alpha), 1.0)))
+            follow_prob = min(
+                0.75,
+                self.config.recenter_follow_scale
+                * (
+                    self.config.recenter_base_prob
+                    + self.config.recenter_gap_scale * gap_abs
+                    + self.config.recenter_alpha_scale * min(abs(self.alpha), 1.0)
+                ),
+            )
             if self.rng.random() < follow_prob:
                 move = 1 if gap_ticks > 0 else -1
                 if move > 0:
@@ -208,14 +246,24 @@ class SyntheticOrderBook:
                 msg["market_buy_volume"] = size
                 msg["market_buy_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state + size / self.config.trade_unit
-                self.efficient_price += self.config.market_order_impact_scale * (0.0015 * self.config.tick_size + 0.0008 * self.alpha)
+                self.efficient_price += self.config.market_order_impact_scale * (
+                    self.config.market_order_tick_impact * self.config.tick_size
+                    + self.config.market_order_alpha_impact * self.alpha
+                )
+                if self.config.touch_replenish_fraction > 0:
+                    self.ask_volumes[0] += self.config.touch_replenish_fraction * size
             else:
                 trade = {"price": float(self.bid1), "size": size, "aggressor_side": "A"}
                 self.bid_volumes[0] -= size
                 msg["market_sell_volume"] = size
                 msg["market_sell_n"] = 1.0
                 self.signed_flow_state = 0.985 * self.signed_flow_state - size / self.config.trade_unit
-                self.efficient_price -= self.config.market_order_impact_scale * (0.0015 * self.config.tick_size - 0.0008 * self.alpha)
+                self.efficient_price -= self.config.market_order_impact_scale * (
+                    self.config.market_order_tick_impact * self.config.tick_size
+                    - self.config.market_order_alpha_impact * self.alpha
+                )
+                if self.config.touch_replenish_fraction > 0:
+                    self.bid_volumes[0] += self.config.touch_replenish_fraction * size
         elif event_type == "limit":
             level = _weighted_level(self.rng)
             if side == "buy":
@@ -336,4 +384,3 @@ def main(config: GenerateConfig) -> None:
 
 if __name__ == "__main__":
     main()
-
