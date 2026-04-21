@@ -237,6 +237,10 @@ class ContinuousMarketEnv:
                 "spread": float(orders["spread"]),
                 "latent_alpha": float(self.day.latent.iloc[event_idx]["latent_alpha"]),
                 "regime_shift": int(self.day.latent.iloc[event_idx]["regime_shift"]),
+                "event_actor": str(self.day.latent.iloc[event_idx].get("event_actor", "")),
+                "maker_agent": str(self.day.latent.iloc[event_idx].get("maker_agent", "")),
+                "queue_pressure": float(self.day.latent.iloc[event_idx].get("queue_pressure", 0.0)),
+                "top_imbalance": float(self.day.latent.iloc[event_idx].get("top_imbalance", 0.0)),
                 "reward": float(reward),
             }
         )

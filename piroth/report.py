@@ -38,6 +38,27 @@ def _evaluate_baseline(policy, days, config: ReportConfig) -> dict[str, float]:
     return summarize(pd.DataFrame(results))
 
 
+def _interpretability_summary(traces: list[pd.DataFrame]) -> dict[str, float]:
+    if not traces:
+        return {}
+    frame = pd.concat(traces, ignore_index=True)
+    metrics: dict[str, float] = {}
+    if "quote_bias" in frame and "latent_alpha" in frame and frame["quote_bias"].std(ddof=0) > 0 and frame["latent_alpha"].std(ddof=0) > 0:
+        metrics["bias_alpha_corr"] = float(frame["quote_bias"].corr(frame["latent_alpha"]))
+    if "event_actor" in frame:
+        metrics["informed_event_share"] = float((frame["event_actor"] == "informed_taker").mean())
+        metrics["noise_event_share"] = float((frame["event_actor"] == "noise_taker").mean())
+        metrics["maker_event_share"] = float((frame["event_actor"] == "competing_mm").mean())
+    if "maker_agent" in frame:
+        metrics["competing_mm_context_share"] = float((frame["maker_agent"] == "competing_mm").mean())
+        metrics["liquidity_provider_context_share"] = float((frame["maker_agent"] == "liquidity_provider").mean())
+    if "queue_pressure" in frame:
+        metrics["queue_pressure_mean"] = float(frame["queue_pressure"].mean())
+    if "top_imbalance" in frame:
+        metrics["top_imbalance_mean"] = float(frame["top_imbalance"].mean())
+    return metrics
+
+
 def run_report(config: ReportConfig) -> dict[str, dict[str, float]]:
     config.apply_mode_defaults()
     summaries = {}
@@ -46,10 +67,11 @@ def run_report(config: ReportConfig) -> dict[str, dict[str, float]]:
         model = _build_model(config, symbol)
         model.load_state_dict(torch.load(Path(config.output_dir()) / symbol / "ppo" / "model.pt", map_location="cpu"))
         symbol_dir = ensure_dir(Path(config.output_dir()) / symbol / "report")
-        ppo_results = evaluate_model([ContinuousMarketEnv(day, config) for day in splits["test"]], model, config)
+        ppo_results, traces = evaluate_model([ContinuousMarketEnv(day, config) for day in splits["test"]], model, config, collect_traces=True)
         ppo_frame = pd.DataFrame(ppo_results)
         ppo_frame.to_csv(symbol_dir / "ppo_episodes.csv", index=False)
         summary = summarize(ppo_frame)
+        summary.update(_interpretability_summary(traces))
         baselines = {
             "Fixed_1": _evaluate_baseline(FixedLevelPolicy(config, 1), splits["test"], config),
             "Fixed_2": _evaluate_baseline(FixedLevelPolicy(config, 2), splits["test"], config),

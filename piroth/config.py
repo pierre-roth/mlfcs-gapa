@@ -89,6 +89,12 @@ class ExperimentConfig:
     price_noise_scale: float = 0.0025
     market_order_impact_scale: float = 0.85
     flow_reversion_scale: float = 1.0
+    noise_taker_rate_scale: float = 1.0
+    informed_taker_rate_scale: float = 1.0
+    maker_add_rate_scale: float = 1.0
+    maker_cancel_rate_scale: float = 1.0
+    liquidity_refill_rate_scale: float = 1.0
+    maker_join_touch_prob_shift: float = 0.0
     market_order_alpha_sensitivity: float = 0.14
     market_order_imbalance_sensitivity: float = 0.08
     market_order_flow_sensitivity: float = 0.35
@@ -111,7 +117,7 @@ class ExperimentConfig:
             self.train_days = 2
             self.val_days = 1
             self.test_days = 1
-            self.events_per_day = {symbol: min(self.events_per_day.get(symbol, 60_000), 2_000) for symbol in self.symbols}
+            self.events_per_day = {symbol: min(self.events_per_day.get(symbol, 60_000), 500) for symbol in self.symbols}
             self.pretrain_epochs = min(self.pretrain_epochs, 1)
             self.pretrain_batch_size = min(self.pretrain_batch_size, 64)
             self.ppo_epochs = min(self.ppo_epochs, 1)

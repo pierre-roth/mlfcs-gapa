@@ -15,6 +15,10 @@ class TradeSlice:
     price: np.ndarray
     size: np.ndarray
     aggressor_side: np.ndarray
+    taker_agent: np.ndarray | None = None
+    maker_agent: np.ndarray | None = None
+    maker_order_id: np.ndarray | None = None
+    queue_ahead: np.ndarray | None = None
 
 
 @dataclass
@@ -117,6 +121,10 @@ def _trades_by_event(trades: pd.DataFrame, timestamps: pd.DatetimeIndex) -> dict
             price=block["price"].to_numpy(dtype=np.float32),
             size=block["size"].to_numpy(dtype=np.float32),
             aggressor_side=block["aggressor_side"].astype(str).to_numpy(),
+            taker_agent=block["taker_agent"].astype(str).to_numpy() if "taker_agent" in block else None,
+            maker_agent=block["maker_agent"].astype(str).to_numpy() if "maker_agent" in block else None,
+            maker_order_id=block["maker_order_id"].to_numpy(dtype=np.int64) if "maker_order_id" in block else None,
+            queue_ahead=block["queue_ahead"].to_numpy(dtype=np.float32) if "queue_ahead" in block else None,
         )
     return mapping
 

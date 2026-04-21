@@ -26,10 +26,11 @@ def _build_model(config: TrainConfig, symbol: str):
     return ContinuousActorCritic(encoder, action_dim=2)
 
 
-def evaluate_model(envs, model, config: TrainConfig, method_name: str = "C_PPO"):
+def evaluate_model(envs, model, config: TrainConfig, method_name: str = "C_PPO", collect_traces: bool = False):
     model.to(config.device)
     model.eval()
     results = []
+    traces = []
     with torch.no_grad():
         for env in envs:
             for episode_index, span in enumerate(env.selected_episodes(config.max_eval_episodes_per_day)):
@@ -42,7 +43,14 @@ def evaluate_model(envs, model, config: TrainConfig, method_name: str = "C_PPO")
                     dist, _ = model.dist_value(lob, flat)
                     obs, _, done, _ = env.step(dist.mean.squeeze(0).cpu().numpy())
                 results.append(env.episode_result(method_name, episode_index))
-    return results
+                if collect_traces:
+                    trace = env.episode_trace()
+                    trace["episode_index"] = episode_index
+                    trace["method"] = method_name
+                    trace["symbol"] = env.day.symbol
+                    trace["day"] = env.day.day
+                    traces.append(trace)
+    return (results, traces) if collect_traces else results
 
 
 def summarize(frame: pd.DataFrame) -> dict[str, float]:
@@ -93,4 +101,3 @@ def main(config: TrainConfig) -> None:
 
 if __name__ == "__main__":
     main()
-

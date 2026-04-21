@@ -1,10 +1,168 @@
-# `piroth` LOB Simulator
+# `piroth` Agent-Based LOB Simulator
 
-This document describes the synthetic limit order book simulator implemented in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py) for the `piroth` branch. The simulator is purpose-built for the continuous market-making experiments in this branch. It is a stylized, event-driven top-of-book and depth simulator, not a full exchange-grade matching engine.
+This document describes the current simulator on the `piroth` branch. The simulator is implemented in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py) and is now an agent-based, order-level synthetic market rather than the older parametric top-10 depth generator.
 
-## Scope
+## Design Goals
 
-The simulator generates processed day folders that are consumed directly by the rest of the `piroth` pipeline:
+The simulator is built to support:
+
+- continuous market-making experiments
+- realistic queue competition and FIFO matching
+- explicit, interpretable agent populations
+- synthetic data that still fits the existing pipeline format
+- richer diagnostics than raw mid-price simulation alone
+
+It is still a stylized research simulator. It is not a full exchange replica.
+
+## Main Idea
+
+Instead of directly sampling top-10 depths and trade events from a compact parametric rule, the simulator now generates the book from interacting agents:
+
+- noise takers
+- informed takers
+- competing market makers
+- liquidity providers
+
+These agents submit market orders, limit orders, and cancellations into an explicit order book. The top 10 levels are then snapshot from that book and written to disk.
+
+## Core State
+
+The main simulator state is held by `AgentBasedLOB` in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
+
+It contains:
+
+- `bids`: bid-side queues by price
+- `asks`: ask-side queues by price
+- `fair_value`: latent fair value
+- `signal`: persistent directional latent state
+- `regime`: latent regime in `{-1, 0, 1}`
+- `signed_flow_state`: smoothed signed order-flow state
+- `event_seq`: event counter
+
+Resting orders are stored explicitly as `RestingOrder` objects with:
+
+- `order_id`
+- `owner`
+- `side`
+- `price`
+- `size`
+- `created_event`
+
+So there is now explicit queue composition by agent type.
+
+## Agent Populations
+
+### Noise takers
+
+Noise takers submit market buys and sells with weak dependence on current imbalance and signed flow. They provide uninformed liquidity demand.
+
+### Informed takers
+
+Informed takers submit market orders in the direction of the latent fair-value edge. If fair value is above the displayed mid, informed buy pressure rises; if below, informed sell pressure rises.
+
+### Competing market makers
+
+Competing MMs add liquidity near the touch and cancel stale orders. They create queue competition for the RL agent and make fill quality depend on who is already resting at the best price.
+
+### Liquidity providers
+
+Liquidity providers refill deeper levels and keep the book from collapsing. They are not meant to be alpha-seeking; they provide structural depth.
+
+## Matching Model
+
+The simulator now has explicit FIFO matching.
+
+Market orders walk the opposing book:
+
+- buy market orders consume the ask book from best ask upward
+- sell market orders consume the bid book from best bid downward
+- within each price level, the oldest resting order is matched first
+
+Each match produces a `TradeRecord` with:
+
+- execution price
+- matched size
+- aggressor side
+- taker agent type
+- maker agent type
+- maker order ID
+- queue-ahead proxy
+
+This is the main interpretability improvement over the old simulator.
+
+## Book Initialization
+
+At the start of each day:
+
+- the book is seeded around the symbol base price
+- 10 price levels are initialized on each side
+- each level receives several `competing_mm` orders and one `liquidity_provider` order
+
+This gives a populated book before the first event and avoids the degenerate “empty book until first add” problem.
+
+## Latent State Dynamics
+
+Latent state is updated in `_step_latent()`.
+
+There are three components:
+
+### Regime
+
+- discrete regime `-1 / 0 / 1`
+- occasional regime switches after a minimum persistence period
+
+### Signal
+
+- persistent directional latent state
+- mean reverts toward a regime-dependent target
+- perturbed by noise
+
+### Fair value
+
+- latent fair value
+- moves with the signal plus noise
+
+This fair value is not directly observed by the RL agent. It only affects the behavior of the simulated informed traders and, indirectly, the displayed book.
+
+## Event Types
+
+Each event is chosen from:
+
+- `noise_market_buy`
+- `noise_market_sell`
+- `informed_market_buy`
+- `informed_market_sell`
+- `maker_add_bid`
+- `maker_add_ask`
+- `maker_cancel_bid`
+- `maker_cancel_ask`
+- `refill_bid`
+- `refill_ask`
+
+Event probabilities depend on:
+
+- fair-value edge versus displayed mid
+- top-of-book imbalance
+- smoothed signed flow
+- symbol-specific agent-rate parameters
+
+This produces endogenous book dynamics rather than pre-baked top-level summaries.
+
+## Spread and Mid Formation
+
+In the old simulator, displayed mid and spread were controlled by an explicit recentering rule.
+
+In the new simulator:
+
+- displayed best bid and best ask come directly from the current order book
+- displayed mid is `(best_bid + best_ask) / 2`
+- spread is endogenous to the current queue state
+
+So the displayed book now moves because agents add, cancel, and consume orders, not because a separate recentering step forces it to move.
+
+## Per-Event Outputs
+
+The simulator still writes the same core files the rest of the branch expects:
 
 - `ask.csv`
 - `bid.csv`
@@ -13,333 +171,43 @@ The simulator generates processed day folders that are consumed directly by the 
 - `trades.csv`
 - `latent.csv`
 
-Each generated dataset is organized as:
+### `ask.csv` / `bid.csv`
 
-```text
-<data_dir>/<symbol>/<day>/
-```
-
-Generation is driven by [GenerateConfig](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/config.py) and the `generate_dataset()` / `generate_day_frames()` entrypoints in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
-
-## Modeling Level
-
-The simulator works at the level of:
-
-- top-10 displayed bid levels
-- top-10 displayed ask levels
-- an internal latent efficient price
-- a latent directional state
-- event-level order-flow summaries
-
-It does not model:
-
-- individual orders with persistent IDs
-- explicit queue position for each submitted order
-- multiple venues
-- hidden liquidity
-- matching-engine priority beyond simple displayed-depth logic used later in the environment
-- overnight carry state across days
-
-So this is a queue-depth simulator with latent market state, not a full microscopic exchange simulator.
-
-## Trading Day Construction
-
-Each synthetic day is mapped to a business day starting from `2019-11-01` using `_day_label()` in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
-
-Intraday timestamps are generated by `_session_timestamps()`:
-
-- sessions are defined by `session_windows`
-- default windows are:
-  - `09:30:00-11:30:00`
-  - `13:00:00-15:00:00`
-- total events per day are split across sessions in proportion to session duration
-- timestamps inside each session are generated by cumulative gamma-distributed waits and then normalized to fill the session
-
-This gives irregular event timing while preserving the day/session structure expected by the rest of the project.
-
-## Book State
-
-The core simulator state lives in `SyntheticOrderBook` in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
-
-The main state variables are:
-
-- `mid`: displayed mid-price anchor
-- `efficient_price`: latent fair-value-like internal price
-- `spread_ticks`: current spread in ticks, usually `1` or `2`
-- `bid_volumes`: displayed depth at bid levels 1-10
-- `ask_volumes`: displayed depth at ask levels 1-10
-- `alpha`: latent directional signal
-- `regime`: latent regime in `{-1, 0, 1}`
-- `signed_flow_state`: smoothed signed order-flow state
-- `regime_clock`: time since the last regime change
-
-The displayed touch prices are:
-
-- `bid1 = mid - spread_ticks * tick_size / 2`
-- `ask1 = mid + spread_ticks * tick_size / 2`
-
-and deeper price levels are spaced by one `tick_size`.
-
-## Initial Book
-
-Initial top-10 depth is created by `_init_depth()`:
-
-- level sizes decay linearly from about `14` trade units near the touch to about `6` deeper in the book
-- this base profile is scaled by a symbol-specific `depth_scale`
-- multiplicative uniform noise in `[0.7, 1.3]` is applied
-- all depth is rounded to board-lot units and floored at one `trade_unit`
-
-This gives a displayed book that is thickest near the touch and coarser deeper down.
-
-## Symbol Profiles
-
-Per-symbol defaults are created by `_symbol_profile()` in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
-
-The current symbol-specific settings are:
-
-- `base_price`
-- `depth_scale`
-- `alpha_persistence`
-- `alpha_noise`
-- `market_order_bias`
-- `add_rate`
-- `cancel_rate`
-
-These values define different liquidity regimes without changing the overall simulator design.
-
-## Latent State Dynamics
-
-The latent process is updated by `_step_latent()`.
-
-### Regime
-
-- `regime` is one of `-1`, `0`, `1`
-- after `regime_clock > 350`, a regime switch is attempted with probability `0.004`
-- the new regime is sampled with probabilities `[0.3, 0.4, 0.3]`
-- `regime_shift` is recorded in `latent.csv`
-
-### Alpha
-
-`alpha` is a persistent latent directional state:
-
-```text
-alpha_t =
-  alpha_persistence * alpha_{t-1}
-  + (1 - alpha_persistence) * target(regime)
-  + noise
-```
-
-where:
-
-- `target(regime) = alpha_signal_scale * 0.35 * regime`
-- noise scale is controlled by `alpha_noise` and `alpha_signal_scale`
-
-### Efficient Price
-
-The latent efficient price evolves as:
-
-```text
-efficient_move = 0.0035 * alpha + Normal(0, 0.28 * price_noise_scale)
-efficient_price += efficient_move
-```
-
-So efficient price movement is partly directional through `alpha` and partly noisy.
-
-## Spread Process
-
-The displayed spread is chosen by `_desired_spread_ticks()`.
-
-It widens from `1` tick to `2` ticks when at least one of the following is true:
-
-- top-of-book imbalance exceeds `spread_imbalance_threshold`
-- `|alpha|` exceeds `spread_alpha_threshold * alpha_signal_scale`
-- a Bernoulli draw with probability `spread_widen_prob` fires
-
-This creates a large-tick style book where the spread is typically `1` tick but can widen to `2`.
-
-## Event Types
-
-Each event is chosen by `_choose_event()` from six event classes:
-
-- market buy
-- market sell
-- limit buy
-- limit sell
-- cancel buy
-- cancel sell
-
-The event probabilities are state-dependent and depend on:
-
-- `alpha`
-- top-level imbalance
-- smoothed signed flow
-- symbol profile rates
-
-### Market Orders
-
-Market-order intensities are controlled by:
-
-- `market_order_bias`
-- `market_order_alpha_sensitivity`
-- `market_order_imbalance_sensitivity`
-- `market_order_flow_sensitivity`
-
-### Limit Orders
-
-Limit-order intensities depend on:
-
-- `add_rate`
-- `limit_alpha_sensitivity`
-- imbalance
-- smoothed signed flow
-
-### Cancellations
-
-Cancellation intensities depend on:
-
-- `cancel_rate`
-- `cancel_alpha_sensitivity`
-- imbalance
-- smoothed signed flow
-
-The exact formulas are in `_choose_event()` in [piroth/simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/simulator.py).
-
-## Event Sizes
-
-Event size is sampled by `_draw_size()`:
-
-- sizes are `1`, `2`, `3`, or `4` lots
-- one lot is `trade_unit`
-- probabilities are `[0.55, 0.25, 0.12, 0.08]`
-
-So most events are one-lot or two-lot events.
-
-## How Each Event Updates the Book
-
-The main update logic is in `SyntheticOrderBook.step()`.
-
-### Market Buy
-
-- creates a trade at `ask1`
-- removes size from `ask_volumes[0]`
-- updates `market_buy_*` message fields
-- increases `signed_flow_state`
-- moves `efficient_price` upward using:
-  - `market_order_impact_scale`
-  - `market_order_tick_impact`
-  - `market_order_alpha_impact`
-- optionally replenishes touch ask depth using `touch_replenish_fraction`
-
-### Market Sell
-
-- creates a trade at `bid1`
-- removes size from `bid_volumes[0]`
-- updates `market_sell_*` message fields
-- decreases `signed_flow_state`
-- moves `efficient_price` downward
-- optionally replenishes touch bid depth
-
-### Limit Buy / Limit Sell
-
-- chooses a level using `_weighted_level()`
-- level weights decay exponentially away from the touch
-- adds depth to the chosen side/level
-- updates `limit_*` message fields
-- lightly mean-reverts `signed_flow_state`
-
-### Cancel Buy / Cancel Sell
-
-- chooses a level using `_weighted_level()`
-- removes depth but never below one `trade_unit`
-- updates `withdraw_*` message fields
-- lightly mean-reverts `signed_flow_state`
-
-After each event:
-
-- both sides are floored at one `trade_unit`
-- `_recenter()` is called
-- latent and microstructure summary fields are emitted
-
-## Recentering
-
-Recentering is the key mechanism that keeps the displayed book tied to the latent efficient price.
-
-Implemented in `_recenter()`:
-
-1. Compute the gap in ticks between `efficient_price` and displayed `mid`
-2. If the gap is non-zero, move the displayed book by one tick with probability:
-
-```text
-recenter_follow_scale *
-(
-  recenter_base_prob
-  + recenter_gap_scale * abs(gap_ticks)
-  + recenter_alpha_scale * min(abs(alpha), 1)
-)
-```
-
-3. If the book moves:
-   - displayed depth arrays are rolled
-   - the new far edge is reinitialized
-
-This is intentionally simple. It creates a finite-speed response of the displayed book to the latent price rather than an immediate jump.
-
-## Output Files
-
-Each generated day writes:
-
-### `ask.csv`
-
-Columns:
-
-- `timestamp`
-- `ask1_price`, `ask1_volume`, ..., `ask10_price`, `ask10_volume`
-
-### `bid.csv`
-
-Columns:
-
-- `timestamp`
-- `bid1_price`, `bid1_volume`, ..., `bid10_price`, `bid10_volume`
+These are top-10 snapshots derived from the explicit book after each event.
 
 ### `price.csv`
 
-Columns:
+Contains:
 
-- `timestamp`
 - `ask1_price`
 - `bid1_price`
 - `midprice`
 
 ### `msg.csv`
 
-Columns come from `MSG_COLUMNS`:
+Per-event aggregate message counts/volumes for:
 
-- `market_buy_volume`, `market_buy_n`
-- `market_sell_volume`, `market_sell_n`
-- `limit_buy_volume`, `limit_buy_n`
-- `limit_sell_volume`, `limit_sell_n`
-- `withdraw_buy_volume`, `withdraw_buy_n`
-- `withdraw_sell_volume`, `withdraw_sell_n`
+- market buy/sell
+- limit buy/sell
+- cancel buy/sell
 
 ### `trades.csv`
 
-Written only for market-order events.
+Now contains richer fields than before:
 
-Columns:
-
-- `timestamp`
 - `price`
 - `size`
 - `aggressor_side`
+- `taker_agent`
+- `maker_agent`
+- `maker_order_id`
+- `queue_ahead`
 
 ### `latent.csv`
 
-Interpretability / diagnostics file.
+Now contains both latent market state and interpretability metadata, including:
 
-Columns:
-
-- `timestamp`
+- `fair_value`
 - `efficient_price`
 - `latent_alpha`
 - `regime`
@@ -348,125 +216,78 @@ Columns:
 - `top_imbalance`
 - `queue_pressure`
 - `event_type`
+- `event_name`
 - `event_side`
+- `event_actor`
+- `maker_agent`
 - `regime_shift`
 - `efficient_move`
+- `trade_count`
+- `traded_volume`
+- `best_bid_depth`
+- `best_ask_depth`
 
-## Determinism
+## Symbol Profiles
 
-Dataset generation is deterministic for fixed:
+Each symbol gets its own `SymbolProfile`:
 
-- `seed`
-- `symbol`
-- `day`
-- simulator configuration
+- base price
+- fair-value persistence
+- signal noise
+- noise taker rate
+- informed taker rate
+- competing maker add/cancel rates
+- liquidity refill rate
+- maker join-touch probability
+- depth scale
 
-The per-day RNG seed is derived from:
+These profiles let the same simulator represent different liquidity regimes without changing its structure.
 
-```text
-hash((config.seed, symbol, day))
-```
+## Configuration Knobs
 
-and this behavior is tested in [tests/test_piroth_simulator.py](/Users/piroth/Documents/projects/mlfcs-gapa/tests/test_piroth_simulator.py).
+The simulator is mainly controlled through [piroth/config.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/config.py).
 
-## Important Configuration Knobs
+Important knobs still used by the agent-based simulator include:
 
-The main simulator controls currently live in [piroth/config.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/config.py).
-
-### Market geometry
-
-- `tick_size`
-- `trade_unit`
 - `events_per_day`
 - `base_prices`
-
-### Latent signal strength
-
 - `alpha_signal_scale`
 - `price_noise_scale`
-
-### Market toxicity / adverse selection
-
 - `market_order_impact_scale`
-- `market_order_alpha_sensitivity`
-- `market_order_imbalance_sensitivity`
-- `market_order_flow_sensitivity`
 - `market_order_tick_impact`
 - `market_order_alpha_impact`
-
-### Passive liquidity support
-
 - `touch_replenish_fraction`
-- `limit_alpha_sensitivity`
-- `cancel_alpha_sensitivity`
 
-### Displayed-book responsiveness
+The rest of the branch’s training and reward configuration remains separate from the simulator itself.
 
-- `recenter_follow_scale`
-- `recenter_base_prob`
-- `recenter_gap_scale`
-- `recenter_alpha_scale`
+## Interpretability Advantages
 
-### Spread behavior
+The agent-based simulator is more interpretable than the previous one because:
 
-- `spread_widen_prob`
-- `spread_imbalance_threshold`
-- `spread_alpha_threshold`
+- trades have explicit taker and maker agent identities
+- queue competition is explicit
+- depth is generated by visible agent actions
+- price movement is tied to fair-value pressure plus endogenous order flow
+- you can attribute PnL and fills to particular agent populations
 
-These are the main levers for making the synthetic market more or less favorable to passive market making.
+This makes it much easier to ask:
 
-## How This Connects to the Environment
+- Is the RL agent making money mainly against noise takers?
+- Is it losing to informed takers?
+- Is queue competition from other market makers killing its fill rate?
+- Does it earn spread capture or drift/speculation?
 
-The simulator itself only produces market data. Agent interaction happens later in [piroth/env.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/env.py).
+## Remaining Limitations
 
-Important separation:
+This simulator is still not a full real-market reconstruction.
 
-- simulator: produces the market stream and displayed book
-- environment: overlays the agent’s quotes on top of the generated data and simulates fills
+Key limitations:
 
-So queue/fill logic for the agent is not part of `SyntheticOrderBook`; it is part of `ContinuousMarketEnv`.
+- no cross-day carry of book state or fair value
+- no hidden liquidity
+- no multiple venues
+- no exchange-specific fee table by default
+- no explicit RL-agent queue placement in the data generator itself
+- stylized agent population rather than calibrated real participant taxonomy
 
-## Current Known Limitations
-
-### 1. No persistent multi-day state
-
-Each day is regenerated independently around a symbol-specific `base_price`. There is no overnight carryover of:
-
-- close-to-open price level
-- latent alpha
-- volatility regime
-- queue state
-
-This means intraday behavior is the main intended use case. Multi-day and multi-week price movement is not realistic.
-
-### 2. No individual-order queue simulation
-
-Displayed depth exists, but there are no persistent order identities. That means:
-
-- no exact queue-position tracking
-- no true exchange FIFO simulation
-- no agent-specific queue insertion beyond the downstream fill approximation in the environment
-
-### 3. Simplified price impact
-
-Market orders affect the latent efficient price through a simple parametric rule. This is a useful control knob, but it is not a structural microstructure model.
-
-### 4. Recenter logic is stylized
-
-The displayed book follows the latent price through a one-tick probabilistic recentering rule. This is intentionally simple, but it means displayed mid dynamics are stylized rather than directly calibrated to a real venue.
-
-### 5. Baseline viability still matters
-
-A good simulator for market making should not be so toxic that simple passive baselines are uniformly destroyed. In recent `piroth` experiments this has been a meaningful calibration issue, so baseline behavior should still be treated as a health check for the simulator.
-
-## Practical Interpretation
-
-The `piroth` simulator should be understood as:
-
-- a controlled synthetic intraday LOB generator
-- with explicit latent directional structure
-- with tunable toxicity and liquidity
-- suitable for end-to-end RL experiments
-- but not a claim of full real-market realism
-
-It is best used as a research harness where the simulator parameters are treated as part of the experiment design, not as fixed truth.
+So this is a significantly more realistic and interpretable simulator than the old `piroth` version, but it is still a research simulator, not a full historical market replica.
