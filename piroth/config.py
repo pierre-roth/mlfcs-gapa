@@ -87,6 +87,13 @@ class ExperimentConfig:
     )
     alpha_signal_scale: float = 1.0
     price_noise_scale: float = 0.0025
+    fair_value_signal_scale: float = 0.006
+    fair_value_noise_scale: float = 0.0012
+    shock_event_prob: float = 0.003
+    shock_size_ticks: float = 2.5
+    metaorder_start_prob: float = 0.004
+    metaorder_persistence: float = 0.985
+    metaorder_scale: float = 1.25
     market_order_impact_scale: float = 0.85
     flow_reversion_scale: float = 1.0
     noise_taker_rate_scale: float = 1.0
@@ -95,6 +102,7 @@ class ExperimentConfig:
     maker_cancel_rate_scale: float = 1.0
     liquidity_refill_rate_scale: float = 1.0
     maker_join_touch_prob_shift: float = 0.0
+    stress_liquidity_withdraw_scale: float = 0.35
     market_order_alpha_sensitivity: float = 0.14
     market_order_imbalance_sensitivity: float = 0.08
     market_order_flow_sensitivity: float = 0.35

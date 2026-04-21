@@ -110,6 +110,7 @@ class AgentBasedLOB:
         self.reference_price = round(profile.base_price / self.tick) * self.tick
         self.fair_value = float(profile.base_price)
         self.signal = 0.0
+        self.metaorder_bias = 0.0
         self.regime = 0
         self.regime_clock = 0
         self.signed_flow_state = 0.0
@@ -135,6 +136,12 @@ class AgentBasedLOB:
     def _draw_size(self, scale: float = 1.0) -> float:
         lots = int(self.rng.choice([1, 2, 3, 4, 5], p=[0.42, 0.24, 0.16, 0.10, 0.08]))
         return float(max(self.trade_unit, round(lots * scale) * self.trade_unit))
+
+    def _stress_level(self) -> float:
+        edge_ticks = abs(self.fair_value - self.midprice) / max(self.tick, 1e-8)
+        flow_stress = abs(self.signed_flow_state) / 12.0
+        meta_stress = abs(self.metaorder_bias)
+        return float(min(3.0, 0.35 * edge_ticks + 0.4 * flow_stress + 0.8 * meta_stress))
 
     def _best_price(self, side: str) -> float:
         book = self.bids if side == "bid" else self.asks
@@ -239,13 +246,21 @@ class AgentBasedLOB:
             self.regime = int(self.rng.choice([-1, 0, 1], p=[0.3, 0.4, 0.3]))
             self.regime_clock = 0
             regime_shift = 1
+        if self.rng.random() < self.config.metaorder_start_prob:
+            self.metaorder_bias += float(self.rng.choice([-1.0, 1.0]) * self.config.metaorder_scale * self.rng.uniform(0.6, 1.2))
         target = self.config.alpha_signal_scale * 0.4 * self.regime
         self.signal = (
             self.profile.fair_value_persistence * self.signal
             + (1.0 - self.profile.fair_value_persistence) * target
             + self.rng.normal(0.0, self.profile.signal_noise * self.config.alpha_signal_scale)
         )
-        fair_move = 0.0022 * self.signal + self.rng.normal(0.0, 0.35 * self.config.price_noise_scale)
+        self.metaorder_bias = self.config.metaorder_persistence * self.metaorder_bias + self.rng.normal(0.0, 0.015)
+        fair_move = (
+            self.config.fair_value_signal_scale * (self.signal + self.metaorder_bias)
+            + self.rng.normal(0.0, self.config.fair_value_noise_scale)
+        )
+        if self.rng.random() < self.config.shock_event_prob:
+            fair_move += float(self.rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.tick * self.rng.uniform(0.6, 1.4))
         self.fair_value = max(self.tick, self.fair_value + fair_move)
         return regime_shift, fair_move
 
@@ -254,6 +269,8 @@ class AgentBasedLOB:
         signal_edge = np.clip((self.fair_value - mid) / max(self.tick, 1e-8), -4.0, 4.0)
         imbalance = self._top_imbalance()
         flow_term = np.tanh(self.signed_flow_state / 20.0)
+        stress = self._stress_level()
+        informed_edge = signal_edge + 0.8 * self.metaorder_bias
         names = [
             "noise_market_buy",
             "noise_market_sell",
@@ -268,16 +285,16 @@ class AgentBasedLOB:
         ]
         weights = np.asarray(
             [
-                self.profile.noise_taker_rate * np.exp(0.08 * max(-imbalance, 0.0) - 0.08 * flow_term),
-                self.profile.noise_taker_rate * np.exp(0.08 * max(imbalance, 0.0) + 0.08 * flow_term),
-                self.profile.informed_taker_rate * np.exp(0.65 * signal_edge),
-                self.profile.informed_taker_rate * np.exp(-0.65 * signal_edge),
-                self.profile.maker_add_rate * np.exp(-0.12 * signal_edge + 0.14 * max(-imbalance, 0.0)),
-                self.profile.maker_add_rate * np.exp(0.12 * signal_edge + 0.14 * max(imbalance, 0.0)),
-                self.profile.maker_cancel_rate * np.exp(0.16 * signal_edge + 0.08 * flow_term),
-                self.profile.maker_cancel_rate * np.exp(-0.16 * signal_edge - 0.08 * flow_term),
-                self.profile.liquidity_refill_rate,
-                self.profile.liquidity_refill_rate,
+                self.profile.noise_taker_rate * np.exp(0.10 * max(-imbalance, 0.0) - 0.10 * flow_term + 0.15 * stress),
+                self.profile.noise_taker_rate * np.exp(0.10 * max(imbalance, 0.0) + 0.10 * flow_term + 0.15 * stress),
+                self.profile.informed_taker_rate * np.exp(0.8 * informed_edge + 0.18 * stress),
+                self.profile.informed_taker_rate * np.exp(-0.8 * informed_edge + 0.18 * stress),
+                self.profile.maker_add_rate * np.exp(-0.14 * informed_edge + 0.16 * max(-imbalance, 0.0) - self.config.stress_liquidity_withdraw_scale * stress),
+                self.profile.maker_add_rate * np.exp(0.14 * informed_edge + 0.16 * max(imbalance, 0.0) - self.config.stress_liquidity_withdraw_scale * stress),
+                self.profile.maker_cancel_rate * np.exp(0.22 * informed_edge + 0.10 * flow_term + self.config.stress_liquidity_withdraw_scale * stress),
+                self.profile.maker_cancel_rate * np.exp(-0.22 * informed_edge - 0.10 * flow_term + self.config.stress_liquidity_withdraw_scale * stress),
+                self.profile.liquidity_refill_rate * np.exp(0.1 * stress),
+                self.profile.liquidity_refill_rate * np.exp(0.1 * stress),
             ],
             dtype=np.float64,
         )
@@ -307,7 +324,8 @@ class AgentBasedLOB:
         return removed.price, removed.size, removed.owner
 
     def _place_competing_mm(self, side: str) -> tuple[float, float]:
-        join_touch = self.rng.random() < self.profile.maker_join_touch_prob
+        dynamic_touch_prob = float(np.clip(self.profile.maker_join_touch_prob - 0.14 * self._stress_level(), 0.02, 0.98))
+        join_touch = self.rng.random() < dynamic_touch_prob
         level = 0 if join_touch else int(self.rng.choice([1, 2], p=[0.7, 0.3]))
         if side == "bid":
             target = min(np.floor(self.fair_value / self.tick) * self.tick, self.best_ask - self.tick)
@@ -335,7 +353,8 @@ class AgentBasedLOB:
         aggressor_side = "B" if side == "buy" else "A"
         book = self.asks if side == "buy" else self.bids
         signed = 1.0 if side == "buy" else -1.0
-        remaining = self._draw_size(1.1 if taker_agent == "informed_taker" else 1.0)
+        taker_scale = 1.4 if taker_agent == "informed_taker" else 1.0
+        remaining = self._draw_size(taker_scale * (1.0 + 0.25 * self._stress_level()))
         initial = remaining
         trades: list[TradeRecord] = []
         while remaining > 1e-8 and book:
@@ -471,6 +490,7 @@ class AgentBasedLOB:
             "fair_value": float(self.fair_value),
             "efficient_price": float(self.fair_value),
             "latent_alpha": float(self.signal),
+            "metaorder_bias": float(self.metaorder_bias),
             "regime": int(self.regime),
             "signed_flow_state": float(self.signed_flow_state),
             "spread_ticks": int(self.spread_ticks),
