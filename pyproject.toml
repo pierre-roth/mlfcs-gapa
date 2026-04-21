@@ -1,19 +1,13 @@
 [project]
 name = "mlfcs-gapa"
 version = "0.1.0"
-description = "Databento preprocessing and experiments for market making from limit order books."
+description = "Simulator-first branch for synthetic market making data generation and diagnostics."
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "matplotlib",
     "numpy",
     "pandas",
-    "pyrallis",
-    "rich",
-    "matplotlib",
     "pytest",
-    "scikit-learn",
-    "seaborn",
-    "torch",
-    "tqdm",
 ]
 
 [tool.uv]
