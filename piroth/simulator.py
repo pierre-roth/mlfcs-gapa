@@ -242,7 +242,7 @@ class AgentBasedLOB:
         # bid (and vice versa). Same-side pruning (below) never removes them
         # because they are the best ask. Deleting them forces _ensure_depth to
         # rebuild near the current price, preventing the spread from blowing out.
-        stale_cutoff = 20 * self.tick
+        stale_cutoff = 40 * self.tick
         if self.bids and self.asks:
             cur_bid = self.best_bid
             cur_ask = self.best_ask
