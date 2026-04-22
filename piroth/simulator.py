@@ -279,11 +279,7 @@ class AgentBasedLOB:
         )
         if self.rng.random() < self.config.shock_event_prob:
             fair_move += float(self.rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.tick * self.rng.uniform(0.6, 1.4))
-        # Pull fair_value toward the observed midprice so that competing MMs
-        # re-quote near the current market level after sustained drift, preventing
-        # asks from stranding far above a falling bid (and vice versa).
-        fv_reversion = 0.02 * (self.midprice - self.fair_value)
-        self.fair_value = max(self.tick, self.fair_value + fair_move + fv_reversion)
+        self.fair_value = max(self.tick, self.fair_value + fair_move)
         return regime_shift, fair_move
 
     def _event_weights(self) -> tuple[list[str], np.ndarray]:
@@ -351,11 +347,16 @@ class AgentBasedLOB:
         level = 0 if join_touch else int(self.rng.choice([1, 2], p=[0.7, 0.3]))
         if side == "bid":
             target = min(np.floor(self.fair_value / self.tick) * self.tick, self.best_ask - self.tick)
-            reference = self.best_bid if join_touch else min(target, self.best_bid - level * self.tick)
-            price = round(reference, 6)
+            # Quote near the current mid rather than the potentially stale best_bid.
+            # In normal operation (tight spread) these are identical; when the bid
+            # drifts away from old ask orders, this prevents stale-ask accumulation.
+            touch_ref = min(np.floor(self.midprice / self.tick) * self.tick, self.best_ask - self.tick)
+            reference = touch_ref if join_touch else min(target, touch_ref - level * self.tick)
+            price = round(max(reference, self.tick), 6)
         else:
             target = max(np.ceil(self.fair_value / self.tick) * self.tick, self.best_bid + self.tick)
-            reference = self.best_ask if join_touch else max(target, self.best_ask + level * self.tick)
+            touch_ref = max(np.ceil(self.midprice / self.tick) * self.tick, self.best_bid + self.tick)
+            reference = touch_ref if join_touch else max(target, touch_ref + level * self.tick)
             price = round(reference, 6)
         size = self._draw_size(self.profile.depth_scale)
         self._add_limit(side, price, size, owner="competing_mm", silent=True)
