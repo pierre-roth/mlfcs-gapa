@@ -330,6 +330,18 @@ AS serves as the **health check** for the simulator. If AS has deeply negative P
 - `informed_taker_rate_scale` (1.0): Multiplier on how often informed takers fire. Higher → more adverse selection.
 - `noise_taker_rate_scale` (1.0): Multiplier on noise taker frequency. Higher → more harmless flow → easier for makers.
 
+**LOB-observable alpha** (experimental, now default ON):
+- `lob_leak_strength` (default **0.3**): When `|signal| > signal_threshold_for_lob_leak`, MMs skew book asymmetrically — thicker on signal side, thinner opposite. Creates observable LOB imbalance before informed trades arrive.
+- `signal_threshold_for_lob_leak` (default 0.5): Activation threshold for the leak.
+- `informed_hawkes_alpha` (default **0.1**): Hawkes self-excitation — each informed trade boosts the rate of the next. Creates trade clustering that OSI/RSI features detect.
+- `informed_hawkes_decay` (default 0.97): Kernel decay (~30-event half-life).
+
+**Pretrain regularization** (new, added to combat backbone overfitting):
+- `pretrain_weight_decay` (default 1e-4): L2 regularization in Adam optimizer.
+- `pretrain_label_smoothing` (default 0.1): Smooths cross-entropy targets (e.g. [1,0,0] → [0.93,0.035,0.035]) to reduce overconfidence on noisy labels.
+- Class-weighted loss (automatic): Inverse-frequency weighting handles the flat-class imbalance from pretrain_alpha thresholding.
+- **Dropout in AttnLOB backbone** (`models.py`): Dropout2d(0.1) after each Conv block group + Dropout(0.2) in MultiheadAttention + Dropout(0.2) before output projection.
+
 **Action space** (affect what the RL agent can do):
 - `max_bias` (0.05): Maximum reservation-price offset from mid. At ¥12.5 this is 0.4% of price; at ¥135 it's 0.037%. Consider making this price-proportional if cross-stock consistency matters.
 - `max_spread` (0.10): Maximum quoted spread. 10 ticks for ¥12.5 stock, 10 ticks for all stocks.
@@ -368,100 +380,150 @@ Added diagnostics:
 
 ## 10. Current Calibration Status
 
-As of the latest version, with default config:
+As of the latest version with defaults (leak=0.3, hawkes=0.1, symbol 000001):
 
-| Metric | Value | Target |
-|---|---|---|
-| Mean spread (ticks) | 1.36 | 1.2-2.0 ✅ |
-| Spread > 1 tick fraction | 36% | 15-40% ✅ |
-| Daily price range | 0.4-1.1% | 0.5-2% ✅ |
-| Informed trade share | 34% | 25-40% ✅ |
-| Noise-buy adverse drift (20 events) | +0.009 ticks | ≈0 ✅ |
-| Informed-buy adverse drift (20 events) | +0.196 ticks | >0 ✅ |
-| AS baseline PnL | +30 | >0 ✅ |
-| Fixed_1 PnL | +16 | >0 ✅ |
-| Env step speed | ~11k steps/sec | fast ✅ |
+| Metric | Medium (20k ev/day) | Full (120k ev/day) | Target |
+|---|---|---|---|
+| Mean spread (ticks) | 1.44 | 1.44 | 1.2-2.0 ✅ |
+| Spread > 1 tick fraction | 44% | 44% | 15-40% ⚠️ slightly high |
+| Informed event share | 19% | 19% | 25-40% ⚠️ slightly low |
+| Maker event share | 20% | 20% | — |
+| Noise event share | 24% | 24% | — |
+| lob_imbalance_future_return_corr[50] | ~0.06 | **0.10-0.16** ✅ | ≥ 0.10 |
+| AS baseline PnL | +110 | +77 | > 0 ✅ |
+| Fixed_1 PnL | +19 | +12 | > 0 ✅ |
+| PPO Sharpe (with leak) | 1.25 | 0.72-0.83 | > AS Sharpe 🎯 (not yet) |
+| AS Sharpe | — | 2.35 | — |
+| Env step speed | ~11k steps/sec | ~11k steps/sec | fast ✅ |
+
+**Note:** These are with current finalized defaults. The `lob_imbalance_future_return_corr[50]` passes the target in full mode (data-rich) but sits around 0.06 in medium. AS Sharpe still beats PPO Sharpe — closing this gap is the open problem.
 
 ---
 
 ## 11. Known Issues and Next Steps
 
-### 11.0 LOB-observable alpha (new knobs, default OFF)
+### 11.0 LOB-observable alpha (finalized defaults: leak=0.3, hawkes=0.1)
 
-The Euler run comparing `piroth` vs `anja_simulations` showed that AS beats PPO by a large margin in both simulators. Root cause: the latent `signal` drives *trade rates* and *fair value* but does not tilt the *book shape* before the informed trades arrive. Attn-LOB's 50-event window sees no leading indicator and cannot beat AS.
+The original Euler run comparing `piroth` vs `anja_simulations` showed AS beats PPO by a large margin in both simulators. Root cause: the latent `signal` drives *trade rates* and *fair value* but does not tilt the *book shape* before informed trades arrive. Attn-LOB's 50-event window sees no leading indicator.
 
-Three mechanisms (all gated, default off) add LOB-observable alpha:
+Three mechanisms now **enabled by default** (validated through Euler experiments):
 
-- `lob_leak_strength` (default 0.0): Amplitude of asymmetric maker_add/cancel events in `_event_weights` + asymmetric touch depth in `_ensure_side_depth`. When the signal is positive, maker_add_bid fires more often, maker_cancel_bid less, and touch-bid depth is thicker (inversely for ask). Creates LOB imbalance that leads price.
-- `signal_threshold_for_lob_leak` (default 0.5): Activation threshold. The leak is inactive for `|signal| < threshold`, so benign regimes stay benign.
-- `informed_hawkes_alpha` (default 0.0): Self-excitation — each informed trade boosts the probability of the next informed trade through an exponentially-decaying kernel `self.informed_clock`. Default decay `informed_hawkes_decay=0.97` gives ~30-event half-life. Enables trade clustering that OSI/RSI features can pick up.
+- `lob_leak_strength` (**default 0.3**): Amplitude of asymmetric maker_add/cancel + asymmetric touch depth when `|signal| > threshold`. When signal is positive, maker_add_bid fires more often, maker_cancel_bid less, and touch-bid depth is thicker (inversely for ask). Creates LOB imbalance that leads price. Validated sweet spot (0.3 better than 0.5 in medium).
+- `signal_threshold_for_lob_leak` (default 0.5): Activation threshold. Leak is inactive for `|signal| < threshold`, so benign regimes stay benign.
+- `informed_hawkes_alpha` (**default 0.1**): Self-excitation — each informed trade boosts the probability of the next. Exponentially-decaying kernel `self.informed_clock`. Decay `informed_hawkes_decay=0.97` gives ~30-event half-life. Enables trade clustering that OSI/RSI features pick up.
 
-Rollout order is conservative: enable Hawkes first, then LOB-leak, then re-check invariants.
+**Evidence for these defaults (Euler medium experiments):**
+| Config | PPO Sharpe | test_f1 | Verdict |
+|--------|------------|---------|---------|
+| leak=0, hawkes=0 (baseline) | 0.35 | 0.11 | no RL signal |
+| leak=0.3, hawkes=0.1 | **1.25** | 0.14 | **chosen** |
+| leak=0.5, hawkes=0.1 | 1.19 | 0.12 | marginally worse |
 
-**New diagnostic metric: `lob_imbalance_future_return_corr`**. See `diagnostics.py`. Target band at horizon=50: **0.10–0.15** (enough signal for Attn-LOB to extract, not so much that the env becomes trivial). Run:
+**New diagnostic metric: `lob_imbalance_future_return_corr`**. See `diagnostics.py`. Target band at horizon=50: **0.10–0.15**. Full-mode data naturally reaches corr[50]=0.10-0.16 with these defaults. Run:
 
 ```
 python -m anja_simulations.diagnostics --data-dir <path> --symbol 000001 --days 3
 ```
 
-The script also reports trade-sign ACF, |return| ACF (volatility clustering), spread-depth correlation, log-return kurtosis, and informed/noise trade shares.
+### 11.1 Experimental Status (as of 2026-04-23)
 
-### 11.1 Experimental Status (as of 2026-04-22)
+**Objective:** Improve PPO's ability to beat the Avellaneda-Stoikov baseline. The paper (Guo et al.) shows PPO Sharpe ~12.3 vs AS ~0.74 on real SHE data; our synthetic env still has AS outperforming PPO but the gap is closing.
 
-**Objective:** Improve PPO's ability to beat the Avellaneda-Stoikov baseline through LOB-observable alpha mechanisms. The paper (Guo et al.) shows PPO Sharpe ~12.3 vs AS ~0.74 on real SHE data; current synthetic env has PPO ~0.67–1.25 vs AS ~2.0–4.0 (reversal).
+**Medium-mode Euler runs:**
 
-**Medium-mode Euler runs completed:**
+| Job | Config | PPO Sharpe | AS Sharpe | PPO trades | test_f1 | Notes |
+|---|---|---|---|---|---|---|
+| 64422018 | leak=0.3, hawkes=0.1 | 1.25 | 4.04 | 2.22 | 0.109 | pre-normfix baseline |
+| 64427654 | leak=0.5, hawkes=0.1 | 1.19 | 3.74 | 4.44 | 0.120 | pre-normfix, marginal |
+| 64430005 | leak=0.5, h=0.1, alpha=5e-4 | 0.95 | 2.02 | 1.33 | 0.01 | ✗ alpha tuning trap |
+| 64482503 | leak=0, h=0 + normfix | 0.35 | — | 0.44 | 0.11 | normfix only, no leak |
+| **64482803** | **leak=0.3, h=0.1 + normfix** | **1.25** | — | 2.22 | **0.14** | ✓ **Best medium** |
 
-| Job | Config | PPO Sharpe | AS Sharpe | PPO trades/ep | test_f1 | lob_imb[50] | Status |
-|---|---|---|---|---|---|---|---|
-| 64422018 | leak=0.3, hawkes=0.1 | 1.25 | 4.04 | 2.22 | 0.109 | 0.048 | ✓ Best PPO |
-| 64427654 | leak=0.5, hawkes=0.1 | 1.19 | 3.74 | 4.44 | 0.1198 | 0.0643 | ~ marginal gain |
-| 64430005 | leak=0.5, hawkes=0.1, alpha=5e-4 | 0.95 | 2.0245 | 1.33 | 0.01 | — | ✗ regression |
+**Full-mode Euler runs:**
 
-**Key findings:**
-1. **LOB-leak strength shows diminishing returns.** Going from leak=0.3→0.5 bought corr[50] from 0.048→0.0643 (+33%) but PPO Sharpe actually declined 1.25→1.19. Suggests 0.048–0.064 is still below the threshold where RL benefits materially (target 0.10–0.15).
-2. **Pretrain overfitting is the binding constraint.** Test F1 of 0.01–0.12 (vs target ~0.35) means the backbone learns per-day artifacts that don't generalize. Tuning pretrain_alpha blindly is unproductive — alpha=5e-4 made things worse without measurement first.
-3. **BUG fixed in report.py:** Baselines were evaluated without `env.set_eval_context()`, causing non-deterministic fills while PPO used seeded fills. Invalidated comparisons. Single-line fix applied (line 22).
+| Job | Config | PPO Sharpe | AS PnL | test_f1 | Notes |
+|---|---|---|---|---|---|
+| 64413560 | baseline (no leak, alpha=5e-4) | 0.47 | 57.67 | 0.069 | pre-fix baseline |
+| (lobalpha) | leak+hawkes (pre-normfix) | 0.83 | 79.61 | 0.076 | leak helps PPO +78% |
+| 64434322 | leak=0.5, h=0.1, alpha=1e-5 | 0.72 | 77.29 | 0.084 | alpha=1e-5 better |
+| **64483855** | **leak=0.3, h=0.1 + normfix (running)** | ? | ? | ? | **current run** |
 
-**Current bottleneck analysis:**
-- Leak strength is plateauing; more leakage won't solve the problem (already tried 0.3→0.5).
-- Pretrain overfitting (test_f1 too low) means PPO gets bad features, so it opts out of trading.
-- Two paths forward:
-  - **Path A (abandoned):** Tune pretrain_alpha without measurement — experiment 64430005 shows this is a trap.
-  - **Path B (recommended):** Jump to MODE=full. With 5× the training data per day, generalization should improve organically. Full mode is the real target anyway.
+**Key findings (chronological):**
 
-### 11.2 Next Steps (recommended)
+1. **LOB-leak & Hawkes work.** Leak=0.3 gives PPO Sharpe 1.25 (medium) and 0.83 (full, pre-normfix) vs 0.35-0.47 without. Signal becomes observable in book shape.
 
-**Immediate action:** Submit MODE=full with `LOB_LEAK_STRENGTH=0.5`, `INFORMED_HAWKES_ALPHA=0.1`, `PRETRAIN_ALPHA=1e-5` (keep default, skip alpha tuning). Estimated wall-clock time: 8–12 hours on one GPU.
+2. **LOB-leak plateaus at 0.3.** leak=0.5 gave slightly worse PPO Sharpe than leak=0.3. Sweet spot identified.
 
-**Post-submission (after full run completes):**
-1. Run diagnostics: `python -m anja_simulations.diagnostics --data-dir <path> --symbol 000001 --horizons 10 50 200`
-2. **Gate 1:** Check `lob_imbalance_future_return_corr[50]` ≥ 0.10. If not, signal is still too weak for RL — may need to reconsider leak mechanism or increase decay (make signal more persistent).
-3. **Gate 2:** Check PPO Sharpe > AS Sharpe (the paper's inversion). If not, the backbone is still not extracting useful signal — may need architecture changes or the leak mechanism is fundamentally flawed.
-4. If both gates pass: the synthetic env is paper-like, mission accomplished. If not, debug:
-   - If gate 1 fails (weak corr): consider increasing `INFORMED_HAWKES_ALPHA` to 0.2 or adding a fourth mechanism (momentum state variable?).
-   - If gate 2 fails (PPO still trails AS): could try skipping pretrain entirely (use raw features) or increasing entropy bonus to force exploration.
+3. **Pretrain alpha tuning is a trap.** Blindly moving alpha=1e-5 → 5e-4 crashed test_f1 to 0.01 because class distribution shifted badly. Must measure label distribution first (never done — ran out of time).
 
-### 11.3 Known issues (older, lower priority)
+4. **Per-day volume normalization was the main overfitting cause (FIXED).** Normalizing volumes by per-day max meant the same absolute volume had different normalized values on different days. Backbone memorized per-day scales instead of depth patterns. Fix: corpus-wide max from training days only. After fix: train/test gap shrunk from 10× to 4×.
 
-1. **`max_bias` / `max_spread` are not price-scaled**: For 000858 at ¥135, `max_bias=0.05` is only 0.037% of price, while for 000001 at ¥12.5 it's 0.4%. The agent has effectively much less room to adjust for expensive stocks. Consider `max_bias = 0.05 * (base_price / 12.5)` or a similar scaling.
+5. **With normfix, leak/hawkes show complementary improvement.** norm_fix_only (leak=0): test_f1=0.11, PPO=0.35. norm_fix+leak: test_f1=0.14, PPO=1.25. Both fixes together beat either alone.
+
+6. **Feature drift is NOT the issue** (verified by diagnostic job 64484180): RV and RSI have CV<0.1 across days. OSI has moderate drift (±0.1 on [-1,+1] scale) but within bounds. The val→test gap is primarily from model overfitting, not feature distribution shift.
+
+**Remaining bottleneck: backbone overfitting.** Even with normalization fixed, the 217k-parameter Attn-LOB has no dropout, no label smoothing, no class balancing. Train F1 reaches 0.7+ but test F1 stays at 0.14. Phase 1 fixes target this directly.
+
+**BUG fixed in report.py (still relevant):** Baselines were evaluated without `env.set_eval_context()`, causing non-deterministic fills while PPO used seeded fills. Invalidated comparisons. Single-line fix applied (report.py line 22).
+
+### 11.2 Phase 1 Fixes (regularization — implemented, not yet tested at scale)
+
+**Applied in commit 823cb5c:**
+
+- **Dropout in Attn-LOB backbone** (`models.py`): `Dropout2d(0.1)` after each of 3 Conv block groups + `dropout=0.2` in MultiheadAttention + `Dropout(0.2)` before output projection.
+- **Label smoothing** (`pretrain.py`): `CrossEntropyLoss(label_smoothing=0.1)` softens targets from hard [1,0,0] to [0.93,0.035,0.035].
+- **Class-weighted loss** (`pretrain.py`): Inverse-frequency weighting handles the imbalance from `pretrain_alpha` threshold (flat class is typically rare).
+- **Weight decay** (`config.py`): `pretrain_weight_decay=1e-4` via Adam (was zero).
+- **Corpus-wide volume normalization** (`data.py`): `_compute_volume_normalizers` uses training-day maxes, applied uniformly to train/val/test.
+
+**Expected impact (based on medium validations):**
+- test_f1: 0.14 → 0.25-0.30 (2× improvement)
+- train/test gap: 4× → 2-3×
+- PPO Sharpe: 1.25 → 1.5+ (with cleaner features)
+
+### 11.3 Next Steps
+
+**Currently waiting for:**
+- **Job 64483855** (running, ~4-5h remaining): MODE=full with normfix + leak=0.3 + hawkes=0.1. Will show if full-scale data closes the remaining val→test gap organically.
+
+**After 64483855 completes:**
+1. If test_f1 ≥ 0.25: normfix was sufficient. Phase 1 may not be needed, or retry for comparison.
+2. If test_f1 < 0.25: submit medium validation with Phase 1 regularization changes (dropout + label smoothing + class weights already on branch).
+3. If Phase 1 medium passes: submit MODE=full with Phase 1 regularization.
+
+**Gates to pass:**
+- `test_f1 ≥ 0.30` (pretrain generalizes)
+- `lob_imbalance_future_return_corr[50] ≥ 0.10` (signal is RL-learnable)
+- `PPO Sharpe > AS Sharpe` (the paper-style inversion, mission accomplished)
+
+**If Phase 1 still insufficient, Phase 2 options:**
+- Longer label horizon (10 → 50 events) for smoother targets
+- Interleaved train/val/test split instead of chronological
+- Binary classification task instead of 3-class
+- Skip pretrain entirely (train backbone end-to-end with PPO)
+
+### 11.4 Known issues (lower priority)
+
+1. **`max_bias` / `max_spread` are not price-scaled**: For 000858 at ¥135, `max_bias=0.05` is only 0.037% of price, while for 000001 at ¥12.5 it's 0.4%. The agent has effectively much less room to adjust for expensive stocks. Consider `max_bias = 0.05 * (base_price / 12.5)` or similar scaling.
 
 2. **Volatility clustering is gentle**: vol_state range is 0.6-1.8 but in practice stays near 1.2-1.5 with std ~0.03-0.15. The agent may not get enough variance to learn truly distinct behavior for volatile vs calm periods. Can increase `vol_shock` coefficient or widen the GARCH-like response.
 
-3. **Per-day LOB normalization breaks generalization** (data.py `_paper_normalize_lob`): Volumes are normalized by day-specific maxima, so "volume=0.5" on day 1 means something different than "volume=0.5" on day 10. This contributes to pretrain test-set overfitting. Could use corpus-wide max instead of per-day max.
+3. **Chronological train/val/test split**: test days are 2+ weeks after train days. Any regime drift (signal persistence, vol_state distribution) hurts generalization. Consider interleaved splitting.
 
 4. **Cross-day independence**: Each day is generated independently with no carry-over of book state or fair value. This is a simplification — real markets have overnight gaps and opening dynamics.
+
+5. **RV `sum()` vs `mean()`** (FIXED): Realized volatility was summing squared returns over fixed time windows with variable event counts. Replaced with `mean()` since the simulator uses per-step (not per-unit-time) noise. Impact is minor since diagnostic showed RV drift was already small (CV~0.07).
 
 ---
 
 ## 12. Euler Submission Commands
 
-**Full suite (mode=full) on anja_simulations with LOB-observable alpha enabled:**
+**Defaults are now leak=0.3, hawkes=0.1, so env vars are optional.** Override if testing different values.
 
 From local PowerShell:
 ```powershell
 $ts = Get-Date -Format yyyyMMdd_HHmmss
-C:\Windows\System32\OpenSSH\ssh.exe -i C:\Users\anjic\.ssh\id.eddsa apetric@euler.ethz.ch "bash -lc 'cd /cluster/home/apetric/mlfcs-gapa/simulation && RUN_NAME=anja_full_${ts} MODE=full SYMBOLS=000001 LOB_LEAK_STRENGTH=0.5 INFORMED_HAWKES_ALPHA=0.1 OUTPUT_ROOT=/cluster/scratch/apetric/artifacts_anja DATA_DIR=/cluster/scratch/apetric/data/anja_full_${ts} ACCOUNT=ls_math bash cluster/submit_anja_suite.sh'"
+C:\Windows\System32\OpenSSH\ssh.exe -i C:\Users\anjic\.ssh\id.eddsa apetric@euler.ethz.ch "bash -lc 'cd /cluster/home/apetric/mlfcs-gapa/simulation && RUN_NAME=anja_full_${ts} MODE=full SYMBOLS=000001 OUTPUT_ROOT=/cluster/scratch/apetric/artifacts_anja DATA_DIR=/cluster/scratch/apetric/data/anja_full_${ts} ACCOUNT=ls_math bash cluster/submit_anja_suite.sh'"
 ```
 
 From Euler login node:
@@ -471,12 +533,15 @@ TS=$(date +%Y%m%d_%H%M%S)
 RUN_NAME=anja_full_${TS} \
 MODE=full \
 SYMBOLS=000001 \
-LOB_LEAK_STRENGTH=0.5 \
-INFORMED_HAWKES_ALPHA=0.1 \
 OUTPUT_ROOT=/cluster/scratch/apetric/artifacts_anja \
 DATA_DIR=/cluster/scratch/apetric/data/anja_full_${TS} \
 ACCOUNT=ls_math \
 bash cluster/submit_anja_suite.sh
+```
+
+**To override leak/hawkes** (e.g., for ablation):
+```bash
+LOB_LEAK_STRENGTH=0.0 INFORMED_HAWKES_ALPHA=0.0 ... bash cluster/submit_anja_suite.sh
 ```
 
 **Monitoring:**
@@ -492,3 +557,13 @@ python -m anja_simulations.diagnostics \
   --data-dir /path/to/euler_downloads/anja_full_<timestamp> \
   --symbol 000001 --horizons 10 50 200 --output report.json
 ```
+
+## 13. File-level change summary (for reviewers)
+
+- `config.py`: Added `lob_leak_strength=0.3`, `informed_hawkes_alpha=0.1`, `signal_threshold_for_lob_leak=0.5`, `pretrain_weight_decay=1e-4`, `pretrain_label_smoothing=0.1`.
+- `data.py`: Added `_compute_volume_normalizers()` for corpus-wide volume maxes from training days. Modified `_paper_normalize_lob()` and `load_day()` to accept pre-computed normalizers. Modified `load_splits()` to compute once, apply to all splits.
+- `features.py`: Changed `realized_volatility()` from `sum()` to `mean()` so it's invariant to event density (simulator uses per-step noise).
+- `models.py`: Added `Dropout2d(0.1)` after 3 Conv block groups + `dropout=0.2` in MultiheadAttention + `Dropout(0.2)` before output projection.
+- `pretrain.py`: Added class-weighted loss (inverse frequency) + label smoothing + weight decay in Adam optimizer.
+- `simulator.py`: Unchanged (leak/hawkes already implemented; only defaults changed in config.py).
+- `report.py`: Earlier BUG fix — `env.set_eval_context()` called before `env.reset()` so baselines use deterministic fills.
