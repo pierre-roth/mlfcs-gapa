@@ -215,7 +215,7 @@ class AgentBasedLOB:
         # Cap queue depth per level so per-level iteration stays O(1).
         # Without this, liquidity_provider orders accumulate indefinitely
         # because they are added on nearly every event but rarely consumed.
-        if len(queue) < 8:
+        if len(queue) < 2:
             queue.append(order)
         if not silent:
             self.event_seq += 1
@@ -372,11 +372,6 @@ class AgentBasedLOB:
         book = self.asks if side == "buy" else self.bids
         signed = 1.0 if side == "buy" else -1.0
         taker_scale = 1.4 if taker_agent == "informed_taker" else 1.0
-        # 15% of market orders are large (institutional-size), consuming the
-        # full touch and walking into touch+1. This gives AS the non-zero
-        # fill probability at distance 1 that its calibration requires.
-        if self.rng.random() < 0.15:
-            taker_scale *= 4.0
         remaining = self._draw_size(taker_scale * (1.0 + 0.25 * self._stress_level()))
         initial = remaining
         trades: list[TradeRecord] = []
