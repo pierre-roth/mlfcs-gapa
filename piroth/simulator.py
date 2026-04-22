@@ -211,7 +211,12 @@ class AgentBasedLOB:
             created_event=self.event_seq,
         )
         self.next_order_id += 1
-        book.setdefault(price, deque()).append(order)
+        queue = book.setdefault(price, deque())
+        # Cap queue depth per level so per-level iteration stays O(1).
+        # Without this, liquidity_provider orders accumulate indefinitely
+        # because they are added on nearly every event but rarely consumed.
+        if len(queue) < 8:
+            queue.append(order)
         if not silent:
             self.event_seq += 1
 
