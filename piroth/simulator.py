@@ -405,9 +405,9 @@ class AgentBasedLOB:
             self.config.market_order_tick_impact * self.tick + informed_scale * self.config.market_order_alpha_impact * max(abs(self.signal), 0.2)
         )
         if side == "buy":
-            self._add_limit("ask", self.best_ask, max(self.trade_unit, 0.20 * initial), owner="liquidity_provider", silent=True)
+            self._add_limit("ask", self.best_ask, max(self.trade_unit, 0.40 * initial), owner="liquidity_provider", silent=True)
         if side == "sell":
-            self._add_limit("bid", self.best_bid, max(self.trade_unit, 0.20 * initial), owner="liquidity_provider", silent=True)
+            self._add_limit("bid", self.best_bid, max(self.trade_unit, 0.40 * initial), owner="liquidity_provider", silent=True)
         return trades, initial - remaining
 
     def snapshot_rows(self) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
