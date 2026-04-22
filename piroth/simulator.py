@@ -345,17 +345,32 @@ class AgentBasedLOB:
         dynamic_touch_prob = float(np.clip(self.profile.maker_join_touch_prob - 0.14 * self._stress_level(), 0.02, 0.98))
         join_touch = self.rng.random() < dynamic_touch_prob
         level = 0 if join_touch else int(self.rng.choice([1, 2], p=[0.7, 0.3]))
+        # Clamp the join-touch reference to within 6 ticks of mid. In normal
+        # operation (tight spread) this is numerically identical to best_ask/bid.
+        # When the book is stale (one side stranded far from mid after drift),
+        # MMs re-quote near mid+6 instead of piling up at the stale price; the
+        # existing 30-tick same-side pruning then sweeps the orphaned orders.
+        clamp = 6 * self.tick
         if side == "bid":
-            target = min(np.floor(self.fair_value / self.tick) * self.tick, self.best_ask - self.tick)
-            # Quote near the current mid rather than the potentially stale best_bid.
-            # In normal operation (tight spread) these are identical; when the bid
-            # drifts away from old ask orders, this prevents stale-ask accumulation.
-            touch_ref = min(np.floor(self.midprice / self.tick) * self.tick, self.best_ask - self.tick)
+            touch_ref = min(
+                max(self.best_bid, np.floor(self.midprice / self.tick) * self.tick - clamp),
+                self.best_ask - self.tick,
+            )
+            target = max(
+                min(np.floor(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref - 10 * self.tick,
+            )
             reference = touch_ref if join_touch else min(target, touch_ref - level * self.tick)
             price = round(max(reference, self.tick), 6)
         else:
-            target = max(np.ceil(self.fair_value / self.tick) * self.tick, self.best_bid + self.tick)
-            touch_ref = max(np.ceil(self.midprice / self.tick) * self.tick, self.best_bid + self.tick)
+            touch_ref = max(
+                min(self.best_ask, np.ceil(self.midprice / self.tick) * self.tick + clamp),
+                self.best_bid + self.tick,
+            )
+            target = min(
+                max(np.ceil(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref + 10 * self.tick,
+            )
             reference = touch_ref if join_touch else max(target, touch_ref + level * self.tick)
             price = round(reference, 6)
         size = self._draw_size(self.profile.depth_scale)
