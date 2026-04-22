@@ -547,7 +547,7 @@ def _symbol_profile(symbol: str, config: GenerateConfig) -> SymbolProfile:
                 0.98,
             )
         ),
-        depth_scale={"000001": 3.0, "000858": 2.2, "002415": 1.8}.get(symbol, 2.0),
+        depth_scale={"000001": 2.0, "000858": 1.5, "002415": 1.2}.get(symbol, 1.5),
     )
 
 
