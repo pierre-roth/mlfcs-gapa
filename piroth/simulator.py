@@ -237,19 +237,6 @@ class AgentBasedLOB:
         return removed_order
 
     def _ensure_depth(self) -> None:
-        # Cross-side stale pruning: when price drifts significantly, asks
-        # that were posted at old prices become stranded far above the current
-        # bid (and vice versa). Same-side pruning (below) never removes them
-        # because they are the best ask. Deleting them forces _ensure_depth to
-        # rebuild near the current price, preventing the spread from blowing out.
-        stale_cutoff = 40 * self.tick
-        if self.bids and self.asks:
-            cur_bid = self.best_bid
-            cur_ask = self.best_ask
-            for p in [p for p in list(self.asks) if p > cur_bid + stale_cutoff]:
-                del self.asks[p]
-            for p in [p for p in list(self.bids) if p < cur_ask - stale_cutoff]:
-                del self.bids[p]
         # Extend from the deepest existing level, not from the touch.
         # Using best_bid - tick caused an infinite loop: that level already
         # exists after the first iteration so len(bids) never increases.
@@ -292,7 +279,11 @@ class AgentBasedLOB:
         )
         if self.rng.random() < self.config.shock_event_prob:
             fair_move += float(self.rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.tick * self.rng.uniform(0.6, 1.4))
-        self.fair_value = max(self.tick, self.fair_value + fair_move)
+        # Pull fair_value toward the observed midprice so that competing MMs
+        # re-quote near the current market level after sustained drift, preventing
+        # asks from stranding far above a falling bid (and vice versa).
+        fv_reversion = 0.02 * (self.midprice - self.fair_value)
+        self.fair_value = max(self.tick, self.fair_value + fair_move + fv_reversion)
         return regime_shift, fair_move
 
     def _event_weights(self) -> tuple[list[str], np.ndarray]:
