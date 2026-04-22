@@ -77,7 +77,9 @@ def main():
     trades_at_touch = 0
     trades_beyond_touch = 0
 
-    for _ in range(args.events):
+    for step_i in range(args.events):
+        if step_i % 100 == 0:
+            print(f"  step {step_i}/{args.events}  book levels: bid={len(book.bids)} ask={len(book.asks)}  mid={book.midprice:.4f}", flush=True)
         touch_bid_before = book.best_bid
         touch_ask_before = book.best_ask
         touch_ask_depth_before = sum(o.size for o in book.asks.get(touch_ask_before, []))
