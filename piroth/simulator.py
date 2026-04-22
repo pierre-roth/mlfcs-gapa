@@ -237,12 +237,25 @@ class AgentBasedLOB:
         return removed_order
 
     def _ensure_depth(self) -> None:
+        # Extend from the deepest existing level, not from the touch.
+        # Using best_bid - tick caused an infinite loop: that level already
+        # exists after the first iteration so len(bids) never increases.
         while len(self.bids) < 10:
-            price = round(self.best_bid - self.tick, 6)
+            deepest = min(self.bids) if self.bids else self.best_ask - self.tick
+            price = round(deepest - self.tick, 6)
             self._add_limit("bid", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         while len(self.asks) < 10:
-            price = round(self.best_ask + self.tick, 6)
+            deepest = max(self.asks) if self.asks else self.best_bid + self.tick
+            price = round(deepest + self.tick, 6)
             self._add_limit("ask", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
+        # Prune levels far from the touch so max/min over the dict stays fast.
+        cutoff = 30 * self.tick
+        best_b = self.best_bid
+        best_a = self.best_ask
+        for p in [p for p in self.bids if p < best_b - cutoff]:
+            del self.bids[p]
+        for p in [p for p in self.asks if p > best_a + cutoff]:
+            del self.asks[p]
 
     def _step_latent(self) -> tuple[int, float]:
         self.regime_clock += 1
