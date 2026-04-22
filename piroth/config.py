@@ -87,8 +87,8 @@ class ExperimentConfig:
     )
     alpha_signal_scale: float = 1.0
     price_noise_scale: float = 0.0025
-    fair_value_signal_scale: float = 0.006
-    fair_value_noise_scale: float = 0.0012
+    fair_value_signal_scale: float = 0.0008
+    fair_value_noise_scale: float = 0.0003
     shock_event_prob: float = 0.003
     shock_size_ticks: float = 2.5
     metaorder_start_prob: float = 0.004
