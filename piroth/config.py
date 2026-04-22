@@ -98,7 +98,7 @@ class ExperimentConfig:
     flow_reversion_scale: float = 1.0
     noise_taker_rate_scale: float = 1.0
     informed_taker_rate_scale: float = 1.0
-    maker_add_rate_scale: float = 1.0
+    maker_add_rate_scale: float = 3.0
     maker_cancel_rate_scale: float = 0.5
     liquidity_refill_rate_scale: float = 1.0
     maker_join_touch_prob_shift: float = 0.0
