@@ -249,7 +249,7 @@ class AgentBasedLOB:
             price = round(deepest + self.tick, 6)
             self._add_limit("ask", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         # Prune levels far from the touch so max/min over the dict stays fast.
-        cutoff = 12 * self.tick
+        cutoff = 30 * self.tick
         best_b = self.best_bid
         best_a = self.best_ask
         for p in [p for p in self.bids if p < best_b - cutoff]:
@@ -345,41 +345,32 @@ class AgentBasedLOB:
         dynamic_touch_prob = float(np.clip(self.profile.maker_join_touch_prob - 0.14 * self._stress_level(), 0.02, 0.98))
         join_touch = self.rng.random() < dynamic_touch_prob
         level = 0 if join_touch else int(self.rng.choice([1, 2], p=[0.7, 0.3]))
-        # Clamp the join-touch reference toward mid only when the book is genuinely
-        # stale on that side: asks stranded above fair_value (market fell) or bids
-        # stranded below fair_value (market rose). Symmetric clamping incorrectly
-        # raises bids in a falling market, creating near-crossed books and 69% walk-through.
+        # Clamp the join-touch reference to within 6 ticks of mid. In normal
+        # operation (tight spread) this is numerically identical to best_ask/bid.
+        # When the book is stale (one side stranded far from mid after drift),
+        # MMs re-quote near mid+6 instead of piling up at the stale price; the
+        # existing 30-tick same-side pruning then sweeps the orphaned orders.
         clamp = 6 * self.tick
         if side == "bid":
-            if self.midprice > self.fair_value + 2 * clamp:
-                # Bids may be stranded above fair_value — pull them down toward mid.
-                touch_ref = min(
-                    max(self.best_bid, np.floor(self.midprice / self.tick) * self.tick - clamp),
-                    self.best_ask - self.tick,
-                )
-                target = max(
-                    min(np.floor(self.fair_value / self.tick) * self.tick, touch_ref),
-                    touch_ref - 10 * self.tick,
-                )
-            else:
-                touch_ref = min(self.best_bid, self.best_ask - self.tick)
-                target = min(np.floor(self.fair_value / self.tick) * self.tick, touch_ref)
+            touch_ref = min(
+                max(self.best_bid, np.floor(self.midprice / self.tick) * self.tick - clamp),
+                self.best_ask - self.tick,
+            )
+            target = max(
+                min(np.floor(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref - 10 * self.tick,
+            )
             reference = touch_ref if join_touch else min(target, touch_ref - level * self.tick)
             price = round(max(reference, self.tick), 6)
         else:
-            if self.midprice < self.fair_value - 2 * clamp:
-                # Asks may be stranded below fair_value — pull them up toward mid.
-                touch_ref = max(
-                    min(self.best_ask, np.ceil(self.midprice / self.tick) * self.tick + clamp),
-                    self.best_bid + self.tick,
-                )
-                target = min(
-                    max(np.ceil(self.fair_value / self.tick) * self.tick, touch_ref),
-                    touch_ref + 10 * self.tick,
-                )
-            else:
-                touch_ref = max(self.best_ask, self.best_bid + self.tick)
-                target = max(np.ceil(self.fair_value / self.tick) * self.tick, touch_ref)
+            touch_ref = max(
+                min(self.best_ask, np.ceil(self.midprice / self.tick) * self.tick + clamp),
+                self.best_bid + self.tick,
+            )
+            target = min(
+                max(np.ceil(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref + 10 * self.tick,
+            )
             reference = touch_ref if join_touch else max(target, touch_ref + level * self.tick)
             price = round(reference, 6)
         size = self._draw_size(self.profile.depth_scale)
