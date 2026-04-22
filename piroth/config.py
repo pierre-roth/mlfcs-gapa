@@ -92,8 +92,8 @@ class ExperimentConfig:
     shock_event_prob: float = 0.003
     shock_size_ticks: float = 2.5
     metaorder_start_prob: float = 0.004
-    metaorder_persistence: float = 0.985
-    metaorder_scale: float = 1.25
+    metaorder_persistence: float = 0.95
+    metaorder_scale: float = 0.4
     market_order_impact_scale: float = 0.85
     flow_reversion_scale: float = 1.0
     noise_taker_rate_scale: float = 1.0
