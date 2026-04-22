@@ -215,7 +215,7 @@ class AgentBasedLOB:
         # Cap queue depth per level so per-level iteration stays O(1).
         # Without this, liquidity_provider orders accumulate indefinitely
         # because they are added on nearly every event but rarely consumed.
-        if len(queue) < 2:
+        if len(queue) < 8:
             queue.append(order)
         if not silent:
             self.event_seq += 1
@@ -547,7 +547,7 @@ def _symbol_profile(symbol: str, config: GenerateConfig) -> SymbolProfile:
                 0.98,
             )
         ),
-        depth_scale={"000001": 2.0, "000858": 1.5, "002415": 1.2}.get(symbol, 1.5),
+        depth_scale={"000001": 1.35, "000858": 1.0, "002415": 0.82}.get(symbol, 1.0),
     )
 
 
