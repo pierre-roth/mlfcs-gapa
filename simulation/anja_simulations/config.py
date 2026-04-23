@@ -118,6 +118,14 @@ class ExperimentConfig:
     informed_hawkes_alpha: float = 0.1
     informed_hawkes_decay: float = 0.97
 
+    # Fair-value mean reversion toward displayed mid.
+    # Previous values: base=0.003, scale=0.04 (aggressive — pulled signal back into mid).
+    # Weakened defaults let the latent signal drift further before being yanked,
+    # improving predictability of 10-event direction labels (which were 51% "flat"
+    # at full-mode event density with the stronger reversion).
+    fair_value_mean_reversion_base: float = 0.003
+    fair_value_mean_reversion_scale: float = 0.04
+
     def apply_mode_defaults(self) -> "ExperimentConfig":
         if self.mode == "smoke":
             self.num_days = 4
@@ -144,6 +152,14 @@ class ExperimentConfig:
             self.ppo_rollouts_per_epoch = min(self.ppo_rollouts_per_epoch, 6)
             self.max_train_episodes_per_day = 6
             self.max_eval_episodes_per_day = 3
+        elif self.mode == "full":
+            # At full-mode event density (~120k/day), 10-event horizon is ~1.5 seconds of
+            # market time — too short for most price moves to exceed pretrain_alpha=1e-5.
+            # This collapses 51% of labels to "flat" and triggers majority-class prediction.
+            # Scale to 50 events (~7.5s) to match the effective real-time window at
+            # medium-mode event density. Respects user overrides above 10.
+            if self.pretrain_horizon <= 10:
+                self.pretrain_horizon = 50
         self.device = self._resolve_device()
         return self
 

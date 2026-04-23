@@ -317,7 +317,10 @@ class AgentBasedLOB:
         # large persistent deviations, but tolerate small temporary edges.
         mid = self.midprice
         edge_ticks = abs(self.fair_value - mid) / max(self.tick, 1e-8)
-        reversion_strength = 0.003 + 0.04 * min(edge_ticks / 3.0, 1.0) ** 2
+        reversion_strength = (
+            self.config.fair_value_mean_reversion_base
+            + self.config.fair_value_mean_reversion_scale * min(edge_ticks / 3.0, 1.0) ** 2
+        )
         reversion = reversion_strength * (mid - self.fair_value)
         # Price-proportional noise: ensures all stocks have similar % daily range
         # regardless of absolute price level (a ¥135 stock should move ~1% just

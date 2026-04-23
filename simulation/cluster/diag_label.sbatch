@@ -11,11 +11,12 @@
 cd /cluster/home/apetric/mlfcs-gapa/simulation
 export RUN_NAME="${RUN_NAME:-diag_label}"
 export OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/scratch/apetric/artifacts_anja}"
-export DATA_DIR="${DATA_DIR:-/cluster/scratch/apetric/data/anja_leak05_alpha5e4_medium_20260422_121004}"
+export DATA_DIR="${DATA_DIR:-/cluster/scratch/apetric/data/anja_full_normfix_20260423_000941}"
 source cluster/euler_common.sh
 euler_setup_job
 
 python3 <<'EOF'
+import os
 from anja_simulations.data import load_day, _paper_labels
 from anja_simulations.config import GenerateConfig
 import numpy as np
@@ -26,6 +27,10 @@ print("=" * 70)
 
 cfg = GenerateConfig(mode="medium")
 cfg.apply_mode_defaults()
+# Override data_dir from env after apply_mode_defaults (which may reset it)
+if "DATA_DIR" in os.environ:
+    cfg.data_dir = os.environ["DATA_DIR"]
+print(f"Using data_dir: {cfg.data_dir}")
 
 print("\nLoading 20191101 training data...")
 day = load_day("000001", "20191101", cfg)
@@ -36,9 +41,12 @@ print("(Target: ~33% each for balanced 3-class problem)\n")
 results = []
 for alpha in [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]:
     labels = _paper_labels(day.midprice, horizon=10, threshold=alpha)
-    counts = np.bincount(labels, minlength=3)
-    pct = 100 * counts / len(labels)
-    line = f"alpha={alpha:0.0e}: up={pct[0]:5.1f}% flat={pct[1]:5.1f}% down={pct[2]:5.1f}% (counts: {counts.tolist()})"
+    # Filter NaN (at window boundaries) and cast to int64 for bincount
+    valid = labels[~np.isnan(labels)].astype(np.int64)
+    counts = np.bincount(valid, minlength=3)
+    total = len(valid)
+    pct = 100 * counts / max(total, 1)
+    line = f"alpha={alpha:0.0e}: up={pct[0]:5.1f}% flat={pct[1]:5.1f}% down={pct[2]:5.1f}% (counts: {counts.tolist()}, n_valid={total})"
     print(line)
     results.append((alpha, pct[0], pct[1], pct[2]))
 
