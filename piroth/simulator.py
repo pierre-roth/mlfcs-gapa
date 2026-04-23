@@ -291,10 +291,7 @@ class AgentBasedLOB:
         )
         if self.rng.random() < self.config.shock_event_prob:
             fair_move += float(self.rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.tick * self.rng.uniform(0.6, 1.4))
-        # Soft mean-reversion toward reference price prevents fair_value from
-        # drifting 60+ ticks over a 2000-event episode (time constant ~333 steps).
-        fv_reversion = 0.003 * (self.reference_price - self.fair_value)
-        self.fair_value = max(self.tick, self.fair_value + fair_move + fv_reversion)
+        self.fair_value = max(self.tick, self.fair_value + fair_move)
         return regime_shift, fair_move
 
     def _event_weights(self) -> tuple[list[str], np.ndarray]:
@@ -568,7 +565,7 @@ class AgentBasedLOB:
 def _symbol_profile(symbol: str, config: GenerateConfig) -> SymbolProfile:
     return SymbolProfile(
         base_price=config.base_prices[symbol],
-        fair_value_persistence={"000001": 0.985, "000858": 0.988, "002415": 0.99}.get(symbol, 0.988),
+        fair_value_persistence={"000001": 0.90, "000858": 0.988, "002415": 0.99}.get(symbol, 0.988),
         signal_noise={"000001": 0.035, "000858": 0.03, "002415": 0.028}.get(symbol, 0.03),
         noise_taker_rate={"000001": 1.3, "000858": 1.0, "002415": 0.85}.get(symbol, 1.0) * config.noise_taker_rate_scale,
         informed_taker_rate={"000001": 0.45, "000858": 0.35, "002415": 0.28}.get(symbol, 0.35) * config.informed_taker_rate_scale,
