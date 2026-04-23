@@ -261,7 +261,7 @@ class AgentBasedLOB:
                 price = round(self.best_bid + self.tick, 6)
             self._add_limit("ask", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         # Prune levels far from the touch so max/min over the dict stays fast.
-        cutoff = 30 * self.tick
+        cutoff = 20 * self.tick
         best_b = self.best_bid
         best_a = self.best_ask
         for p in [p for p in self.bids if p < best_b - cutoff]:
@@ -565,7 +565,7 @@ class AgentBasedLOB:
 def _symbol_profile(symbol: str, config: GenerateConfig) -> SymbolProfile:
     return SymbolProfile(
         base_price=config.base_prices[symbol],
-        fair_value_persistence={"000001": 0.90, "000858": 0.988, "002415": 0.99}.get(symbol, 0.988),
+        fair_value_persistence={"000001": 0.985, "000858": 0.988, "002415": 0.99}.get(symbol, 0.988),
         signal_noise={"000001": 0.035, "000858": 0.03, "002415": 0.028}.get(symbol, 0.03),
         noise_taker_rate={"000001": 1.3, "000858": 1.0, "002415": 0.85}.get(symbol, 1.0) * config.noise_taker_rate_scale,
         informed_taker_rate={"000001": 0.45, "000858": 0.35, "002415": 0.28}.get(symbol, 0.35) * config.informed_taker_rate_scale,
