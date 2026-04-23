@@ -97,7 +97,7 @@ class ExperimentConfig:
     market_order_impact_scale: float = 0.85
     flow_reversion_scale: float = 1.0
     noise_taker_rate_scale: float = 1.0
-    informed_taker_rate_scale: float = 1.0
+    informed_taker_rate_scale: float = 0.7
     maker_add_rate_scale: float = 3.0
     maker_cancel_rate_scale: float = 0.5
     liquidity_refill_rate_scale: float = 1.0

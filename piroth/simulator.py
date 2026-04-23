@@ -237,16 +237,28 @@ class AgentBasedLOB:
         return removed_order
 
     def _ensure_depth(self) -> None:
-        # Extend from the deepest existing level, not from the touch.
-        # Using best_bid - tick caused an infinite loop: that level already
-        # exists after the first iteration so len(bids) never increases.
+        # Fill near-touch gaps first (within 5 ticks), then extend from the
+        # deepest level. Prioritizing touch gaps keeps best-level depth healthy
+        # and reduces walk-through rate without expanding the pruning window.
         while len(self.bids) < 10:
-            deepest = min(self.bids) if self.bids else self.best_ask - self.tick
-            price = round(deepest - self.tick, 6)
+            if self.bids:
+                touch = self.best_bid
+                price = next(
+                    (round(touch - i * self.tick, 6) for i in range(5) if round(touch - i * self.tick, 6) not in self.bids),
+                    round(min(self.bids) - self.tick, 6),
+                )
+            else:
+                price = round(self.best_ask - self.tick, 6)
             self._add_limit("bid", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         while len(self.asks) < 10:
-            deepest = max(self.asks) if self.asks else self.best_bid + self.tick
-            price = round(deepest + self.tick, 6)
+            if self.asks:
+                touch = self.best_ask
+                price = next(
+                    (round(touch + i * self.tick, 6) for i in range(5) if round(touch + i * self.tick, 6) not in self.asks),
+                    round(max(self.asks) + self.tick, 6),
+                )
+            else:
+                price = round(self.best_bid + self.tick, 6)
             self._add_limit("ask", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         # Prune levels far from the touch so max/min over the dict stays fast.
         cutoff = 30 * self.tick
@@ -279,7 +291,10 @@ class AgentBasedLOB:
         )
         if self.rng.random() < self.config.shock_event_prob:
             fair_move += float(self.rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.tick * self.rng.uniform(0.6, 1.4))
-        self.fair_value = max(self.tick, self.fair_value + fair_move)
+        # Soft mean-reversion toward reference price prevents fair_value from
+        # drifting 60+ ticks over a 2000-event episode (time constant ~333 steps).
+        fv_reversion = 0.003 * (self.reference_price - self.fair_value)
+        self.fair_value = max(self.tick, self.fair_value + fair_move + fv_reversion)
         return regime_shift, fair_move
 
     def _event_weights(self) -> tuple[list[str], np.ndarray]:
@@ -288,7 +303,7 @@ class AgentBasedLOB:
         imbalance = self._top_imbalance()
         flow_term = np.tanh(self.signed_flow_state / 20.0)
         stress = self._stress_level()
-        informed_edge = signal_edge + 0.8 * self.metaorder_bias
+        informed_edge = float(np.clip(signal_edge + 0.8 * self.metaorder_bias, -3.0, 3.0))
         names = [
             "noise_market_buy",
             "noise_market_sell",
