@@ -193,7 +193,8 @@ class ContinuousMarketEnv:
         dampened = self.config.dampened_pnl_weight * (delta_pnl - max(0.0, self.config.eta * delta_pnl))
         trading = float(sum(fill.volume * (mid - fill.price) for fill in fills))
         trading *= self.config.trade_reward_weight
-        return float(dampened + trading - self._inventory_penalty())
+        ip = self._inventory_penalty() if fills else 0.0
+        return float(dampened + trading - ip)
 
     def _close_position(self, event_idx: int) -> float:
         if self.inventory == 0:
