@@ -211,7 +211,12 @@ class AgentBasedLOB:
             created_event=self.event_seq,
         )
         self.next_order_id += 1
-        book.setdefault(price, deque()).append(order)
+        queue = book.setdefault(price, deque())
+        # Cap queue depth per level so per-level iteration stays O(1).
+        # Without this, liquidity_provider orders accumulate indefinitely
+        # because they are added on nearly every event but rarely consumed.
+        if len(queue) < 8:
+            queue.append(order)
         if not silent:
             self.event_seq += 1
 
@@ -232,12 +237,37 @@ class AgentBasedLOB:
         return removed_order
 
     def _ensure_depth(self) -> None:
+        # Fill near-touch gaps first (within 5 ticks), then extend from the
+        # deepest level. Prioritizing touch gaps keeps best-level depth healthy
+        # and reduces walk-through rate without expanding the pruning window.
         while len(self.bids) < 10:
-            price = round(self.best_bid - self.tick, 6)
+            if self.bids:
+                touch = self.best_bid
+                price = next(
+                    (round(touch - i * self.tick, 6) for i in range(5) if round(touch - i * self.tick, 6) not in self.bids),
+                    round(min(self.bids) - self.tick, 6),
+                )
+            else:
+                price = round(self.best_ask - self.tick, 6)
             self._add_limit("bid", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
         while len(self.asks) < 10:
-            price = round(self.best_ask + self.tick, 6)
+            if self.asks:
+                touch = self.best_ask
+                price = next(
+                    (round(touch + i * self.tick, 6) for i in range(5) if round(touch + i * self.tick, 6) not in self.asks),
+                    round(max(self.asks) + self.tick, 6),
+                )
+            else:
+                price = round(self.best_bid + self.tick, 6)
             self._add_limit("ask", price, self._draw_size(self.profile.depth_scale * 1.25), owner="liquidity_provider", silent=True)
+        # Prune levels far from the touch so max/min over the dict stays fast.
+        cutoff = 20 * self.tick
+        best_b = self.best_bid
+        best_a = self.best_ask
+        for p in [p for p in self.bids if p < best_b - cutoff]:
+            del self.bids[p]
+        for p in [p for p in self.asks if p > best_a + cutoff]:
+            del self.asks[p]
 
     def _step_latent(self) -> tuple[int, float]:
         self.regime_clock += 1
@@ -270,7 +300,7 @@ class AgentBasedLOB:
         imbalance = self._top_imbalance()
         flow_term = np.tanh(self.signed_flow_state / 20.0)
         stress = self._stress_level()
-        informed_edge = signal_edge + 0.8 * self.metaorder_bias
+        informed_edge = float(np.clip(signal_edge + 0.8 * self.metaorder_bias, -3.0, 3.0))
         names = [
             "noise_market_buy",
             "noise_market_sell",
@@ -327,13 +357,33 @@ class AgentBasedLOB:
         dynamic_touch_prob = float(np.clip(self.profile.maker_join_touch_prob - 0.14 * self._stress_level(), 0.02, 0.98))
         join_touch = self.rng.random() < dynamic_touch_prob
         level = 0 if join_touch else int(self.rng.choice([1, 2], p=[0.7, 0.3]))
+        # Clamp the join-touch reference to within 6 ticks of mid. In normal
+        # operation (tight spread) this is numerically identical to best_ask/bid.
+        # When the book is stale (one side stranded far from mid after drift),
+        # MMs re-quote near mid+6 instead of piling up at the stale price; the
+        # existing 30-tick same-side pruning then sweeps the orphaned orders.
+        clamp = 6 * self.tick
         if side == "bid":
-            target = min(np.floor(self.fair_value / self.tick) * self.tick, self.best_ask - self.tick)
-            reference = self.best_bid if join_touch else min(target, self.best_bid - level * self.tick)
-            price = round(reference, 6)
+            touch_ref = min(
+                max(self.best_bid, np.floor(self.midprice / self.tick) * self.tick - clamp),
+                self.best_ask - self.tick,
+            )
+            target = max(
+                min(np.floor(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref - 10 * self.tick,
+            )
+            reference = touch_ref if join_touch else min(target, touch_ref - level * self.tick)
+            price = round(max(reference, self.tick), 6)
         else:
-            target = max(np.ceil(self.fair_value / self.tick) * self.tick, self.best_bid + self.tick)
-            reference = self.best_ask if join_touch else max(target, self.best_ask + level * self.tick)
+            touch_ref = max(
+                min(self.best_ask, np.ceil(self.midprice / self.tick) * self.tick + clamp),
+                self.best_bid + self.tick,
+            )
+            target = min(
+                max(np.ceil(self.fair_value / self.tick) * self.tick, touch_ref),
+                touch_ref + 10 * self.tick,
+            )
+            reference = touch_ref if join_touch else max(target, touch_ref + level * self.tick)
             price = round(reference, 6)
         size = self._draw_size(self.profile.depth_scale)
         self._add_limit(side, price, size, owner="competing_mm", silent=True)
@@ -386,10 +436,10 @@ class AgentBasedLOB:
         self.fair_value += signed * self.config.market_order_impact_scale * (
             self.config.market_order_tick_impact * self.tick + informed_scale * self.config.market_order_alpha_impact * max(abs(self.signal), 0.2)
         )
-        if side == "buy" and self.config.touch_replenish_fraction > 0:
-            self._add_limit("ask", self.best_ask, max(self.trade_unit, self.config.touch_replenish_fraction * initial), owner="liquidity_provider", silent=True)
-        if side == "sell" and self.config.touch_replenish_fraction > 0:
-            self._add_limit("bid", self.best_bid, max(self.trade_unit, self.config.touch_replenish_fraction * initial), owner="liquidity_provider", silent=True)
+        if side == "buy":
+            self._add_limit("ask", self.best_ask, max(self.trade_unit, 0.40 * initial), owner="liquidity_provider", silent=True)
+        if side == "sell":
+            self._add_limit("bid", self.best_bid, max(self.trade_unit, 0.40 * initial), owner="liquidity_provider", silent=True)
         return trades, initial - remaining
 
     def snapshot_rows(self) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
