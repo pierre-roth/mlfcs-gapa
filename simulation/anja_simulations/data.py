@@ -221,6 +221,18 @@ def load_splits(config: ExperimentConfig, symbol: str) -> dict[str, list[DayData
     # day, fixing the per-day-scale overfitting that tanks test_f1.
     volume_normalizers = _compute_volume_normalizers(symbol, all_day_strs[:train_end], config)
     all_days = [load_day(symbol, d, config, volume_normalizers) for d in all_day_strs]
+    # Z-norm price columns using training-day statistics (Tsantekidis Eq. 3-4 + paper Sec. III-B2).
+    # Prices are already stationarized (p/mid - 1); now standardize across the corpus.
+    # Volume columns stay as max-normed values in [0, 1] — no z-norm.
+    price_cols = [level * 4 + offset for level in range(10) for offset in (0, 2)]
+    train_price_rows = [day.normalized_lob[:, price_cols] for day in all_days[:train_end]]
+    all_train_prices = np.concatenate(train_price_rows, axis=0)
+    price_mean = all_train_prices.mean(axis=0).astype(np.float32)
+    price_std = (all_train_prices.std(axis=0) + 1e-6).astype(np.float32)
+    for day in all_days:
+        day.normalized_lob[:, price_cols] = (
+            (day.normalized_lob[:, price_cols] - price_mean) / price_std
+        )
     return {
         "train": all_days[:train_end],
         "val": all_days[train_end:val_end],

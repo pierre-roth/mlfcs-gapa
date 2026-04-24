@@ -28,7 +28,11 @@ class ContinuousMarketEnv:
     def __init__(self, day: DayData, config: TrainConfig) -> None:
         self.day = day
         self.config = config
-        self.decision_indices = np.arange(config.lookback - 1 + config.latency, len(day.midprice), dtype=np.int64)
+        # Paper: agent only decides at events where a trade occurred.
+        # The lookback window still sees all intermediate LOB changes.
+        all_indices = np.arange(config.lookback - 1 + config.latency, len(day.midprice), dtype=np.int64)
+        trade_set = set(day.trades_by_index.keys())
+        self.decision_indices = np.array([i for i in all_indices if i in trade_set], dtype=np.int64)
         if len(self.decision_indices) == 0:
             raise RuntimeError(f"No tradable indices for {day.symbol} {day.day}")
         self.eval_episode_index: int | None = None
