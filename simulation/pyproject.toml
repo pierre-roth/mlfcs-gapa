@@ -1,0 +1,20 @@
+[project]
+name = "mlfcs-gapa"
+version = "0.1.0"
+description = "Databento preprocessing and experiments for market making from limit order books."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyrallis",
+    "rich",
+    "matplotlib",
+    "pytest",
+    "scikit-learn",
+    "seaborn",
+    "torch",
+    "tqdm",
+]
+
+[tool.uv]
+package = false

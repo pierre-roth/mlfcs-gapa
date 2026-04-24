@@ -9,7 +9,7 @@ import pyrallis
 import seaborn as sns
 
 from .config import ExperimentConfig
-from .metrics import sharpe, sharpe_annualized_episodes, sharpe_daily 
+from .metrics import sharpe
 from .pipeline import prepare_run
 from .utils import ensure_dir
 
@@ -132,20 +132,6 @@ def _format_overall_results(combined: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     ]
     rows = []
     sharpe_map = combined.groupby(["symbol", "method"])["pnl"].apply(lambda values: sharpe(values.tolist())).to_dict()
- 
-    # annualized Sharpe maps
-    def _annual_daily(group):
-        return sharpe_daily(group["pnl"].tolist(), group["day"].tolist()) if "day" in group.columns else 0.0
-    sharpe_daily_map = combined.groupby(["symbol", "method"]).apply(_annual_daily).to_dict()
- 
-    def _annual_ep(group):
-        if "day" not in group.columns:
-            return 0.0
-        n_days = group["day"].nunique()
-        ep_per_day = len(group) / max(n_days, 1)
-        return sharpe_annualized_episodes(group["pnl"].tolist(), ep_per_day)
-    sharpe_annual_ep_map = combined.groupby(["symbol", "method"]).apply(_annual_ep).to_dict()
-    
     for _, row in summary.iterrows():
         formatted = {
             "symbol": row["symbol"],
@@ -159,13 +145,9 @@ def _format_overall_results(combined: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
                 std = 0.0
             formatted[metric] = f"{mean:.3f}±{std:.3f}"
         formatted["sharpe"] = f"{sharpe_map[(row['symbol'], row['method'])]:.3f}"
-        formatted["sharpe_annual_daily"] = f"{sharpe_daily_map.get((row['symbol'], row['method']), 0.0):.2f}"
-        formatted["sharpe_annual_ep"] = f"{sharpe_annual_ep_map.get((row['symbol'], row['method']), 0.0):.2f}"
         rows.append(formatted)
     formatted_df = pd.DataFrame(rows).sort_values(["symbol", "method"], key=lambda series: series.map(lambda x: _method_sort_key(x)[0]) if series.name == "method" else series)
     summary["sharpe"] = summary.apply(lambda row: sharpe_map[(row["symbol"], row["method"])], axis=1)
-    summary["sharpe_annual_daily"] = summary.apply(lambda row: sharpe_daily_map.get((row["symbol"], row["method"]), 0.0), axis=1)
-    summary["sharpe_annual_ep"] = summary.apply(lambda row: sharpe_annual_ep_map.get((row["symbol"], row["method"]), 0.0), axis=1)
     return summary, formatted_df
 
 
@@ -305,14 +287,15 @@ def _ablation_plot(out_dir: Path, report_dir: Path) -> None:
         }
     )
     frame.to_csv(report_dir / "ablation_summary.csv", index=False)
+    sharpe_col = "sharpe_annual_daily" if "sharpe_annual_daily" in frame.columns else "sharpe"
     _save_markdown_table(
-        frame[["symbol", "display_variant", "nd_pnl_mean", "pnl_map_mean", "profit_ratio_mean", "sharpe"]].rename(
+        frame[["symbol", "display_variant", "nd_pnl_mean", "pnl_map_mean", "profit_ratio_mean", sharpe_col]].rename(
             columns={
                 "display_variant": "variant",
                 "nd_pnl_mean": "ND-PnL",
                 "pnl_map_mean": "PnLMAP",
                 "profit_ratio_mean": "ProfitRatio",
-                "sharpe": "Sharpe",
+                sharpe_col: "Sharpe (ann.)" if sharpe_col == "sharpe_annual_daily" else "Sharpe",
             }
         ),
         report_dir / "ablation_summary.md",
@@ -375,11 +358,17 @@ def run_report(config: ExperimentConfig) -> Path:
         .reset_index()
     )
     method_summary["sharpe"] = method_summary["method"].map(lambda method: sharpe(combined.loc[combined["method"] == method, "pnl"].tolist()))
+    method_summary["sharpe_annual_daily"] = method_summary["method"].map(
+        lambda method: sharpe_daily(
+            combined.loc[combined["method"] == method, "pnl"].tolist(),
+            combined.loc[combined["method"] == method, "day"].tolist(),
+        ) if "day" in combined.columns else 0.0
+    )
     method_summary = method_summary.sort_values("method", key=lambda series: series.map(lambda value: _method_sort_key(value)[0]))
     method_summary["display_method"] = method_summary["method"].map(_display_name)
     method_summary.to_csv(report_dir / "method_summary.csv", index=False)
     _save_markdown_table(
-        method_summary[["display_method", "pnl", "nd_pnl", "pnl_map", "profit_ratio", "sharpe", "avg_abs_position", "avg_spread", "turnover", "reward"]].rename(columns={"display_method": "method"}),
+        method_summary[["display_method", "pnl", "nd_pnl", "pnl_map", "profit_ratio", "sharpe", "sharpe_annual_daily", "avg_abs_position", "avg_spread", "turnover", "reward"]].rename(columns={"display_method": "method"}),
         report_dir / "method_summary.md",
     )
 
@@ -392,10 +381,17 @@ def run_report(config: ExperimentConfig) -> Path:
         lambda row: sharpe(combined.loc[(combined["symbol"] == row["symbol"]) & (combined["method"] == row["method"]), "pnl"].tolist()),
         axis=1,
     )
+    symbol_summary["sharpe_annual_daily"] = symbol_summary.apply(
+        lambda row: sharpe_daily(
+            combined.loc[(combined["symbol"] == row["symbol"]) & (combined["method"] == row["method"]), "pnl"].tolist(),
+            combined.loc[(combined["symbol"] == row["symbol"]) & (combined["method"] == row["method"]), "day"].tolist(),
+        ) if "day" in combined.columns else 0.0,
+        axis=1,
+    )
     symbol_summary["display_method"] = symbol_summary["method"].map(_display_name)
     symbol_summary.to_csv(report_dir / "symbol_method_summary.csv", index=False)
 
-    paper_table = method_summary[method_summary["method"].isin(OVERALL_METHOD_ORDER)][["display_method", "pnl", "nd_pnl", "pnl_map", "profit_ratio", "sharpe"]].rename(
+    paper_table = method_summary[method_summary["method"].isin(OVERALL_METHOD_ORDER)][["display_method", "pnl", "nd_pnl", "pnl_map", "profit_ratio", "sharpe", "sharpe_annual_daily"]].rename(
         columns={
             "display_method": "method",
             "pnl": "PnL",
@@ -403,6 +399,7 @@ def run_report(config: ExperimentConfig) -> Path:
             "pnl_map": "PnLMAP",
             "profit_ratio": "ProfitRatio",
             "sharpe": "Sharpe",
+            "sharpe_annual_daily": "Sharpe (ann.)",
         }
     )
     paper_table.to_csv(report_dir / "continuous_paper_table.csv", index=False)
@@ -414,7 +411,7 @@ def run_report(config: ExperimentConfig) -> Path:
     _save_policy_diagnostics(combined, report_dir)
 
     sns.set_theme(style="whitegrid")
-    metrics = ["nd_pnl", "pnl_map", "profit_ratio", "sharpe"]
+    metrics = ["nd_pnl", "pnl_map", "profit_ratio", "sharpe_annual_daily"]
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for axis, metric in zip(axes.ravel(), metrics):
         plot_df = method_summary[method_summary["method"].isin(OVERALL_METHOD_ORDER)].copy()

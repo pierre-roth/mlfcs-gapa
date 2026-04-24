@@ -44,10 +44,10 @@ def load_symbol_splits(config: ExperimentConfig, symbol: str) -> dict[str, list[
     loaded: dict[str, list[DayData]] = {}
     for split_name, split_list in splits.items():
         loaded[split_name] = [load_day_data(symbol, day, config) for day in split_list]
-    mean, std = fit_lob_normalizer(loaded["train"])
+    mean, std, vol_max = fit_lob_normalizer(loaded["train"])
     for split_days_data in loaded.values():
         for day in split_days_data:
-            apply_lob_normalizer(day, mean, std)
+            apply_lob_normalizer(day, mean, std, vol_max)
     return loaded
 
 
@@ -69,6 +69,7 @@ def save_episode_results(path: str | Path, results: Iterable[EpisodeResult]) -> 
     frame.to_csv(path, index=False)
     return frame
 
+
 def summarize_results(frame: pd.DataFrame) -> dict[str, float]:
     summary = {
         "episodes": int(len(frame)),
@@ -76,21 +77,12 @@ def summarize_results(frame: pd.DataFrame) -> dict[str, float]:
         "nd_pnl_mean": float(frame["nd_pnl"].mean()) if not frame.empty else 0.0,
         "pnl_map_mean": float(frame["pnl_map"].mean()) if not frame.empty else 0.0,
         "profit_ratio_mean": float(frame["profit_ratio"].mean()) if not frame.empty else 0.0,
-        "reward_mean": float(frame["reward"].mean()) if not frame.empty and "reward" in frame else 0.0,
-        "turnover_mean": float(frame["turnover"].mean()) if not frame.empty and "turnover" in frame else 0.0,
-        "trades_mean": float(frame["trades"].mean()) if not frame.empty and "trades" in frame else 0.0,
         "sharpe": sharpe(frame["pnl"].tolist()) if not frame.empty else 0.0,
     }
-    # --- annualized Sharpe variants ---
     if not frame.empty and "day" in frame.columns:
-        n_days = frame["day"].nunique()
-        episodes_per_day = len(frame) / max(n_days, 1)
-        summary["sharpe_annual_ep"] = sharpe_annualized_episodes(
-            frame["pnl"].tolist(), episodes_per_day
-        )
-        summary["sharpe_annual_daily"] = sharpe_daily(
-            frame["pnl"].tolist(), frame["day"].tolist()
-        )
+        episodes_per_day = len(frame) / max(int(frame["day"].nunique()), 1)
+        summary["sharpe_annual_ep"] = sharpe_annualized_episodes(frame["pnl"].tolist(), episodes_per_day)
+        summary["sharpe_annual_daily"] = sharpe_daily(frame["pnl"].tolist(), frame["day"].astype(str).tolist())
     else:
         summary["sharpe_annual_ep"] = 0.0
         summary["sharpe_annual_daily"] = 0.0
