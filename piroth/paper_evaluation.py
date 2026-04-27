@@ -351,7 +351,7 @@ def _quote(
     calibration: AvellanedaStoikovCalibration,
 ) -> tuple[float, int, float, int]:
     quote_idx = max(event_idx - config.latency, 0)
-    lot = config.symbol_spec.lot_size
+    lot = config.trade_unit
     if policy.startswith("Fixed_"):
         level = int(policy.rsplit("_", maxsplit=1)[1]) - 1
         return float(arrays.ask_prices[quote_idx, level]), -lot, float(arrays.bid_prices[quote_idx, level]), lot
@@ -387,7 +387,7 @@ def _apply_inventory_guard(
     inventory: int,
     config: DiagnosticsConfig,
 ) -> tuple[float, int, float, int]:
-    max_inventory = config.max_inventory_units * config.symbol_spec.lot_size
+    max_inventory = config.max_inventory_units * config.trade_unit
     if inventory <= -max_inventory:
         ask_price = 0.0
         ask_volume = 0
@@ -422,11 +422,12 @@ def _reward(
     if config.reward_mode != "hybrid":
         raise ValueError(f"Unknown reward_mode: {config.reward_mode}")
     dampened_pnl = pnl - max(0.0, config.reward_eta * pnl)
-    inventory_penalty = config.reward_zeta * (inventory / config.symbol_spec.lot_size) ** 2
-    reward = dampened_pnl if config.reward_use_dampened_pnl else pnl
-    reward += matched_pnl if config.reward_use_trading_pnl else 0.0
-    reward -= inventory_penalty if config.reward_use_inventory_penalty else 0.0
-    reward -= spread_penalty
+    inventory_penalty = config.reward_zeta * (inventory / config.trade_unit) ** 2
+    base_pnl = dampened_pnl if config.reward_use_dampened_pnl else pnl
+    reward = config.reward_pnl_weight * base_pnl
+    reward += config.reward_trading_pnl_weight * matched_pnl if config.reward_use_trading_pnl else 0.0
+    reward -= config.reward_inventory_penalty_weight * inventory_penalty if config.reward_use_inventory_penalty else 0.0
+    reward -= config.reward_spread_penalty_weight * spread_penalty
     return float(reward)
 
 

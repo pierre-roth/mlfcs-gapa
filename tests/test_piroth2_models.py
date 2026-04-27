@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from piroth.models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, TradingBackbone
+from piroth.training import _linear_schedule
 
 
 def test_attnlob_encoder_matches_paper_output_shape() -> None:
@@ -64,6 +65,11 @@ def test_ppo_actor_accepts_initial_policy_overrides() -> None:
 
     assert torch.allclose(log_std, torch.full((1, 2), -2.2))
     assert -0.81 < float(mean[0, 1]) < -0.79
+
+
+def test_entropy_schedule_decays_linearly() -> None:
+    assert _linear_schedule(0.01, 0.001, 0, 5) == 0.01
+    assert torch.isclose(torch.tensor(_linear_schedule(0.01, 0.001, 4, 5)), torch.tensor(0.001))
 
 
 def test_backbone_can_reproduce_author_market_state_alias_bug() -> None:

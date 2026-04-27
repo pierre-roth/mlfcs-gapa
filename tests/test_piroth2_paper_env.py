@@ -72,6 +72,41 @@ def test_author_reward_is_pnl_minus_spread_penalty() -> None:
     assert np.isclose(reward, 3.0 - 5.0)
 
 
+def test_hybrid_reward_uses_linear_component_weights() -> None:
+    day = _minimal_day()
+    config = DiagnosticsConfig(
+        mode="smoke",
+        lookback=1,
+        latency=0,
+        episode_length=2,
+        stable_windows=["10:00:00-10:01:00"],
+        reward_mode="hybrid",
+        reward_use_dampened_pnl=False,
+        reward_use_trading_pnl=True,
+        reward_use_inventory_penalty=True,
+        reward_spread_penalty_scale=10.0,
+        reward_pnl_weight=0.5,
+        reward_trading_pnl_weight=2.0,
+        reward_inventory_penalty_weight=3.0,
+        reward_spread_penalty_weight=0.25,
+        reward_zeta=0.1,
+    )
+    env = PaperTradingEnv(day, config, episode_start=0, episode_stop=2, episode_index=0)
+    env.reset()
+    env.previous_value = 2.0
+    env.value = 6.0
+    env.inventory = config.trade_unit
+
+    reward = env.reward(
+        10.0,
+        config.trade_unit,
+        PaperAction(ask_price=10.04, ask_volume=-config.trade_unit, bid_price=9.99, bid_volume=config.trade_unit),
+        matched_pnl=1.5,
+    )
+
+    assert np.isclose(reward, 0.5 * 4.0 + 2.0 * 1.5 - 3.0 * 0.1)
+
+
 def test_one_sided_inventory_guard_does_not_create_artificial_spread() -> None:
     day = _minimal_day()
     config = DiagnosticsConfig(
@@ -127,6 +162,27 @@ def test_discrete_policy_matches_author_inventory_limit() -> None:
 
     assert action.ask_volume == 0
     assert action.bid_volume == config.symbol_spec.lot_size
+
+
+def test_trade_unit_override_changes_policy_size_and_inventory_limit() -> None:
+    day = _minimal_day()
+    config = DiagnosticsConfig(
+        mode="smoke",
+        lookback=1,
+        latency=0,
+        episode_length=2,
+        stable_windows=["10:00:00-10:01:00"],
+        max_inventory_units=1,
+        trade_unit_override=1,
+    )
+    env = PaperTradingEnv(day, config, episode_start=0, episode_stop=2, episode_index=0)
+    env.reset()
+    env.inventory = -2
+
+    action = DiscreteActionPolicy(0).act(env.state(), env)
+
+    assert action.ask_volume == 0
+    assert action.bid_volume == 1
 
 
 def test_author_raw_continuous_policy_keeps_literal_reference_action_scale() -> None:

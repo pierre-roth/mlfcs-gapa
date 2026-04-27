@@ -39,7 +39,7 @@ def run_dqn_action_diagnostics(
     days = load_market_days(config, "test")
     step_rows: list[dict[str, float | int | str | bool]] = []
     episode_rows: list[dict[str, float | int | str]] = []
-    max_inventory = config.max_inventory_units * config.symbol_spec.lot_size
+    max_inventory = config.max_inventory_units * config.trade_unit
 
     for day in days:
         for episode_index, start, stop in _episode_iter(day, config, config.max_eval_episodes_per_day):
@@ -105,7 +105,7 @@ def run_dqn_action_diagnostics(
     episodes = pd.DataFrame(episode_rows)
     steps.to_csv(output_dir / "dqn_action_steps.csv", index=False)
     episodes.to_csv(output_dir / "dqn_action_episodes.csv", index=False)
-    _summaries(steps, episodes, output_dir, lot_size=config.symbol_spec.lot_size)
+    _summaries(steps, episodes, output_dir, lot_size=config.trade_unit)
     return steps, episodes
 
 

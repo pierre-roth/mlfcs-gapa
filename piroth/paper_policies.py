@@ -20,7 +20,7 @@ class FixedLevelPaperPolicy:
         quote_idx = max(env.event_idx - env.config.latency, 0)
         ask = float(env.day.ask.iloc[quote_idx][f"ask{self.level}_price"])
         bid = float(env.day.bid.iloc[quote_idx][f"bid{self.level}_price"])
-        lot = env.config.symbol_spec.lot_size
+        lot = env.config.trade_unit
         return PaperAction(ask_price=ask, ask_volume=-lot, bid_price=bid, bid_volume=lot)
 
 
@@ -38,7 +38,7 @@ class RandomLevelPaperPolicy:
         bid_level = int(rng.integers(1, 6))
         ask = float(env.day.ask.iloc[quote_idx][f"ask{ask_level}_price"])
         bid = float(env.day.bid.iloc[quote_idx][f"bid{bid_level}_price"])
-        lot = env.config.symbol_spec.lot_size
+        lot = env.config.trade_unit
         return PaperAction(ask_price=ask, ask_volume=-lot, bid_price=bid, bid_volume=lot)
 
 
@@ -56,7 +56,7 @@ class AvellanedaStoikovPaperPolicy:
         gamma = env.config.as_gamma
         sigma2 = self.calibration.sigma2_event
         kappa = max(self.calibration.kappa, 1e-6)
-        inventory_units = env.inventory / max(env.config.symbol_spec.lot_size, 1)
+        inventory_units = env.inventory / max(env.config.trade_unit, 1)
         reservation = mid - inventory_units * gamma * sigma2 * tau * mid
         total_spread_ticks = gamma * sigma2 * tau + (2.0 / gamma) * np.log1p(gamma / kappa)
         half_spread = max(env.config.symbol_spec.tick_size, 0.5 * total_spread_ticks * env.config.symbol_spec.tick_size)
@@ -64,7 +64,7 @@ class AvellanedaStoikovPaperPolicy:
         bid = _round_down(reservation - half_spread, env.config.symbol_spec.tick_size)
         if ask <= bid:
             ask = bid + env.config.symbol_spec.tick_size
-        lot = env.config.symbol_spec.lot_size
+        lot = env.config.trade_unit
         return PaperAction(ask_price=ask, ask_volume=-lot, bid_price=bid, bid_volume=lot)
 
 
@@ -116,7 +116,7 @@ class ContinuousActionPolicy:
         bid = _round_down(reservation - spread / 2.0, env.config.symbol_spec.tick_size)
         if ask <= bid:
             ask = bid + env.config.symbol_spec.tick_size
-        lot = env.config.symbol_spec.lot_size
+        lot = env.config.trade_unit
         return PaperAction(ask_price=ask, ask_volume=-lot, bid_price=bid, bid_volume=lot)
 
 
@@ -131,7 +131,7 @@ class DiscreteActionPolicy:
         ask1 = float(env.day.price.iloc[quote_idx]["ask1_price"])
         bid1 = float(env.day.price.iloc[quote_idx]["bid1_price"])
         tick = env.config.symbol_spec.tick_size
-        lot = env.config.symbol_spec.lot_size
+        lot = env.config.trade_unit
         action = self.action
         if action == 7:
             if env.inventory < 0:

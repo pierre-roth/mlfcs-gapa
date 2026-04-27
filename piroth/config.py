@@ -170,6 +170,7 @@ class SimulatorConfig:
     as_fill_horizon_events: int = 64
     as_max_distance_ticks: int = 6
 
+    trade_unit_override: int | None = None
     max_inventory_units: int = 10
     max_bias: float = 0.05
     max_spread: float = 0.10
@@ -183,6 +184,10 @@ class SimulatorConfig:
     reward_use_inventory_penalty: bool = True
     reward_spread_penalty_threshold: float = 0.02
     reward_spread_penalty_scale: float = 100.0
+    reward_pnl_weight: float = 1.0
+    reward_trading_pnl_weight: float = 1.0
+    reward_inventory_penalty_weight: float = 1.0
+    reward_spread_penalty_weight: float = 1.0
 
     pretrain_horizon: int = 10
     pretrain_threshold: float = 1e-5
@@ -199,9 +204,15 @@ class SimulatorConfig:
     ppo_update_epochs: int = 4
     ppo_clip: float = 0.2
     ppo_entropy_coef: float = 0.01
+    ppo_entropy_coef_final: float | None = None
     ppo_value_coef: float = 0.5
     ppo_initial_log_std: float = -1.5
     ppo_initial_spread_bias: float = -0.70
+    bc_as_init: bool = False
+    bc_as_epochs: int = 2
+    bc_as_freeze_backbone: bool = True
+    bc_as_max_samples_per_day: int | None = 10_000
+    bc_as_loss_weight: float = 1.0
     dqn_replay_size: int = 200_000
     dqn_min_replay: int = 2_000
     dqn_update_interval: int = 4
@@ -253,6 +264,12 @@ class SimulatorConfig:
             return DEFAULT_SYMBOLS[self.symbol]
         except KeyError as exc:
             raise KeyError(f"Unsupported symbol {self.symbol!r}") from exc
+
+    @property
+    def trade_unit(self) -> int:
+        if self.trade_unit_override is not None:
+            return max(int(self.trade_unit_override), 1)
+        return int(self.symbol_spec.lot_size)
 
     def output_dir(self) -> Path:
         return Path(self.output_root) / self.run_name

@@ -133,7 +133,7 @@ class PaperTradingEnv:
                 inventory=self.inventory,
                 event_idx=idx - self.episode_start,
                 episode_length=self.episode_stop - self.episode_start,
-                lot_size=self.config.symbol_spec.lot_size,
+                lot_size=self.config.trade_unit,
                 max_inventory_units=self.config.max_inventory_units,
             ),
         )
@@ -198,12 +198,15 @@ class PaperTradingEnv:
         if self.config.reward_mode != "hybrid":
             raise ValueError(f"Unknown reward_mode: {self.config.reward_mode}")
         dampened_pnl = pnl - max(0.0, self.config.reward_eta * pnl)
-        inventory_penalty = self.config.reward_zeta * (self.inventory / self.config.symbol_spec.lot_size) ** 2
+        inventory_penalty = self.config.reward_zeta * (self.inventory / self.config.trade_unit) ** 2
         reward = 0.0
-        reward += dampened_pnl if self.config.reward_use_dampened_pnl else pnl
-        reward += matched_pnl if self.config.reward_use_trading_pnl else 0.0
-        reward -= inventory_penalty if self.config.reward_use_inventory_penalty else 0.0
-        reward -= spread_penalty
+        base_pnl = dampened_pnl if self.config.reward_use_dampened_pnl else pnl
+        reward += self.config.reward_pnl_weight * base_pnl
+        if self.config.reward_use_trading_pnl:
+            reward += self.config.reward_trading_pnl_weight * matched_pnl
+        if self.config.reward_use_inventory_penalty:
+            reward -= self.config.reward_inventory_penalty_weight * inventory_penalty
+        reward -= self.config.reward_spread_penalty_weight * spread_penalty
         return float(reward)
 
     def close_position(self, event_idx: int) -> tuple[float, int]:
@@ -302,7 +305,7 @@ class PaperTradingEnv:
         self.value = self.cash + self.inventory * self.midprice(event_idx)
 
     def _apply_inventory_guard(self, action: PaperAction) -> PaperAction:
-        max_inventory = self.config.max_inventory_units * self.config.symbol_spec.lot_size
+        max_inventory = self.config.max_inventory_units * self.config.trade_unit
         ask_volume = action.ask_volume
         bid_volume = action.bid_volume
         ask_price = action.ask_price

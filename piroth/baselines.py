@@ -60,8 +60,8 @@ class FixedLevelPolicy:
         return QuoteDecision(
             ask_price=ask,
             bid_price=bid,
-            ask_volume=self.config.symbol_spec.lot_size,
-            bid_volume=self.config.symbol_spec.lot_size,
+            ask_volume=self.config.trade_unit,
+            bid_volume=self.config.trade_unit,
             spread=ask - bid,
             reservation=0.5 * (ask + bid),
         )
@@ -80,7 +80,7 @@ class AvellanedaStoikovPolicy:
         sigma2 = self.calibration.sigma2_event
         gamma = self.config.as_gamma
         kappa = max(self.calibration.kappa, 1e-6)
-        inventory_units = inventory / max(self.config.symbol_spec.lot_size, 1)
+        inventory_units = inventory / max(self.config.trade_unit, 1)
         reservation = mid - inventory_units * gamma * sigma2 * tau * mid
         total_spread_ticks = gamma * sigma2 * tau + (2.0 / gamma) * np.log1p(gamma / kappa)
         half_spread = max(self.config.symbol_spec.tick_size, 0.5 * total_spread_ticks * self.config.symbol_spec.tick_size)
@@ -91,8 +91,8 @@ class AvellanedaStoikovPolicy:
         return QuoteDecision(
             ask_price=ask,
             bid_price=bid,
-            ask_volume=self.config.symbol_spec.lot_size,
-            bid_volume=self.config.symbol_spec.lot_size,
+            ask_volume=self.config.trade_unit,
+            bid_volume=self.config.trade_unit,
             spread=ask - bid,
             reservation=reservation,
         )
