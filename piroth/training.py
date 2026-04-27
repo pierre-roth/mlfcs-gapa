@@ -383,7 +383,7 @@ def _behavior_clone_ppo_from_as(train_days: list[SyntheticDay], config: Diagnost
     samples = _as_supervision_samples(train_days, config, for_discrete=False)
     if not samples:
         return
-    _set_backbone_trainable(model, not config.bc_as_freeze_backbone)
+    _set_bc_trainable(model, config)
     optimizer = torch.optim.Adam((parameter for parameter in model.parameters() if parameter.requires_grad), lr=config.torch_learning_rate)
     history = []
     lob_all, market_all, agent_all, target_all = _stack_bc_samples(samples, device, continuous=True)
@@ -400,7 +400,7 @@ def _behavior_clone_ppo_from_as(train_days: list[SyntheticDay], config: Diagnost
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
         history.append({"epoch": epoch + 1, "loss": float(np.mean(losses)), "samples": int(dataset_size)})
-    _set_backbone_trainable(model, True)
+    _set_model_trainable(model, True)
     pd.DataFrame(history).to_csv(output_dir / "as_bc_ppo_history.csv", index=False)
 
 
@@ -408,7 +408,7 @@ def _behavior_clone_dqn_from_as(train_days: list[SyntheticDay], config: Diagnost
     samples = _as_supervision_samples(train_days, config, for_discrete=True)
     if not samples:
         return
-    _set_backbone_trainable(model, not config.bc_as_freeze_backbone)
+    _set_bc_trainable(model, config)
     optimizer = torch.optim.Adam((parameter for parameter in model.parameters() if parameter.requires_grad), lr=config.torch_learning_rate)
     history = []
     lob_all, market_all, agent_all, target_all = _stack_bc_samples(samples, device, continuous=False)
@@ -428,7 +428,7 @@ def _behavior_clone_dqn_from_as(train_days: list[SyntheticDay], config: Diagnost
             losses.append(float(loss.detach().cpu()))
             correct += int((logits.argmax(dim=1) == target).sum().detach().cpu())
         history.append({"epoch": epoch + 1, "loss": float(np.mean(losses)), "accuracy": correct / max(dataset_size, 1), "samples": int(dataset_size)})
-    _set_backbone_trainable(model, True)
+    _set_model_trainable(model, True)
     pd.DataFrame(history).to_csv(output_dir / "as_bc_dqn_history.csv", index=False)
 
 
@@ -524,6 +524,26 @@ def _nearest_discrete_action(state, env: PaperTradingEnv, teacher_action: PaperA
             best_action = action_idx
             best_score = score
     return best_action
+
+
+def _set_bc_trainable(model: nn.Module, config: DiagnosticsConfig) -> None:
+    _set_model_trainable(model, True)
+    if not config.bc_as_freeze_backbone:
+        return
+    backbone = getattr(model, "backbone", None)
+    if backbone is None:
+        return
+    if config.bc_as_freeze_encoder_only:
+        for parameter in backbone.encoder.parameters():
+            parameter.requires_grad = False
+        return
+    for parameter in backbone.parameters():
+        parameter.requires_grad = False
+
+
+def _set_model_trainable(model: nn.Module, trainable: bool) -> None:
+    for parameter in model.parameters():
+        parameter.requires_grad = trainable
 
 
 def _set_backbone_trainable(model: nn.Module, trainable: bool) -> None:

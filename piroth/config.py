@@ -211,6 +211,7 @@ class SimulatorConfig:
     bc_as_init: bool = False
     bc_as_epochs: int = 2
     bc_as_freeze_backbone: bool = True
+    bc_as_freeze_encoder_only: bool = True
     bc_as_max_samples_per_day: int | None = 10_000
     bc_as_loss_weight: float = 1.0
     dqn_replay_size: int = 200_000
