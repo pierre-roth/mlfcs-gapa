@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import fields
-from typing import Any, get_args, get_origin
+from typing import Any, get_args, get_origin, get_type_hints
 
 from .config import DiagnosticsConfig
 from .diagnostics import run_diagnostics
@@ -26,6 +26,7 @@ def main() -> None:
 
 def _parse_overrides(items: list[str]) -> dict[str, Any]:
     config_fields = {field.name: field for field in fields(DiagnosticsConfig)}
+    type_hints = get_type_hints(DiagnosticsConfig)
     parsed: dict[str, Any] = {}
     for item in items:
         if "=" not in item:
@@ -33,22 +34,40 @@ def _parse_overrides(items: list[str]) -> dict[str, Any]:
         key, raw = item.split("=", 1)
         if key not in config_fields:
             raise SystemExit(f"Unknown config field: {key}")
-        parsed[key] = _coerce(raw, config_fields[key].type)
+        parsed[key] = _coerce(raw, type_hints.get(key, config_fields[key].type), getattr(DiagnosticsConfig(), key))
     return parsed
 
 
-def _coerce(raw: str, annotation: Any) -> Any:
-    origin = get_origin(annotation)
-    args = get_args(annotation)
+def _coerce(raw: str, annotation: Any, default: Any) -> Any:
+    target, is_optional = _strip_optional(annotation)
+    if is_optional and raw.strip().lower() in {"", "none", "null"}:
+        return None
+    if isinstance(default, bool):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(default, int) and not isinstance(default, bool):
+        return int(raw)
+    if isinstance(default, float):
+        return float(raw)
+    if isinstance(default, list):
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    origin = get_origin(target)
     if origin is list:
         return [item.strip() for item in raw.split(",") if item.strip()]
-    if annotation is bool:
+    if target is bool:
         return raw.strip().lower() in {"1", "true", "yes", "on"}
-    if annotation is int:
+    if target is int:
         return int(raw)
-    if annotation is float:
+    if target is float:
         return float(raw)
     return raw
+
+
+def _strip_optional(annotation: Any) -> tuple[Any, bool]:
+    args = get_args(annotation)
+    non_none = [arg for arg in args if arg is not type(None)]
+    if non_none and len(non_none) != len(args):
+        return non_none[0], True
+    return annotation, False
 
 
 if __name__ == "__main__":

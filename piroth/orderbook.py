@@ -38,16 +38,43 @@ class FIFOOrderBook:
         self.levels = levels
         self.bids: dict[int, Deque[RestingOrder]] = {}
         self.asks: dict[int, Deque[RestingOrder]] = {}
+        self.bid_depths: dict[int, int] = {}
+        self.ask_depths: dict[int, int] = {}
+        self.orders_by_id: dict[int, tuple[str, int, RestingOrder]] = {}
+        self.agent_order_ids: dict[str, set[int]] = {}
+        self._best_bid_tick: int | None = None
+        self._best_ask_tick: int | None = None
         self.next_order_id = 1
 
     def _side_map(self, side: str) -> dict[int, Deque[RestingOrder]]:
         return self.bids if side == "bid" else self.asks
 
+    def _depth_map(self, side: str) -> dict[int, int]:
+        return self.bid_depths if side == "bid" else self.ask_depths
+
     def _best_tick(self, side: str) -> int | None:
+        return self._best_bid_tick if side == "bid" else self._best_ask_tick
+
+    def _refresh_best_tick(self, side: str) -> None:
         book = self._side_map(side)
-        if not book:
-            return None
-        return max(book) if side == "bid" else min(book)
+        best = None if not book else (max(book) if side == "bid" else min(book))
+        if side == "bid":
+            self._best_bid_tick = best
+        else:
+            self._best_ask_tick = best
+
+    def _note_added_level(self, side: str, tick: int) -> None:
+        if side == "bid":
+            if self._best_bid_tick is None or tick > self._best_bid_tick:
+                self._best_bid_tick = tick
+        elif self._best_ask_tick is None or tick < self._best_ask_tick:
+            self._best_ask_tick = tick
+
+    def _drop_empty_level(self, side: str, tick: int) -> None:
+        self._side_map(side).pop(tick, None)
+        self._depth_map(side).pop(tick, None)
+        if tick == self._best_tick(side):
+            self._refresh_best_tick(side)
 
     def best_bid_tick(self) -> int | None:
         return self._best_tick("bid")
@@ -75,10 +102,7 @@ class FIFOOrderBook:
         return 0.5 * (bid + ask) * self.tick_size
 
     def aggregated_depth(self, side: str, tick: int) -> int:
-        queue = self._side_map(side).get(tick)
-        if not queue:
-            return 0
-        return int(sum(order.quantity for order in queue))
+        return int(self._depth_map(side).get(tick, 0))
 
     def add_limit_order(
         self,
@@ -103,6 +127,11 @@ class FIFOOrderBook:
         self.next_order_id += 1
         book = self._side_map(side)
         book.setdefault(tick, deque()).append(order)
+        depths = self._depth_map(side)
+        depths[tick] = depths.get(tick, 0) + order.quantity
+        self._note_added_level(side, tick)
+        self.orders_by_id[order.order_id] = (side, tick, order)
+        self.agent_order_ids.setdefault(agent_id, set()).add(order.order_id)
         return order
 
     def cancel_order(self, side: str, tick: int, order_id: int) -> RestingOrder | None:
@@ -114,23 +143,37 @@ class FIFOOrderBook:
             if order.order_id == order_id:
                 removed = queue[idx]
                 del queue[idx]
+                depths = self._depth_map(side)
+                depths[tick] = max(0, depths.get(tick, 0) - removed.quantity)
+                self._drop_order_index(removed)
                 if not queue:
-                    book.pop(tick, None)
+                    self._drop_empty_level(side, tick)
                 return removed
         return None
 
     def cancel_agent_orders(self, agent_id: str) -> int:
         removed = 0
-        for book in (self.bids, self.asks):
-            empty_ticks = []
-            for tick, queue in book.items():
-                kept = deque(order for order in queue if order.agent_id != agent_id)
-                removed += len(queue) - len(kept)
-                book[tick] = kept
-                if not kept:
-                    empty_ticks.append(tick)
-            for tick in empty_ticks:
-                book.pop(tick, None)
+        for order_id in list(self.agent_order_ids.get(agent_id, ())):
+            located = self.orders_by_id.get(order_id)
+            if located is None:
+                continue
+            side, tick, order = located
+            queue = self._side_map(side).get(tick)
+            if not queue:
+                self._drop_order_index(order)
+                continue
+            for idx, candidate in enumerate(queue):
+                if candidate.order_id != order_id:
+                    continue
+                removed_order = queue[idx]
+                del queue[idx]
+                depths = self._depth_map(side)
+                depths[tick] = max(0, depths.get(tick, 0) - removed_order.quantity)
+                if not queue:
+                    self._drop_empty_level(side, tick)
+                self._drop_order_index(removed_order)
+                removed += 1
+                break
         return removed
 
     def cancel_random(
@@ -154,8 +197,56 @@ class FIFOOrderBook:
         chosen_idx = int(rng.choice(len(queue), p=queue_sizes))
         removed = queue[chosen_idx]
         del queue[chosen_idx]
+        depths = self._depth_map(side)
+        depths[chosen_tick] = max(0, depths.get(chosen_tick, 0) - removed.quantity)
+        self._drop_order_index(removed)
         if not queue:
-            book.pop(chosen_tick, None)
+            self._drop_empty_level(side, chosen_tick)
+        return removed
+
+    def cancel_random_fraction(
+        self,
+        side: str,
+        rng: np.random.Generator,
+        mean_fraction: float = 0.35,
+        near_touch_bias: float = 0.7,
+        lot_size: int = 1,
+    ) -> RestingOrder | None:
+        book = self._side_map(side)
+        if not book:
+            return None
+        ranked_ticks = sorted(book, reverse=(side == "bid"))
+        level_weights = np.asarray([near_touch_bias**idx for idx in range(len(ranked_ticks))], dtype=np.float64)
+        level_weights /= level_weights.sum()
+        chosen_tick = ranked_ticks[int(rng.choice(len(ranked_ticks), p=level_weights))]
+        queue = book[chosen_tick]
+        if not queue:
+            return None
+        queue_sizes = np.asarray([max(order.quantity, 1) for order in queue], dtype=np.float64)
+        queue_sizes /= queue_sizes.sum()
+        chosen_idx = int(rng.choice(len(queue), p=queue_sizes))
+        target = queue[chosen_idx]
+        fraction = float(np.clip(rng.normal(mean_fraction, 0.15), 0.05, 1.0))
+        round_lot = max(int(lot_size), 1)
+        remove_qty = max(round_lot, int(round(target.quantity * fraction / round_lot)) * round_lot)
+        remove_qty = min(remove_qty, target.quantity)
+        removed = RestingOrder(
+            order_id=target.order_id,
+            agent_id=target.agent_id,
+            agent_type=target.agent_type,
+            side=target.side,
+            tick=target.tick,
+            quantity=remove_qty,
+            timestamp=target.timestamp,
+        )
+        target.quantity -= remove_qty
+        depths = self._depth_map(side)
+        depths[chosen_tick] = max(0, depths.get(chosen_tick, 0) - remove_qty)
+        if target.quantity <= 0:
+            del queue[chosen_idx]
+            self._drop_order_index(target)
+        if not queue:
+            self._drop_empty_level(side, chosen_tick)
         return removed
 
     def market_order(
@@ -167,17 +258,22 @@ class FIFOOrderBook:
     ) -> list[TradeFill]:
         if quantity <= 0:
             return []
-        book = self.asks if side == "buy" else self.bids
+        book_side = "ask" if side == "buy" else "bid"
+        book = self._side_map(book_side)
+        depths = self._depth_map(book_side)
         fills: list[TradeFill] = []
         remaining = int(quantity)
         while remaining > 0 and book:
-            best_tick = min(book) if side == "buy" else max(book)
+            best_tick = self._best_tick(book_side)
+            if best_tick is None:
+                break
             queue = book[best_tick]
             while remaining > 0 and queue:
                 top = queue[0]
                 queue_ahead = 0
                 executed = min(remaining, top.quantity)
                 top.quantity -= executed
+                depths[best_tick] = max(0, depths.get(best_tick, 0) - executed)
                 remaining -= executed
                 fills.append(
                     TradeFill(
@@ -193,10 +289,20 @@ class FIFOOrderBook:
                     )
                 )
                 if top.quantity == 0:
-                    queue.popleft()
+                    filled = queue.popleft()
+                    self._drop_order_index(filled)
             if not queue:
-                book.pop(best_tick, None)
+                self._drop_empty_level(book_side, best_tick)
         return fills
+
+    def _drop_order_index(self, order: RestingOrder) -> None:
+        self.orders_by_id.pop(order.order_id, None)
+        order_ids = self.agent_order_ids.get(order.agent_id)
+        if order_ids is None:
+            return
+        order_ids.discard(order.order_id)
+        if not order_ids:
+            self.agent_order_ids.pop(order.agent_id, None)
 
     def top_levels(self) -> dict[str, list[tuple[float, int]]]:
         bid_ticks = sorted(self.bids, reverse=True)[: self.levels]

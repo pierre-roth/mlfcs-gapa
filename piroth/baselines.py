@@ -80,9 +80,10 @@ class AvellanedaStoikovPolicy:
         sigma2 = self.calibration.sigma2_event
         gamma = self.config.as_gamma
         kappa = max(self.calibration.kappa, 1e-6)
-        reservation = mid - inventory * gamma * sigma2 * tau
-        total_spread = gamma * sigma2 * tau + (2.0 / gamma) * np.log1p(gamma / kappa)
-        half_spread = max(self.config.symbol_spec.tick_size, 0.5 * total_spread)
+        inventory_units = inventory / max(self.config.symbol_spec.lot_size, 1)
+        reservation = mid - inventory_units * gamma * sigma2 * tau * mid
+        total_spread_ticks = gamma * sigma2 * tau + (2.0 / gamma) * np.log1p(gamma / kappa)
+        half_spread = max(self.config.symbol_spec.tick_size, 0.5 * total_spread_ticks * self.config.symbol_spec.tick_size)
         ask = _round_up(reservation + half_spread, self.config.symbol_spec.tick_size)
         bid = _round_down(reservation - half_spread, self.config.symbol_spec.tick_size)
         if ask <= bid:
@@ -128,18 +129,24 @@ def calibrate_avellaneda_stoikov(days: list[SyntheticDay], config: DiagnosticsCo
         day_returns = np.diff(mid) / np.clip(mid[:-1], 1e-8, None)
         if day_returns.size:
             returns.append(day_returns[stable[1:]])
+        arrays = _CalibrationArrays.from_day(day)
         candidate_indices = np.flatnonzero(stable)
         if candidate_indices.size == 0:
             continue
-        stride = max(1, len(candidate_indices) // 400)
+        max_candidates = 400
+        if config.mode == "smoke":
+            max_candidates = 80
+        elif config.mode == "medium":
+            max_candidates = 200
+        stride = max(1, len(candidate_indices) // max_candidates)
         for idx in candidate_indices[::stride]:
             quote_idx = max(idx - config.latency, 0)
-            best_ask = float(day.price.iloc[quote_idx]["ask1_price"])
-            best_bid = float(day.price.iloc[quote_idx]["bid1_price"])
+            best_ask = float(arrays.ask1[quote_idx])
+            best_bid = float(arrays.bid1[quote_idx])
             for distance in range(config.as_max_distance_ticks + 1):
                 delta = distance * config.symbol_spec.tick_size
-                sell_hit = _would_fill_sell(day, idx, best_ask + delta, config.as_fill_horizon_events)
-                buy_hit = _would_fill_buy(day, idx, best_bid - delta, config.as_fill_horizon_events)
+                sell_hit = _would_fill_sell_fast(arrays, idx, best_ask + delta, config.as_fill_horizon_events, day.day)
+                buy_hit = _would_fill_buy_fast(arrays, idx, best_bid - delta, config.as_fill_horizon_events, day.day)
                 hits_per_distance[distance] = hits_per_distance.get(distance, 0) + int(sell_hit) + int(buy_hit)
                 samples_per_distance[distance] = samples_per_distance.get(distance, 0) + 2
     sigma_event = float(np.std(np.concatenate(returns))) if returns else 1e-4
@@ -338,9 +345,8 @@ def _stable_mask(timestamps: pd.Series, windows: list[str]) -> np.ndarray:
     return mask
 
 
-def _would_fill_sell(day: SyntheticDay, start_idx: int, ask_price: float, horizon: int) -> bool:
+def _would_fill_sell(day: SyntheticDay, start_idx: int, ask_price: float, horizon: int, grouped_trades) -> bool:
     stop = min(start_idx + horizon, len(day.price))
-    grouped_trades = day.trades.groupby("timestamp") if not day.trades.empty else None
     for idx in range(start_idx, stop):
         fills = _match_sell(day, idx, ask_price, 100, grouped_trades, ("calib", day.day, 0, idx, "ask", ask_price))
         if fills:
@@ -348,14 +354,123 @@ def _would_fill_sell(day: SyntheticDay, start_idx: int, ask_price: float, horizo
     return False
 
 
-def _would_fill_buy(day: SyntheticDay, start_idx: int, bid_price: float, horizon: int) -> bool:
+def _would_fill_buy(day: SyntheticDay, start_idx: int, bid_price: float, horizon: int, grouped_trades) -> bool:
     stop = min(start_idx + horizon, len(day.price))
-    grouped_trades = day.trades.groupby("timestamp") if not day.trades.empty else None
     for idx in range(start_idx, stop):
         fills = _match_buy(day, idx, bid_price, 100, grouped_trades, ("calib", day.day, 0, idx, "bid", bid_price))
         if fills:
             return True
     return False
+
+
+class _CalibrationArrays:
+    def __init__(
+        self,
+        *,
+        ask1: np.ndarray,
+        bid1: np.ndarray,
+        ask_prices: np.ndarray,
+        bid_prices: np.ndarray,
+        ask_volumes: np.ndarray,
+        bid_volumes: np.ndarray,
+        trade_price_by_event: list[np.ndarray],
+        trade_size_by_event: list[np.ndarray],
+        trade_side_by_event: list[np.ndarray],
+    ) -> None:
+        self.ask1 = ask1
+        self.bid1 = bid1
+        self.ask_prices = ask_prices
+        self.bid_prices = bid_prices
+        self.ask_volumes = ask_volumes
+        self.bid_volumes = bid_volumes
+        self.trade_price_by_event = trade_price_by_event
+        self.trade_size_by_event = trade_size_by_event
+        self.trade_side_by_event = trade_side_by_event
+
+    @classmethod
+    def from_day(cls, day: SyntheticDay) -> _CalibrationArrays:
+        event_by_time = {timestamp: idx for idx, timestamp in enumerate(day.price["timestamp"])}
+        prices: list[list[float]] = [[] for _ in range(len(day.price))]
+        sizes: list[list[int]] = [[] for _ in range(len(day.price))]
+        sides: list[list[str]] = [[] for _ in range(len(day.price))]
+        if not day.trades.empty:
+            for row in day.trades[["timestamp", "price", "size", "aggressor_side"]].itertuples(index=False):
+                idx = event_by_time.get(row.timestamp)
+                if idx is None:
+                    continue
+                prices[idx].append(float(row.price))
+                sizes[idx].append(int(row.size))
+                sides[idx].append(str(row.aggressor_side))
+        return cls(
+            ask1=day.price["ask1_price"].to_numpy(dtype=np.float64),
+            bid1=day.price["bid1_price"].to_numpy(dtype=np.float64),
+            ask_prices=day.ask[[f"ask{level}_price" for level in range(1, 11)]].to_numpy(dtype=np.float64),
+            bid_prices=day.bid[[f"bid{level}_price" for level in range(1, 11)]].to_numpy(dtype=np.float64),
+            ask_volumes=day.ask[[f"ask{level}_volume" for level in range(1, 11)]].to_numpy(dtype=np.int64),
+            bid_volumes=day.bid[[f"bid{level}_volume" for level in range(1, 11)]].to_numpy(dtype=np.int64),
+            trade_price_by_event=[np.asarray(items, dtype=np.float64) for items in prices],
+            trade_size_by_event=[np.asarray(items, dtype=np.int64) for items in sizes],
+            trade_side_by_event=[np.asarray(items, dtype=object) for items in sides],
+        )
+
+
+def _would_fill_sell_fast(arrays: _CalibrationArrays, start_idx: int, ask_price: float, horizon: int, day: str) -> bool:
+    stop = min(start_idx + horizon, len(arrays.ask1))
+    for idx in range(start_idx, stop):
+        if ask_price <= arrays.bid1[idx]:
+            return True
+        prices = arrays.trade_price_by_event[idx]
+        if prices.size == 0:
+            continue
+        sides = arrays.trade_side_by_event[idx]
+        buy_mask = sides == "B"
+        if not np.any(buy_mask):
+            continue
+        buy_prices = prices[buy_mask]
+        best_trade = float(np.max(buy_prices))
+        if best_trade > ask_price:
+            return True
+        if np.isclose(best_trade, ask_price):
+            sizes = arrays.trade_size_by_event[idx][buy_mask]
+            traded = int(np.sum(sizes[np.isclose(buy_prices, ask_price)]))
+            depth = _depth_at_arrays(arrays.ask_prices[idx], arrays.ask_volumes[idx], ask_price)
+            probability = traded / max(traded + depth, 1)
+            if _stable_uniform(("calib", day, 0, idx, "ask", ask_price)) < probability:
+                return True
+    return False
+
+
+def _would_fill_buy_fast(arrays: _CalibrationArrays, start_idx: int, bid_price: float, horizon: int, day: str) -> bool:
+    stop = min(start_idx + horizon, len(arrays.bid1))
+    for idx in range(start_idx, stop):
+        if bid_price >= arrays.ask1[idx]:
+            return True
+        prices = arrays.trade_price_by_event[idx]
+        if prices.size == 0:
+            continue
+        sides = arrays.trade_side_by_event[idx]
+        sell_mask = sides == "A"
+        if not np.any(sell_mask):
+            continue
+        sell_prices = prices[sell_mask]
+        best_trade = float(np.min(sell_prices))
+        if best_trade < bid_price:
+            return True
+        if np.isclose(best_trade, bid_price):
+            sizes = arrays.trade_size_by_event[idx][sell_mask]
+            traded = int(np.sum(sizes[np.isclose(sell_prices, bid_price)]))
+            depth = _depth_at_arrays(arrays.bid_prices[idx], arrays.bid_volumes[idx], bid_price)
+            probability = traded / max(traded + depth, 1)
+            if _stable_uniform(("calib", day, 0, idx, "bid", bid_price)) < probability:
+                return True
+    return False
+
+
+def _depth_at_arrays(prices: np.ndarray, volumes: np.ndarray, price: float) -> int:
+    matches = np.isclose(prices, price)
+    if not np.any(matches):
+        return 0
+    return int(volumes[np.argmax(matches)])
 
 
 def _stable_uniform(parts: tuple[object, ...]) -> float:

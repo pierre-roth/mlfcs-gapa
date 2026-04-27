@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +21,7 @@ class SyntheticDay:
     price: pd.DataFrame
     trades: pd.DataFrame
     msg: pd.DataFrame
+    event_log: pd.DataFrame
     latent: pd.DataFrame
     depth_cube: np.ndarray
 
@@ -32,6 +33,7 @@ class SyntheticDay:
         self.price.to_csv(day_root / "price.csv", index=False)
         self.trades.to_csv(day_root / "trades.csv", index=False)
         self.msg.to_csv(day_root / "msg.csv", index=False)
+        self.event_log.to_csv(day_root / "event_log.csv", index=False)
         self.latent.to_csv(day_root / "latent.csv", index=False)
 
 
@@ -40,6 +42,8 @@ class SyntheticMarketGenerator:
         self.config = config
         self.config.apply_mode_defaults()
         self.spec = config.symbol_spec
+        if config.events_per_day_override is not None:
+            self.spec = replace(self.spec, events_per_day=config.events_per_day_override)
 
     def business_days(self) -> list[str]:
         return [
@@ -66,13 +70,16 @@ class SyntheticMarketGenerator:
         regime = 0.0
         metaorder_direction = 0
         metaorder_strength = 0.0
+        volatility_multiplier = 1.0
+        last_market_direction = 0
         prev_mid = fair_tick * self.spec.tick_size
 
         ask_rows: list[dict[str, float | int | pd.Timestamp]] = []
         bid_rows: list[dict[str, float | int | pd.Timestamp]] = []
         price_rows: list[dict[str, float | int | pd.Timestamp]] = []
         trade_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
-        msg_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
+        msg_rows: list[dict[str, float | int | pd.Timestamp]] = []
+        event_log_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
         latent_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
         depth_frames: list[np.ndarray] = []
 
@@ -82,27 +89,39 @@ class SyntheticMarketGenerator:
 
         for event_idx, ts in enumerate(timestamps):
             top_imbalance = _top_imbalance(book)
-            fair_tick, regime, metaorder_direction, metaorder_strength, regime_shift = self._evolve_fair_value(
+            spread_ticks = _spread_ticks(book)
+            fair_tick, regime, metaorder_direction, metaorder_strength, regime_shift, volatility_multiplier = self._evolve_fair_value(
                 fair_tick=fair_tick,
                 regime=regime,
                 metaorder_direction=metaorder_direction,
                 metaorder_strength=metaorder_strength,
+                volatility_multiplier=volatility_multiplier,
                 book=book,
                 rng=rng,
             )
-            event_kind = self._sample_event_kind(book, fair_tick, metaorder_direction, rng)
+            event_kind = self._sample_event_kind(book, fair_tick, metaorder_direction, top_imbalance, spread_ticks, rng)
             event_records, fills = self._apply_event(
                 book=book,
                 event_kind=event_kind,
                 fair_tick=fair_tick,
                 timestamp=ts,
                 mm_inventory=mm_inventory,
+                last_market_direction=last_market_direction,
                 rng=rng,
             )
+            for record in event_records:
+                if record.get("event_type") == "market_order":
+                    side = str(record.get("side", ""))
+                    if side == "buy":
+                        last_market_direction = 1
+                    elif side == "sell":
+                        last_market_direction = -1
+                    break
+            event_records.extend(self._touch_replenish(book, fair_tick, ts, rng))
             if self._needs_replenishment(book):
                 self._seed_book(book, fair_tick, ts, rng, replenish_only=True)
-            for record in event_records:
-                msg_rows.append(record)
+            event_log_rows.extend(event_records)
+            msg_rows.append(_paper_msg_row(ts, event_records))
             for fill in fills:
                 signed_size = fill.size if fill.aggressor_side == "A" else -fill.size
                 trade_rows.append(
@@ -152,6 +171,7 @@ class SyntheticMarketGenerator:
                     "regime_drift": regime,
                     "metaorder_direction": metaorder_direction,
                     "metaorder_strength": metaorder_strength,
+                    "volatility_multiplier": volatility_multiplier,
                     "regime_shift": regime_shift,
                     "event_kind": event_kind,
                     "top_imbalance": top_imbalance,
@@ -179,7 +199,10 @@ class SyntheticMarketGenerator:
             )
         msg = pd.DataFrame(msg_rows)
         if msg.empty:
-            msg = pd.DataFrame(columns=["timestamp", "event_type", "agent_type", "agent_id", "side", "price", "size", "fair_value", "maker_order_id"])
+            msg = pd.DataFrame(columns=_paper_msg_columns())
+        event_log = pd.DataFrame(event_log_rows)
+        if event_log.empty:
+            event_log = pd.DataFrame(columns=["timestamp", "event_type", "agent_type", "agent_id", "side", "price", "size", "fair_value", "maker_order_id"])
         latent = pd.DataFrame(latent_rows)
         return SyntheticDay(
             symbol=self.config.symbol,
@@ -189,6 +212,7 @@ class SyntheticMarketGenerator:
             price=pd.DataFrame(price_rows),
             trades=trades,
             msg=msg,
+            event_log=event_log,
             latent=latent,
             depth_cube=np.asarray(depth_frames, dtype=np.float32),
         )
@@ -203,9 +227,10 @@ class SyntheticMarketGenerator:
         regime: float,
         metaorder_direction: int,
         metaorder_strength: float,
+        volatility_multiplier: float,
         book: FIFOOrderBook,
         rng: np.random.Generator,
-    ) -> tuple[float, float, int, float, int]:
+    ) -> tuple[float, float, int, float, int, float]:
         regime_shift = 0
         if rng.random() < self.config.regime_switch_prob:
             regime = rng.choice([-1.0, 0.0, 1.0]) * self.config.regime_drift_ticks * self.spec.volatility_scale
@@ -227,28 +252,50 @@ class SyntheticMarketGenerator:
         shock = 0.0
         if rng.random() < self.config.shock_prob:
             shock = rng.choice([-1.0, 1.0]) * self.config.shock_size_ticks * self.spec.volatility_scale
-        noise = rng.normal(0.0, self.config.fair_value_vol_ticks * self.spec.volatility_scale)
+        if self.config.volatility_cluster_strength > 0.0:
+            volatility_multiplier = 1.0 + self.config.volatility_cluster_persistence * (volatility_multiplier - 1.0)
+            volatility_multiplier += self.config.volatility_cluster_strength * min(abs(shock) / max(self.config.shock_size_ticks, 1e-8), 1.0)
+            volatility_multiplier = float(np.clip(volatility_multiplier, 0.5, 4.0))
+        else:
+            volatility_multiplier = 1.0
+        noise = rng.normal(0.0, self.config.fair_value_vol_ticks * self.spec.volatility_scale * volatility_multiplier)
+        base_tick = self.spec.base_price / self.spec.tick_size
         mean_reversion_target = book.midprice() / self.spec.tick_size if book.midprice() > 0 else fair_tick
         fair_tick = fair_tick + noise + regime + metaorder_direction * metaorder_strength + shock
         fair_tick += self.config.fair_value_reversion * (mean_reversion_target - fair_tick)
-        return fair_tick, regime, metaorder_direction, metaorder_strength, regime_shift
+        fair_tick += self.config.anchor_reversion * (base_tick - fair_tick)
+        fair_tick = float(np.clip(fair_tick, base_tick - self.config.daily_price_band_ticks, base_tick + self.config.daily_price_band_ticks))
+        return fair_tick, regime, metaorder_direction, metaorder_strength, regime_shift, volatility_multiplier
 
     def _sample_event_kind(
         self,
         book: FIFOOrderBook,
         fair_tick: float,
         metaorder_direction: int,
+        top_imbalance: float,
+        spread_ticks: int,
         rng: np.random.Generator,
     ) -> str:
         mid_tick = book.midprice() / self.spec.tick_size if book.midprice() > 0 else fair_tick
         dislocation = abs(fair_tick - mid_tick)
+        activity = min(
+            2.0,
+            0.35 * dislocation
+            + 0.55 * abs(metaorder_direction)
+            + 0.45 * abs(top_imbalance)
+            + 0.30 * max(spread_ticks - self.spec.default_spread_ticks, 0),
+        )
+        noise_scale = max(self.config.noise_taker_count, 1) / 64.0
+        informed_scale = max(self.config.informed_taker_count, 1) / 10.0
+        liquidity_scale = max(self.config.liquidity_provider_count, 1) / 10.0
+        mm_scale = max(self.config.competing_mm_count, 1) / 6.0
         weights = np.asarray(
             [
-                self.config.noise_market_order_prob,
-                self.config.informed_market_order_prob + 0.03 * dislocation + 0.04 * abs(metaorder_direction),
-                self.config.liquidity_add_prob,
-                self.config.cancel_prob + 0.02 * dislocation,
-                self.config.mm_refresh_prob + 0.03 * dislocation,
+                self.config.noise_market_order_prob * noise_scale * (1.0 + 0.55 * activity),
+                self.config.informed_market_order_prob * informed_scale * (1.0 + 0.95 * activity),
+                self.config.liquidity_add_prob * liquidity_scale * (1.0 + 0.35 * activity + 0.25 * max(spread_ticks - 1, 0)),
+                self.config.cancel_prob * (1.0 + 0.70 * activity + 0.30 * abs(top_imbalance)),
+                self.config.mm_refresh_prob * mm_scale * (1.0 + 0.90 * activity + 0.50 * max(spread_ticks - 1, 0)),
             ],
             dtype=np.float64,
         )
@@ -262,12 +309,13 @@ class SyntheticMarketGenerator:
         fair_tick: float,
         timestamp: pd.Timestamp,
         mm_inventory: dict[str, int],
+        last_market_direction: int,
         rng: np.random.Generator,
     ) -> tuple[list[dict[str, float | int | str | pd.Timestamp]], list[TradeFill]]:
         if event_kind == "noise_market":
-            return self._market_order_event(book, timestamp, fair_tick, rng, informed=False)
+            return self._market_order_event(book, timestamp, fair_tick, rng, informed=False, last_market_direction=last_market_direction)
         if event_kind == "informed_market":
-            return self._market_order_event(book, timestamp, fair_tick, rng, informed=True)
+            return self._market_order_event(book, timestamp, fair_tick, rng, informed=True, last_market_direction=last_market_direction)
         if event_kind == "liquidity_add":
             return self._liquidity_add_event(book, timestamp, fair_tick, rng), []
         if event_kind == "cancel":
@@ -285,6 +333,7 @@ class SyntheticMarketGenerator:
         fair_tick: float,
         rng: np.random.Generator,
         informed: bool,
+        last_market_direction: int,
     ) -> tuple[list[dict[str, float | int | str | pd.Timestamp]], list[TradeFill]]:
         mid_tick = book.midprice() / self.spec.tick_size if book.midprice() > 0 else fair_tick
         if informed:
@@ -293,7 +342,10 @@ class SyntheticMarketGenerator:
             lots = max(1, int(round(rng.gamma(shape=2.0, scale=self.config.market_order_mean_lots * self.config.informed_order_scale))))
         else:
             bias = np.clip((fair_tick - mid_tick) / 4.0, -0.25, 0.25)
-            direction = 1 if rng.random() < 0.5 + bias else -1
+            if last_market_direction and rng.random() < self.config.order_flow_memory:
+                direction = last_market_direction
+            else:
+                direction = 1 if rng.random() < 0.5 + bias else -1
             agent_type = "noise_taker"
             lots = max(1, int(round(rng.gamma(shape=1.8, scale=self.config.market_order_mean_lots))))
         quantity = lots * self.spec.lot_size
@@ -341,8 +393,12 @@ class SyntheticMarketGenerator:
         side = stale_side if rng.random() < 0.55 else ("bid" if stale_side == "ask" else "ask")
         join_touch = rng.random() < self.config.touch_join_probability
         offset = 0 if join_touch else int(rng.geometric(1.0 - self.spec.depth_decay))
-        base_tick = best_ask if side == "ask" else best_bid
+        if best_ask - best_bid > max(3, self.spec.default_spread_ticks * 2):
+            base_tick = int(round(fair_tick)) + (1 if side == "ask" else -1)
+        else:
+            base_tick = best_ask if side == "ask" else best_bid
         tick = base_tick + offset if side == "ask" else base_tick - offset
+        tick = _passive_tick(book, side, tick)
         lots = max(1, int(round(rng.gamma(shape=2.2, scale=self.config.limit_order_mean_lots))))
         quantity = lots * self.spec.lot_size
         book.add_limit_order(side, tick, quantity, f"lp_{int(rng.integers(1_000_000))}", "liquidity_provider", timestamp)
@@ -370,7 +426,13 @@ class SyntheticMarketGenerator:
         book_mid = book.midprice() / self.spec.tick_size if book.midprice() > 0 else fair_tick
         stale_side = "ask" if fair_tick > book_mid else "bid"
         side = stale_side if rng.random() < self.config.stale_cancel_bias else ("bid" if stale_side == "ask" else "ask")
-        removed = book.cancel_random(side, rng)
+        removed = book.cancel_random_fraction(
+            side,
+            rng,
+            mean_fraction=self.config.cancel_mean_fraction,
+            near_touch_bias=min(0.92, 0.55 + 0.40 * self.config.queue_deplete_scale),
+            lot_size=self.spec.lot_size,
+        )
         if removed is None:
             return []
         return [
@@ -384,8 +446,50 @@ class SyntheticMarketGenerator:
                 "size": removed.quantity,
                 "fair_value": fair_tick * self.spec.tick_size,
                 "maker_order_id": removed.order_id,
-            }
-        ]
+                }
+            ]
+
+    def _touch_replenish(
+        self,
+        book: FIFOOrderBook,
+        fair_tick: float,
+        timestamp: pd.Timestamp,
+        rng: np.random.Generator,
+    ) -> list[dict[str, float | int | str | pd.Timestamp]]:
+        records: list[dict[str, float | int | str | pd.Timestamp]] = []
+        best_bid = book.best_bid_tick()
+        best_ask = book.best_ask_tick()
+        if best_bid is None or best_ask is None:
+            return records
+        mid_tick = 0.5 * (best_bid + best_ask)
+        stale_side = "ask" if fair_tick > mid_tick else "bid"
+        top_target = int(self.spec.base_depth * self.config.queue_deplete_scale)
+        for side in (stale_side, "bid" if stale_side == "ask" else "ask"):
+            if rng.random() > self.config.touch_replenish_probability:
+                continue
+            touch_tick = best_ask if side == "ask" else best_bid
+            touch_tick = _passive_tick(book, side, touch_tick)
+            current_depth = book.aggregated_depth(side, touch_tick)
+            if current_depth >= top_target:
+                continue
+            deficit = max(top_target - current_depth, self.spec.lot_size)
+            base_lots = max(1, int(round(rng.gamma(shape=2.0, scale=self.config.limit_order_mean_lots * 0.8))))
+            quantity = max(deficit, base_lots * self.spec.lot_size)
+            book.add_limit_order(side, touch_tick, quantity, f"touch_{side}_{int(rng.integers(1_000_000))}", "touch_replenisher", timestamp)
+            records.append(
+                {
+                    "timestamp": timestamp,
+                    "event_type": "touch_replenish",
+                    "agent_type": "touch_replenisher",
+                    "agent_id": "touch_replenisher",
+                    "side": side,
+                    "price": touch_tick * self.spec.tick_size,
+                    "size": quantity,
+                    "fair_value": fair_tick * self.spec.tick_size,
+                    "maker_order_id": -1,
+                }
+            )
+        return records
 
     def _refresh_market_maker(
         self,
@@ -401,13 +505,13 @@ class SyntheticMarketGenerator:
         top_bid = book.best_bid_tick() or int(round(fair_tick - self.spec.default_spread_ticks))
         top_ask = book.best_ask_tick() or int(round(fair_tick + self.spec.default_spread_ticks))
         touch_spread = max(top_ask - top_bid, 1)
-        desired_half = max(
-            1.0,
-            0.5 * touch_spread * self.config.mm_refresh_sensitivity + self.config.mm_half_spread_ticks,
-        )
+        local_spread = min(touch_spread, max(2, self.spec.default_spread_ticks * 2))
+        desired_half = max(1.0, 0.5 * local_spread * self.config.mm_refresh_sensitivity + self.config.mm_half_spread_ticks)
         reservation = fair_tick - np.sign(inventory) * self.config.mm_inventory_skew_ticks * min(abs(inventory) / self.spec.lot_size, 8.0)
         bid_tick = int(np.floor(reservation - desired_half))
         ask_tick = int(np.ceil(reservation + desired_half))
+        bid_tick = _passive_tick(book, "bid", bid_tick)
+        ask_tick = _passive_tick(book, "ask", ask_tick)
         if ask_tick <= bid_tick:
             ask_tick = bid_tick + 1
         for level in range(self.config.mm_depth_levels):
@@ -461,6 +565,12 @@ class SyntheticMarketGenerator:
             best_ask = center_tick + max(self.spec.default_spread_ticks, 1)
         if best_ask <= best_bid:
             best_ask = best_bid + self.spec.default_spread_ticks
+        if best_ask - best_bid > max(4, self.spec.default_spread_ticks * 2):
+            half = max(self.spec.default_spread_ticks, 1)
+            best_bid = _passive_tick(book, "bid", center_tick - half)
+            best_ask = _passive_tick(book, "ask", center_tick + half)
+            if best_ask <= best_bid:
+                best_ask = best_bid + 1
         for level in range(self.config.levels):
             bid_tick = best_bid - level
             ask_tick = best_ask + level
@@ -484,12 +594,69 @@ class SyntheticMarketGenerator:
         if best_ask - best_bid > 4:
             return True
         top = book.top_levels()
+        top_target = int(self.spec.base_depth * self.config.queue_deplete_scale)
+        if top["bid"][0][1] < top_target or top["ask"][0][1] < top_target:
+            return True
         return top["bid"][self.config.levels - 1][1] == 0 or top["ask"][self.config.levels - 1][1] == 0
 
 
 def _stable_seed(base_seed: int, symbol: str, day: str) -> int:
     payload = f"{base_seed}|{symbol}|{day}".encode("utf-8")
     return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big", signed=False) % (2**32)
+
+
+def _paper_msg_columns() -> list[str]:
+    return [
+        "timestamp",
+        "market_buy_volume",
+        "market_buy_n",
+        "market_sell_volume",
+        "market_sell_n",
+        "limit_buy_volume",
+        "limit_buy_n",
+        "limit_sell_volume",
+        "limit_sell_n",
+        "withdraw_buy_volume",
+        "withdraw_buy_n",
+        "withdraw_sell_volume",
+        "withdraw_sell_n",
+    ]
+
+
+def _paper_msg_row(
+    timestamp: pd.Timestamp,
+    records: list[dict[str, float | int | str | pd.Timestamp]],
+) -> dict[str, float | int | pd.Timestamp]:
+    row: dict[str, float | int | pd.Timestamp] = {column: 0 for column in _paper_msg_columns()}
+    row["timestamp"] = timestamp
+    for record in records:
+        event_type = str(record.get("event_type", ""))
+        side = str(record.get("side", ""))
+        size = int(record.get("size", 0) or 0)
+        if size <= 0:
+            continue
+        if event_type == "market_order":
+            if side == "buy":
+                row["market_buy_volume"] = int(row["market_buy_volume"]) + size
+                row["market_buy_n"] = int(row["market_buy_n"]) + 1
+            elif side == "sell":
+                row["market_sell_volume"] = int(row["market_sell_volume"]) + size
+                row["market_sell_n"] = int(row["market_sell_n"]) + 1
+        elif event_type in {"limit_add", "touch_replenish", "mm_refresh"}:
+            if side == "bid":
+                row["limit_buy_volume"] = int(row["limit_buy_volume"]) + size
+                row["limit_buy_n"] = int(row["limit_buy_n"]) + 1
+            elif side == "ask":
+                row["limit_sell_volume"] = int(row["limit_sell_volume"]) + size
+                row["limit_sell_n"] = int(row["limit_sell_n"]) + 1
+        elif event_type == "cancel":
+            if side == "bid":
+                row["withdraw_buy_volume"] = int(row["withdraw_buy_volume"]) + size
+                row["withdraw_buy_n"] = int(row["withdraw_buy_n"]) + 1
+            elif side == "ask":
+                row["withdraw_sell_volume"] = int(row["withdraw_sell_volume"]) + size
+                row["withdraw_sell_n"] = int(row["withdraw_sell_n"]) + 1
+    return row
 
 
 def _generate_timestamps(
@@ -565,6 +732,22 @@ def _top_imbalance(book: FIFOOrderBook) -> float:
     if total == 0:
         return 0.0
     return float((bid_depth - ask_depth) / total)
+
+
+def _spread_ticks(book: FIFOOrderBook) -> int:
+    bid = book.best_bid_tick()
+    ask = book.best_ask_tick()
+    if bid is None or ask is None:
+        return 0
+    return int(max(ask - bid, 0))
+
+
+def _passive_tick(book: FIFOOrderBook, side: str, proposed_tick: int) -> int:
+    if side == "bid":
+        best_ask = book.best_ask_tick()
+        return proposed_tick if best_ask is None else min(proposed_tick, best_ask - 1)
+    best_bid = book.best_bid_tick()
+    return proposed_tick if best_bid is None else max(proposed_tick, best_bid + 1)
 
 
 def _queue_pressure(book: FIFOOrderBook, fair_tick: float) -> float:

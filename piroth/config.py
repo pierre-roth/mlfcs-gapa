@@ -35,10 +35,10 @@ DEFAULT_SYMBOLS: dict[str, SymbolSpec] = {
         tick_size=0.01,
         lot_size=100,
         events_per_day=88_000,
-        base_depth=2_500,
+        base_depth=4_500,
         depth_decay=0.84,
         default_spread_ticks=2,
-        volatility_scale=0.9,
+        volatility_scale=0.45,
     ),
     "002415": SymbolSpec(
         symbol="002415",
@@ -46,10 +46,43 @@ DEFAULT_SYMBOLS: dict[str, SymbolSpec] = {
         tick_size=0.01,
         lot_size=100,
         events_per_day=82_000,
-        base_depth=3_200,
+        base_depth=4_500,
         depth_decay=0.83,
         default_spread_ticks=1,
-        volatility_scale=1.1,
+        volatility_scale=1.55,
+    ),
+    "AAPL": SymbolSpec(
+        symbol="AAPL",
+        base_price=265.00,
+        tick_size=0.01,
+        lot_size=100,
+        events_per_day=5_500_000,
+        base_depth=1_000,
+        depth_decay=0.82,
+        default_spread_ticks=3,
+        volatility_scale=1.0,
+    ),
+    "GOOGL": SymbolSpec(
+        symbol="GOOGL",
+        base_price=303.00,
+        tick_size=0.01,
+        lot_size=100,
+        events_per_day=7_900_000,
+        base_depth=1_000,
+        depth_decay=0.82,
+        default_spread_ticks=3,
+        volatility_scale=1.0,
+    ),
+    "GOOG": SymbolSpec(
+        symbol="GOOG",
+        base_price=303.00,
+        tick_size=0.01,
+        lot_size=100,
+        events_per_day=7_900_000,
+        base_depth=1_000,
+        depth_decay=0.82,
+        default_spread_ticks=3,
+        volatility_scale=1.0,
     ),
 }
 
@@ -60,8 +93,15 @@ class SimulatorConfig:
     output_root: str = "artifacts_piroth2"
     run_name: str = "piroth2_diagnostics"
     mode: str = "medium"
+    data_source: str = "synthetic"
+    real_data_root: str = "/cluster/work/math/piroth/mlfcs-gapa/data/processed"
+    real_start_time: str = "10:00:00"
+    real_end_time: str = "15:30:00"
+    real_chunk_size: int = 250_000
+    real_event_stride: int = 1
     symbol: str = "000001"
     seed: int = 7
+    events_per_day_override: int | None = None
 
     num_days: int = 21
     train_days: int = 10
@@ -81,56 +121,127 @@ class SimulatorConfig:
     target_episode_minutes: float = 4.5
     timestamp_jitter_fraction: float = 0.35
 
-    fair_value_vol_ticks: float = 0.05
-    fair_value_reversion: float = 0.0015
-    regime_switch_prob: float = 0.0015
-    regime_drift_ticks: float = 0.015
-    regime_persistence: float = 0.997
+    fair_value_vol_ticks: float = 0.12
+    fair_value_reversion: float = 0.0040
+    anchor_reversion: float = 0.0005
+    daily_price_band_ticks: int = 260
+    regime_switch_prob: float = 0.0014
+    regime_drift_ticks: float = 0.025
+    regime_persistence: float = 0.994
     metaorder_start_prob: float = 0.0025
     metaorder_persistence: float = 0.996
-    metaorder_drift_ticks: float = 0.07
-    shock_prob: float = 0.0008
-    shock_size_ticks: float = 4.0
+    metaorder_drift_ticks: float = 0.120
+    shock_prob: float = 0.0009
+    shock_size_ticks: float = 5.0
+    volatility_cluster_strength: float = 0.0
+    volatility_cluster_persistence: float = 0.985
+    order_flow_memory: float = 0.0
 
-    noise_market_order_prob: float = 0.31
-    informed_market_order_prob: float = 0.18
-    liquidity_add_prob: float = 0.22
-    cancel_prob: float = 0.15
-    mm_refresh_prob: float = 0.14
+    noise_market_order_prob: float = 0.33
+    informed_market_order_prob: float = 0.20
+    liquidity_add_prob: float = 0.24
+    cancel_prob: float = 0.13
+    mm_refresh_prob: float = 0.12
 
-    touch_join_probability: float = 0.55
-    touch_replenish_probability: float = 0.50
-    queue_replenish_scale: float = 0.85
-    queue_deplete_scale: float = 0.65
-    stale_cancel_bias: float = 0.65
+    touch_join_probability: float = 0.70
+    touch_replenish_probability: float = 0.85
+    queue_replenish_scale: float = 0.88
+    queue_deplete_scale: float = 0.72
+    stale_cancel_bias: float = 0.72
 
-    market_order_mean_lots: float = 1.8
-    informed_order_scale: float = 1.6
-    limit_order_mean_lots: float = 2.0
-    cancel_mean_fraction: float = 0.35
+    market_order_mean_lots: float = 4.0
+    informed_order_scale: float = 2.0
+    limit_order_mean_lots: float = 2.4
+    cancel_mean_fraction: float = 0.45
 
-    mm_half_spread_ticks: float = 0.85
+    mm_half_spread_ticks: float = 0.70
     mm_inventory_skew_ticks: float = 0.10
     mm_depth_levels: int = 4
-    mm_refresh_sensitivity: float = 0.85
+    mm_refresh_sensitivity: float = 1.00
 
     synthetic_market_impact_scale: float = 0.0
     export_day_count: int = 2
     export_depth_radius_ticks: int = 15
+    max_pretrain_samples_per_day: int | None = None
+    max_train_episodes_per_day: int | None = None
+    max_eval_episodes_per_day: int | None = None
 
     as_gamma: float = 0.08
     as_fill_horizon_events: int = 64
     as_max_distance_ticks: int = 6
+
+    max_inventory_units: int = 10
+    max_bias: float = 0.05
+    max_spread: float = 0.10
+    continuous_action_mode: str = "author"
+    matching_mode: str = "author_single"
+    reward_mode: str = "author_pnl"
+    reward_eta: float = 0.5
+    reward_zeta: float = 0.01
+    reward_use_dampened_pnl: bool = True
+    reward_use_trading_pnl: bool = True
+    reward_use_inventory_penalty: bool = True
+    reward_spread_penalty_threshold: float = 0.02
+    reward_spread_penalty_scale: float = 100.0
+
+    pretrain_horizon: int = 10
+    pretrain_threshold: float = 1e-5
+    include_lob_state: bool = True
+    include_market_state: bool = True
+    include_agent_state: bool = True
+    author_market_state_alias: bool = False
+    torch_batch_size: int = 256
+    torch_learning_rate: float = 1e-4
+    torch_epochs: int = 5
+    ppo_epochs: int = 5
+    ppo_rollouts_per_epoch: int | None = None
+    ppo_shuffle_episodes: bool = True
+    ppo_update_epochs: int = 4
+    ppo_clip: float = 0.2
+    ppo_entropy_coef: float = 0.01
+    ppo_value_coef: float = 0.5
+    ppo_initial_log_std: float = -1.5
+    ppo_initial_spread_bias: float = -0.70
+    dqn_replay_size: int = 200_000
+    dqn_min_replay: int = 2_000
+    dqn_update_interval: int = 4
+    dqn_target_update_steps: int = 1_000
+    dqn_epsilon_start: float = 0.20
+    dqn_epsilon_end: float = 0.02
+    dqn_epsilon_decay: float = 0.80
+    discount: float = 0.99
 
     def apply_mode_defaults(self) -> None:
         if self.mode == "smoke":
             self.num_days = min(self.num_days, 4)
             self.train_days = min(self.train_days, 2)
             self.test_days = min(self.test_days, 2)
+            self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day or 2_048
+            self.max_train_episodes_per_day = self.max_train_episodes_per_day or 1
+            self.max_eval_episodes_per_day = self.max_eval_episodes_per_day or 1
+            self.torch_epochs = min(self.torch_epochs, 2)
+            self.ppo_epochs = min(self.ppo_epochs, 2)
+            self.ppo_update_epochs = min(self.ppo_update_epochs, 1)
+            self.ppo_rollouts_per_epoch = self.ppo_rollouts_per_epoch or 2
+            self.dqn_replay_size = min(self.dqn_replay_size, 2_000)
+            self.dqn_min_replay = min(self.dqn_min_replay, 100)
+            self.dqn_update_interval = max(self.dqn_update_interval, 8)
+            self.as_fill_horizon_events = min(self.as_fill_horizon_events, 16)
+            self.as_max_distance_ticks = min(self.as_max_distance_ticks, 4)
         elif self.mode == "medium":
             self.num_days = min(self.num_days, 8)
             self.train_days = min(self.train_days, 4)
             self.test_days = min(self.test_days, 4)
+            self.max_pretrain_samples_per_day = self.max_pretrain_samples_per_day or 50_000
+            self.max_train_episodes_per_day = self.max_train_episodes_per_day or 8
+            self.max_eval_episodes_per_day = self.max_eval_episodes_per_day or 6
+            self.torch_epochs = min(self.torch_epochs, 4)
+            self.ppo_epochs = min(self.ppo_epochs, 4)
+            self.ppo_update_epochs = min(self.ppo_update_epochs, 2)
+            self.ppo_rollouts_per_epoch = self.ppo_rollouts_per_epoch or 8
+            self.dqn_replay_size = min(self.dqn_replay_size, 20_000)
+            self.dqn_min_replay = min(self.dqn_min_replay, 500)
+            self.as_fill_horizon_events = min(self.as_fill_horizon_events, 48)
         elif self.mode == "full":
             return
         else:

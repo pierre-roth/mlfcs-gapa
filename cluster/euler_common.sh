@@ -46,11 +46,6 @@ euler_activate_overlay_env() {
     # shellcheck disable=SC1090
     source "${VENV_DIR}/bin/activate"
 
-    if ! python -c 'import pyrallis' >/dev/null 2>&1; then
-        echo "Installing missing dependency pyrallis into ${VENV_DIR}" >&2
-        python -m pip install --disable-pip-version-check --quiet pyrallis
-    fi
-
     trap - RETURN
     cleanup_lock
 }
@@ -102,7 +97,7 @@ euler_print_job_summary() {
     echo "Output dir: ${OUTPUT_ROOT}"
     echo "Mode:       ${MODE}"
     echo "Run name:   ${RUN_NAME:-<auto>}"
-    echo "Symbols:    ${SYMBOLS:-<config default>}"
+    echo "Symbol:     ${SYMBOL:-<config default>}"
     echo "Device:     ${DEVICE:-<config default>}"
     echo "Account:    ${SLURM_JOB_ACCOUNT:-${ACCOUNT:-unknown}}"
     echo "Node:       $(hostname)"

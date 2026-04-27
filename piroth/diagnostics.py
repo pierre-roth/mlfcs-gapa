@@ -16,19 +16,22 @@ from .baselines import (
     summarize,
 )
 from .config import DiagnosticsConfig
+from .data_quality import assess_synthetic_quality
 from .plots import plot_episode_windows, plot_lob_heatmap, plot_lob_snapshots, plot_midprice_days, write_window_summary
-from .simulator import SyntheticDay, SyntheticMarketGenerator
+from .paper_evaluation import evaluate_paper_baselines
+from .real_data import load_market_days
+from .simulator import SyntheticDay
 from .utils import ensure_dir, save_json
+from .visualizer import build_synthetic_data_report
 
 
 def run_diagnostics(config: DiagnosticsConfig) -> dict[str, object]:
     config.apply_mode_defaults()
-    generator = SyntheticMarketGenerator(config)
     output_dir = ensure_dir(config.output_dir())
     plots_dir = ensure_dir(output_dir / "plots")
 
-    train_days = [generator.generate_day(day) for day in generator.train_days()]
-    test_days = [generator.generate_day(day) for day in generator.test_days()]
+    train_days = load_market_days(config, "train")
+    test_days = load_market_days(config, "test")
 
     if config.export_generated_days:
         export_root = ensure_dir(config.export_dir())
@@ -48,6 +51,8 @@ def run_diagnostics(config: DiagnosticsConfig) -> dict[str, object]:
     as_frame.to_csv(output_dir / "as_baseline_episodes.csv", index=False)
 
     market_summary = _market_summary(test_days, config)
+    quality_summary = assess_synthetic_quality(test_days, config)
+    paper_baselines = evaluate_paper_baselines(train_days, test_days, config, output_dir)
     sample_windows = _sample_windows(test_days, config)
     sample_day, start, stop = sample_windows[min(config.sample_episode_index, max(len(sample_windows) - 1, 0))]
 
@@ -57,13 +62,19 @@ def run_diagnostics(config: DiagnosticsConfig) -> dict[str, object]:
         plot_lob_heatmap(sample_day, start, stop, plots_dir / "lob_heatmap_episode.png")
         plot_lob_snapshots(sample_day, [start, start + (stop - start) // 2, stop - 1], plots_dir / "lob_snapshots_episode.png")
         write_window_summary(sample_windows, plots_dir / "window_summary.csv")
+        report_path = build_synthetic_data_report(test_days[: min(len(test_days), 4)], config, output_dir / "visual_report")
+    else:
+        report_path = output_dir / "visual_report" / "index.html"
 
     summary = {
         "config": asdict(config),
         "market_summary": market_summary,
+        "synthetic_quality": quality_summary,
         "as_calibration": calibration_to_dict(calibration),
         "fixed_baseline": summarize(fixed_results),
         "as_baseline": summarize(as_results),
+        "paper_baselines": paper_baselines,
+        "visual_report": str(report_path),
         "sample_episode": {
             "day": sample_day.day,
             "start_event": start,
