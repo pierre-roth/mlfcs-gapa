@@ -209,6 +209,52 @@ GOOGL run six candidates (`bo3_z1_trd0_u1`, `bo3_z2_trd05_u1`,
 The `r15` and `r25` suffixes mean maker rebates of `$0.0015/share` and
 `$0.0025/share`.
 
+### Bayesian Optimization Results
+
+The BO batch `20260428_103736` completed with all checked Slurm jobs exiting
+`0:0`.
+
+Synthetic 000858:
+
+- Best PPO: `bo3_z2_trd0_u2`, PnL `+1.1287`, reward `+1.1283`,
+  positive episodes `58/60`, median PnL `+0.9900`, minimum PnL `-0.0200`,
+  avg abs position `0.3991`. Same-run AS PnL was `+1.0727`, so this is the
+  first non-BC synthetic PPO setting that cleanly edges AS on the main symbol.
+- Best DQN: `bo3_z2_trd0_r15_u1`, PnL `+0.4313`, reward `+0.3999`,
+  positive episodes `49/60`, median PnL `+0.3632`, avg abs position `2.6632`.
+  Same-run AS PnL was `+0.7101`, so DQN is positive but still not competitive
+  with AS on synthetic 000858.
+
+Real-data aggregate over AAPL/GOOGL and strides 100/250/500:
+
+| algo | candidate | mean PnL over six cells | worst cell mean PnL | mean positive rate | worst positive rate | mean avg abs position |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| DQN | `bo3_z1_trd0_u1` | +1.3804 | -0.3285 | 0.5762 | 0.4000 | 1.5134 |
+| DQN | `bo3_z2_trd0_u2` | +1.2605 | -0.3290 | 0.4836 | 0.3000 | 2.7574 |
+| DQN | `bo3_z2_trd05_r25_u1` | +0.6490 | -0.5687 | 0.5095 | 0.3500 | 1.3102 |
+| PPO | `bo3_z2_trd0_u2` | -0.0295 | -0.7140 | 0.3857 | 0.2000 | 1.0255 |
+
+Real-data interpretation:
+
+- DQN is the only real-data learner with positive aggregate PnL, but no real
+  candidate is consistently positive across both symbols and all strides.
+- Stride 500 produces the largest PnL, but has few held-out episodes; stride
+  100/250 are more useful for consistency.
+- PPO remains unreliable on real data under this reward/stride search.
+
+### Consistency Confirmation
+
+The next batch is deliberately narrow. It stops broad search and tests whether
+the best settings are repeatably positive.
+
+- Synthetic: PPO `bo3_z2_trd0_u2` across symbols `000858`, `000001`, `002415`
+  and seeds `7`, `11`, `17`, with a larger 24-day split and `PPO_EPOCHS=40`.
+- Real: DQN candidates `bo3_z1_trd0_u1` and `bo3_z2_trd0_u2` across AAPL/GOOGL,
+  strides 100/250, and seeds `7`, `11`, using an 18-day split and
+  `TORCH_EPOCHS=20`.
+- Consistency bar: mean PnL > 0, median PnL > 0, positive episode rate at least
+  65%, and no large inventory-driven tail loss.
+
 ## Decision Rule
 
 - Treat a setting as promising if held-out PnL is positive, average absolute
