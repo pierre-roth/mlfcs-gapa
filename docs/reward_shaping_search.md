@@ -112,6 +112,44 @@ Interpretation:
 - Real PPO is mixed: GOOGL pure PnL is positive but below Fixed_1, while AAPL
   only becomes positive in the trading-PnL plus inventory-penalty setting.
 
+## Follow-Up Results
+
+The follow-up batch completed with all Slurm jobs exiting `0:0`. It tested a
+small local reward-search around the first synthetic PPO result, cross-symbol
+synthetic checks, and larger real-data splits with `REAL_EVENT_STRIDE=250`.
+
+| run_name | policy | pnl | reward | avg_abs_position | avg_spread | fill_rate | turnover | positive episodes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bo2_zeta2_ppo_synth_000858` | PPO | +0.5028 | +0.5024 | 0.1996 | 0.0343 | 0.0635 | 8.42e3 | 59/60 |
+| `bo2_zeta10_ppo_synth_000858` | PPO | +0.4843 | +0.4820 | 0.2297 | 0.0367 | 0.0601 | 7.95e3 | 58/60 |
+| `bo2_trd010_ppo_synth_000858` | PPO | +0.4785 | +0.5309 | 0.1754 | 0.0340 | 0.0639 | 8.48e3 | 58/60 |
+| matching synthetic 000858 | AS | +0.5363 | varies by reward | 3.9454 | 0.0279 | 0.1189 | 1.62e4 | 37/60 |
+| `xsym_pnl_lot1_ppo_synth_000001` | PPO | +0.1073 | +0.1073 | 0.1118 | 0.0331 | 0.0172 | 2.28e2 | 32/40 |
+| matching synthetic 000001 | AS | -0.0402 | -0.0402 | 2.3337 | 0.0294 | 0.0242 | 3.59e2 | 17/40 |
+| `xsym_pnl_lot1_ppo_synth_002415` | PPO | +0.0693 | +0.0693 | 0.0732 | 0.0321 | 0.0193 | 6.54e2 | 26/40 |
+| matching synthetic 002415 | AS | -0.4462 | -0.4462 | 2.8150 | 0.0290 | 0.0239 | 9.31e2 | 9/40 |
+| `real250_inv_lot1_dqn_real_AAPL` | DQN | +0.2700 | +0.2697 | 1.4108 | 0.0438 | 0.4733 | 5.03e3 | 6/10 |
+| AAPL real250 baseline | Random | +0.1889 | +0.1887 | 1.1090 | 0.0709 | 0.2684 | 2.32e3 | 6/9 |
+| AAPL real250 baseline | AS | 0.0000 | 0.0000 | 0.0000 | 0.2154 | 0.0000 | 0.00 | 0/9 |
+| `real250_pnl_lot1_ppo_real_AAPL` | PPO | -0.4770 | -0.4770 | 0.5000 | 0.0346 | 0.5579 | 6.05e3 | 2/10 |
+| `real250_inv_lot1_dqn_real_GOOGL` | DQN | +0.1656 | +0.1654 | 1.3599 | 0.0356 | 0.4654 | 4.14e3 | 8/16 |
+| GOOGL real250 baseline | Fixed_1 | +0.0240 | +0.0238 | 1.6797 | 0.0223 | 0.5043 | 3.56e3 | 6/15 |
+| GOOGL real250 baseline | AS | 0.0000 | 0.0000 | 0.0000 | 0.2359 | 0.0000 | 0.00 | 0/15 |
+| `real250_pnl_lot1_ppo_real_GOOGL` | PPO | -0.0350 | -0.0350 | 0.4096 | 0.0199 | 0.6739 | 5.80e3 | 6/16 |
+
+Follow-up interpretation:
+
+- The local search did not beat the best first-batch synthetic PPO result or AS
+  on 000858. `zeta=0.000002` is the best follow-up 000858 candidate, but the
+  difference from pure PnL is small.
+- Pure-PnL PPO with trade unit 1 generalizes well to synthetic stress symbols:
+  it beats AS on 000001 and 002415 with much lower inventory and turnover.
+- Real-data DQN remains the strongest real-data RL result in this branch. On the
+  `REAL_EVENT_STRIDE=250` split it beats AS and Fixed_1 on GOOGL, and beats AS,
+  Fixed_1, and Random on AAPL by a small margin.
+- Real-data PPO is still weak at stride 250. It is low-inventory but does not
+  overcome adverse selection/high fill rates on these short splits.
+
 ## Decision Rule
 
 - Treat a setting as promising if held-out PnL is positive, average absolute

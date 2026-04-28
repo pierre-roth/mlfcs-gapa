@@ -81,6 +81,40 @@ Interpretation:
   initialized network capacity. The code now freezes only the encoder by
   default and leaves the fusion layer plus final policy head trainable.
 
+## Follow-Up Results
+
+The follow-up batch completed with the corrected cloning freeze: by default only
+the Attn-LOB encoder is frozen during cloning, while the fusion layer and final
+policy/Q head remain trainable. All Slurm jobs exited `0:0`.
+
+| run_name | algo | bc_loss_or_acc | pnl | reward | avg_abs_position | avg_spread | fill_rate | turnover | positive episodes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bc2_inv_lot1_ppo_synth_000858` | PPO | loss 0.0070 | +0.0552 | -0.0204 | 4.7771 | 0.0299 | 0.0549 | 8.00e3 | 33/60 |
+| matching non-BC `rew_inv_lot1_ppo_synth_000858` | PPO | n/a | +0.4688 | +0.4680 | 0.1691 | 0.0341 | 0.0624 | 8.28e3 | 59/60 |
+| matching synthetic 000858 | AS | n/a | +0.5363 | varies by reward | 3.9454 | 0.0279 | 0.1189 | 1.62e4 | 37/60 |
+| `bc2_inv_lot1_dqn_synth_000858` | DQN | loss 0.8133 | -1.2135 | -1.3290 | 6.4631 | 0.0280 | 0.0377 | 7.22e3 | 5/60 |
+| matching non-BC `rew_inv_lot1_dqn_synth_000858` | DQN | n/a | -0.7020 | -0.9807 | 6.4880 | 0.0256 | 0.0759 | 1.16e4 | 14/60 |
+| `xsym_bc2_inv_lot1_ppo_synth_000001` | PPO | loss 0.0076 | +0.0273 | +0.0207 | 0.9474 | 0.0446 | 0.0047 | 7.30e1 | 15/40 |
+| matching non-BC `xsym_pnl_lot1_ppo_synth_000001` | PPO | n/a | +0.1073 | +0.1073 | 0.1118 | 0.0331 | 0.0172 | 2.28e2 | 32/40 |
+| `xsym_bc2_inv_lot1_ppo_synth_002415` | PPO | loss 0.0100 | -0.1813 | -0.1979 | 1.5931 | 0.0398 | 0.0087 | 3.56e2 | 13/40 |
+| matching non-BC `xsym_pnl_lot1_ppo_synth_002415` | PPO | n/a | +0.0693 | +0.0693 | 0.0732 | 0.0321 | 0.0193 | 6.54e2 | 26/40 |
+| `bc2_inv_lot1_dqn_real_AAPL` | DQN | loss 1.8749 | -0.1360 | -0.1365 | 1.3974 | 0.0451 | 0.4563 | 5.44e3 | 4/10 |
+| matching non-BC `real250_inv_lot1_dqn_real_AAPL` | DQN | n/a | +0.2700 | +0.2697 | 1.4108 | 0.0438 | 0.4733 | 5.03e3 | 6/10 |
+| `bc2_inv_lot1_dqn_real_GOOGL` | DQN | loss 1.8335 | +0.1431 | +0.1423 | 1.6999 | 0.0442 | 0.3486 | 3.41e3 | 8/16 |
+| matching non-BC `real250_inv_lot1_dqn_real_GOOGL` | DQN | n/a | +0.1656 | +0.1654 | 1.3599 | 0.0356 | 0.4654 | 4.14e3 | 8/16 |
+
+Follow-up interpretation:
+
+- The corrected freeze did not make AS behavioral cloning a reliable
+  improvement. It worsened PPO on synthetic 000858 and both synthetic
+  cross-symbol checks relative to the non-BC reward-search runs.
+- BC also worsened synthetic DQN and real AAPL DQN. Real GOOGL DQN remained
+  positive but was slightly below the non-BC DQN.
+- The first-batch PPO synthetic 000858 BC result remains the only BC run that
+  beat its matching non-BC run, but that result did not reproduce under the
+  better freeze policy. Current evidence does not justify scaling BC before
+  fixing reward/data calibration.
+
 ## Interpretation Plan
 
 - Compare BC+RL against the matching non-BC reward-search run.
