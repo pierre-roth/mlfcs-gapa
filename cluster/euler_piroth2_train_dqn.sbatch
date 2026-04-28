@@ -27,4 +27,8 @@ export OUTPUT_ROOT="${OUTPUT_ROOT:-/cluster/project/math/${USER}/mlfcs-gapa/arti
 mkdir -p "${DATA_DIR}" "${OUTPUT_ROOT}"
 
 euler_setup_job
-euler_run_kind train-dqn
+extra_args=()
+if [[ -n "${CHECKPOINT:-}" ]]; then
+    extra_args+=(--checkpoint "${CHECKPOINT}")
+fi
+euler_run_kind train-dqn "${extra_args[@]}"

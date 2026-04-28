@@ -150,6 +150,65 @@ Follow-up interpretation:
 - Real-data PPO is still weak at stride 250. It is low-inventory but does not
   overcome adverse selection/high fill rates on these short splits.
 
+## Bayesian Optimization Round
+
+The next batch stops AS behavioral cloning and treats the completed reward
+screen as seed observations for a conservative batch-BO round. The acquisition
+logic is practical rather than fully automated inside the training loop: propose
+near the best observed region, include a few uncertainty probes, and evaluate
+the same candidates with PPO and DQN under longer training budgets.
+
+Search dimensions:
+
+- `TRADE_UNIT_OVERRIDE`: `1` near the current optimum, plus a unit-2 probe.
+- `REWARD_TRADING_PNL_WEIGHT`: `0.0`, `0.05`, `0.15`, `0.30`.
+- `REWARD_ZETA`: `0.000001`, `0.000002`, `0.000003`, `0.000005`,
+  `0.000008`.
+- `REWARD_INVENTORY_PENALTY_WEIGHT`: `1.0`, plus one weaker `0.3` probe.
+- `REWARD_SPREAD_PENALTY_SCALE`: mostly `0`, plus one tiny `0.005` probe.
+- `MAKER_REBATE_PER_SHARE`: `0`, `0.0015`, and `0.0025`. The nonzero values
+  are intended to be realistic for Nasdaq-listed AAPL/GOOGL: current Nasdaq
+  displayed add-liquidity credits for stocks priced at or above $1 are on the
+  order of one to a few mils per share. The rebate is optional and defaults to
+  zero.
+- Real-data calibration sweeps `REAL_EVENT_STRIDE=100,250,500` for AAPL and
+  GOOGL. Earlier results showed that stride materially changes fill density and
+  adverse selection, so it is treated as a data-calibration axis rather than a
+  reward parameter.
+
+Training budget:
+
+- PPO: `PPO_EPOCHS=36`, `PPO_ROLLOUTS_PER_EPOCH=160`,
+  `PPO_UPDATE_EPOCHS=8`, entropy scheduled from `0.008` to `0.0001`.
+- DQN: `TORCH_EPOCHS=16`, `DQN_REPLAY_SIZE=350000`,
+  `DQN_UPDATE_INTERVAL=96`, `DQN_TARGET_UPDATE_STEPS=1000`, epsilon scheduled
+  from `0.55` to `0.04`.
+- Encoder pretraining is shared per dataset/symbol through an explicit
+  checkpoint pass-through, avoiding redundant pretrains for each reward
+  candidate.
+
+Planned candidate labels:
+
+| label | trade unit | trading pnl weight | zeta | inventory penalty weight | spread penalty scale |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `bo3_z1_trd0_u1` | 1 | 0.00 | 0.000001 | 1.0 | 0 |
+| `bo3_z3_trd0_u1` | 1 | 0.00 | 0.000003 | 1.0 | 0 |
+| `bo3_z2_trd05_u1` | 1 | 0.05 | 0.000002 | 1.0 | 0 |
+| `bo3_z2_trd15_u1` | 1 | 0.15 | 0.000002 | 1.0 | 0 |
+| `bo3_z8_trd30_u1` | 1 | 0.30 | 0.000008 | 1.0 | 0 |
+| `bo3_z5_i03_u1` | 1 | 0.00 | 0.000005 | 0.3 | 0 |
+| `bo3_z2_sp0005_u1` | 1 | 0.00 | 0.000002 | 1.0 | 0.005 |
+| `bo3_z2_trd0_u2` | 2 | 0.00 | 0.000002 | 1.0 | 0 |
+| `bo3_z2_trd0_r15_u1` | 1 | 0.00 | 0.000002 | 1.0 | 0 |
+| `bo3_z2_trd05_r25_u1` | 1 | 0.05 | 0.000002 | 1.0 | 0 |
+
+Synthetic 000858 runs all ten candidates with both PPO and DQN. Real AAPL and
+GOOGL run six candidates (`bo3_z1_trd0_u1`, `bo3_z2_trd05_u1`,
+`bo3_z8_trd30_u1`, `bo3_z2_trd0_u2`, `bo3_z2_trd0_r15_u1`, and
+`bo3_z2_trd05_r25_u1`) with both PPO and DQN at strides 100, 250, and 500.
+The `r15` and `r25` suffixes mean maker rebates of `$0.0015/share` and
+`$0.0025/share`.
+
 ## Decision Rule
 
 - Treat a setting as promising if held-out PnL is positive, average absolute

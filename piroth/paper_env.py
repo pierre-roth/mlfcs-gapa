@@ -289,15 +289,25 @@ class PaperTradingEnv:
         mid = self.midprice(event_idx)
         matched_pnl = 0.0
         for trade_price, trade_volume in fills:
-            matched_pnl += (mid - trade_price) * trade_volume
-            self._update_agent(trade_price, trade_volume, event_idx, count_fill_step=False)
+            rebate = abs(trade_volume) * self.config.maker_rebate_per_share
+            matched_pnl += (mid - trade_price) * trade_volume + rebate
+            self._update_agent(trade_price, trade_volume, event_idx, count_fill_step=False, maker_rebate=rebate)
         self.fill_steps += 1
         return float(avg_price), int(net_volume), float(matched_pnl)
 
-    def _update_agent(self, trade_price: float, trade_volume: int, event_idx: int, *, count_fill_step: bool = True) -> None:
+    def _update_agent(
+        self,
+        trade_price: float,
+        trade_volume: int,
+        event_idx: int,
+        *,
+        count_fill_step: bool = True,
+        maker_rebate: float = 0.0,
+    ) -> None:
         if trade_volume:
             self.inventory += trade_volume
             self.cash -= trade_volume * trade_price
+            self.cash += maker_rebate
             self.turnover += abs(trade_volume * trade_price)
             self.trades += 1
             if count_fill_step:

@@ -107,6 +107,31 @@ def test_hybrid_reward_uses_linear_component_weights() -> None:
     assert np.isclose(reward, 0.5 * 4.0 + 2.0 * 1.5 - 3.0 * 0.1)
 
 
+def test_maker_rebate_is_added_to_passive_fill_pnl() -> None:
+    day = _minimal_day()
+    config = DiagnosticsConfig(
+        mode="smoke",
+        lookback=1,
+        latency=0,
+        episode_length=2,
+        stable_windows=["10:00:00-10:01:00"],
+        max_eval_episodes_per_day=1,
+        matching_mode="multi_fill",
+        reward_mode="hybrid",
+        reward_use_dampened_pnl=False,
+        reward_use_trading_pnl=True,
+        maker_rebate_per_share=0.0015,
+    )
+    env = PaperTradingEnv(day, config, episode_start=0, episode_stop=2, episode_index=0)
+    env.reset()
+
+    result = env.step(PaperAction(ask_price=10.01, ask_volume=-100, bid_price=9.99, bid_volume=100))
+
+    assert result.info["trade_volume"] == 0
+    assert np.isclose(env.value, 2.3)
+    assert result.reward > 2.0
+
+
 def test_one_sided_inventory_guard_does_not_create_artificial_spread() -> None:
     day = _minimal_day()
     config = DiagnosticsConfig(

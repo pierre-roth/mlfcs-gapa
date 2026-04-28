@@ -188,6 +188,7 @@ class SimulatorConfig:
     reward_trading_pnl_weight: float = 1.0
     reward_inventory_penalty_weight: float = 1.0
     reward_spread_penalty_weight: float = 1.0
+    maker_rebate_per_share: float = 0.0
 
     pretrain_horizon: int = 10
     pretrain_threshold: float = 1e-5

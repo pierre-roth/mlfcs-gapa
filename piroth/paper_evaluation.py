@@ -112,9 +112,11 @@ def _fast_replay_policy(
             if fills:
                 fill_steps += 1
             for trade_price, trade_volume in fills:
-                matched_pnl += (arrays.mid[event_idx] - trade_price) * trade_volume
+                rebate = abs(trade_volume) * config.maker_rebate_per_share
+                matched_pnl += (arrays.mid[event_idx] - trade_price) * trade_volume + rebate
                 inventory += trade_volume
                 cash -= trade_volume * trade_price
+                cash += rebate
                 turnover += abs(trade_volume * trade_price)
                 trades += 1
             value = cash + inventory * arrays.mid[event_idx]
