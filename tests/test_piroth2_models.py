@@ -3,7 +3,8 @@ from __future__ import annotations
 import torch
 
 from piroth.models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, TradingBackbone
-from piroth.training import _linear_schedule
+from piroth.config import DiagnosticsConfig
+from piroth.training import _linear_schedule, _optimizer_for_model
 
 
 def test_attnlob_encoder_matches_paper_output_shape() -> None:
@@ -70,6 +71,20 @@ def test_ppo_actor_accepts_initial_policy_overrides() -> None:
 def test_entropy_schedule_decays_linearly() -> None:
     assert _linear_schedule(0.01, 0.001, 0, 5) == 0.01
     assert torch.isclose(torch.tensor(_linear_schedule(0.01, 0.001, 4, 5)), torch.tensor(0.001))
+
+
+def test_optimizer_can_scale_encoder_and_backbone_learning_rates() -> None:
+    model = PPOActorCritic(TradingBackbone(encoder=AttnLOBEncoder()))
+    config = DiagnosticsConfig(
+        torch_learning_rate=1e-3,
+        torch_encoder_learning_rate_scale=0.1,
+        torch_backbone_learning_rate_scale=0.5,
+    )
+
+    optimizer = _optimizer_for_model(model, config)
+    learning_rates = sorted(group["lr"] for group in optimizer.param_groups)
+
+    assert learning_rates == [1e-4, 5e-4, 1e-3]
 
 
 def test_backbone_can_reproduce_author_market_state_alias_bug() -> None:

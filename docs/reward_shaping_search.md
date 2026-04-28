@@ -255,6 +255,39 @@ the best settings are repeatably positive.
 - Consistency bar: mean PnL > 0, median PnL > 0, positive episode rate at least
   65%, and no large inventory-driven tail loss.
 
+### Optimizer Blocker Check
+
+One additional bounded check tests whether PPO/DQN performance is being limited
+by destructive fine-tuning of the pretrained Attn-LOB encoder. The code now
+supports separate optimizer learning-rate scales for encoder, backbone fusion,
+and heads:
+
+- `TORCH_ENCODER_LEARNING_RATE_SCALE`, default `1.0`.
+- `TORCH_BACKBONE_LEARNING_RATE_SCALE`, default `1.0`.
+
+Defaults preserve the earlier training recipe. The submitted diagnostic batch
+uses the same reward candidates as the current consistency confirmation but
+compares two conservative fine-tuning recipes:
+
+- `enc01`: encoder LR `0.1x`, backbone fusion LR `0.5x`, heads at base LR.
+- `enc00`: frozen encoder via LR `0.0x`, backbone fusion LR `0.5x`, heads at
+  base LR.
+
+Submitted batch `20260428_223520`:
+
+| group | algo | data | symbol | pretrain | train | eval | baseline |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| `optblock_synth_enc01_seed23` | PPO | synthetic | 000858 | 65067904 | 65067906 | 65067908 | 65067909 |
+| `optblock_synth_enc00_seed23` | PPO | synthetic | 000858 | 65067904 | 65067910 | 65067911 | 65067912 |
+| `optblock_real_z1_u1_s250_enc01_seed23` | DQN | real | GOOGL | 65067915 | 65067917 | 65067919 | 65067920 |
+| `optblock_real_z1_u1_s250_enc00_seed23` | DQN | real | GOOGL | 65067915 | 65067921 | 65067923 | 65067928 |
+
+Decision rule: if either low-LR or frozen-encoder runs materially outperform the
+same reward settings from the broader confirmation, then encoder fine-tuning
+was a training-recipe blocker. If not, the remaining gap is more likely reward,
+data calibration, action design, or market mechanics rather than catastrophic
+encoder drift.
+
 ## Decision Rule
 
 - Treat a setting as promising if held-out PnL is positive, average absolute

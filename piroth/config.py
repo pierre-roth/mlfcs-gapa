@@ -198,6 +198,8 @@ class SimulatorConfig:
     author_market_state_alias: bool = False
     torch_batch_size: int = 256
     torch_learning_rate: float = 1e-4
+    torch_encoder_learning_rate_scale: float = 1.0
+    torch_backbone_learning_rate_scale: float = 1.0
     torch_epochs: int = 5
     ppo_epochs: int = 5
     ppo_rollouts_per_epoch: int | None = None

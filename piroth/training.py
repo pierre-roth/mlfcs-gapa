@@ -139,7 +139,7 @@ def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
     ).to(device)
     if config.bc_as_init:
         _behavior_clone_ppo_from_as(train_days, config, model, output_dir, device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.torch_learning_rate)
+    optimizer = _optimizer_for_model(model, config)
     history = []
     for epoch in range(config.ppo_epochs):
         episode_specs = [
@@ -266,7 +266,7 @@ def train_dqn(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
         _behavior_clone_dqn_from_as(train_days, config, model, output_dir, device=device)
     target_model = DuelingDQN(_trading_backbone(config, pretrain_path, device)).to(device)
     target_model.load_state_dict(model.state_dict())
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.torch_learning_rate)
+    optimizer = _optimizer_for_model(model, config)
     criterion = nn.SmoothL1Loss()
     replay: deque[tuple[np.ndarray, np.ndarray, np.ndarray, int, float, np.ndarray, np.ndarray, np.ndarray, bool]] = deque(maxlen=config.dqn_replay_size)
     history = []
@@ -552,6 +552,32 @@ def _set_backbone_trainable(model: nn.Module, trainable: bool) -> None:
         return
     for parameter in backbone.parameters():
         parameter.requires_grad = trainable
+
+
+def _optimizer_for_model(model: nn.Module, config: DiagnosticsConfig) -> torch.optim.Optimizer:
+    base_lr = float(config.torch_learning_rate)
+    encoder_lr = base_lr * float(config.torch_encoder_learning_rate_scale)
+    backbone_lr = base_lr * float(config.torch_backbone_learning_rate_scale)
+    groups: dict[str, dict[str, object]] = {
+        "encoder": {"params": [], "lr": encoder_lr},
+        "backbone": {"params": [], "lr": backbone_lr},
+        "head": {"params": [], "lr": base_lr},
+    }
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.startswith("backbone.encoder."):
+            groups["encoder"]["params"].append(parameter)  # type: ignore[union-attr]
+        elif name.startswith("backbone."):
+            groups["backbone"]["params"].append(parameter)  # type: ignore[union-attr]
+        else:
+            groups["head"]["params"].append(parameter)  # type: ignore[union-attr]
+    param_groups = [
+        {"params": group["params"], "lr": group["lr"]}
+        for group in groups.values()
+        if group["params"]
+    ]
+    return torch.optim.Adam(param_groups, lr=base_lr)
 
 
 def _linear_schedule(start: float, final: float | None, step: int, total_steps: int) -> float:
