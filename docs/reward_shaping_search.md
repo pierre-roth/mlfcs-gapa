@@ -288,6 +288,29 @@ was a training-recipe blocker. If not, the remaining gap is more likely reward,
 data calibration, action design, or market mechanics rather than catastrophic
 encoder drift.
 
+Correction on 2026-04-29: the initial real-data consistency and real optimizer
+blocker jobs used `TRAIN_DAYS=10` even though only 10 AAPL/GOOGL real-data days
+are available. The DQN train jobs completed, but the dependent eval and baseline
+jobs had zero held-out days and wrote empty one-byte CSVs. Those real-data eval
+artifacts from stamp `20260428_220641` and the real optimizer blocker evals from
+stamp `20260428_223520` are invalid and should not be interpreted.
+
+The scripts now use the valid real-data split `TRAIN_DAYS=6`, `TEST_DAYS=4`.
+A real-only rerun was submitted with stamp `20260429_101000`, covering the same
+real DQN candidates (`z1_u1`, `u2_z2`) for AAPL/GOOGL, strides 100/250, seeds
+7/11, plus the real optimizer blocker variants on GOOGL stride 250 seed 23.
+
+The slow synthetic optimizer pretrain from the original blocker batch was
+cancelled near its 12-hour limit before producing a checkpoint. The replacement
+synthetic optimizer blocker reuses the completed seed-17 synthetic 000858
+pretrain from the consistency batch and submits only the two PPO fine-tuning
+jobs:
+
+| group | train | eval |
+| --- | ---: | ---: |
+| `optblock_synth_enc01_seed17` | 65122879 | 65122884 |
+| `optblock_synth_enc00_seed17` | 65122890 | 65122894 |
+
 ## Decision Rule
 
 - Treat a setting as promising if held-out PnL is positive, average absolute

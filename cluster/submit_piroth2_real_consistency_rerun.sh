@@ -21,19 +21,15 @@ submit_stage() {
         "MODE=full"
         "CREATE_PLOTS=false"
         "PRETRAIN_DEVICE=${PRETRAIN_DEVICE:-cuda}"
-        "TRAIN_PPO_DEVICE=${TRAIN_PPO_DEVICE:-cuda}"
         "TRAIN_DQN_DEVICE=${TRAIN_DQN_DEVICE:-cuda}"
         "EVALUATE_DEVICE=${EVALUATE_DEVICE:-cpu}"
         "PRETRAIN_TIME=${PRETRAIN_TIME:-12:00:00}"
-        "TRAIN_PPO_TIME=${TRAIN_PPO_TIME:-2-00:00:00}"
         "TRAIN_DQN_TIME=${TRAIN_DQN_TIME:-2-00:00:00}"
         "EVALUATE_TIME=${EVALUATE_TIME:-06:00:00}"
         "PRETRAIN_CPUS=${PRETRAIN_CPUS:-8}"
-        "TRAIN_PPO_CPUS=${TRAIN_PPO_CPUS:-8}"
         "TRAIN_DQN_CPUS=${TRAIN_DQN_CPUS:-8}"
         "EVALUATE_CPUS=${EVALUATE_CPUS:-4}"
         "PRETRAIN_MEM_PER_CPU=${PRETRAIN_MEM_PER_CPU:-8G}"
-        "TRAIN_PPO_MEM_PER_CPU=${TRAIN_PPO_MEM_PER_CPU:-12G}"
         "TRAIN_DQN_MEM_PER_CPU=${TRAIN_DQN_MEM_PER_CPU:-12G}"
         "EVALUATE_MEM_PER_CPU=${EVALUATE_MEM_PER_CPU:-8G}"
     )
@@ -56,46 +52,22 @@ submit_shared_pretrain() {
     printf '%s|%s\n' "${pretrain_id}" "${checkpoint}"
 }
 
-submit_pipeline() {
+submit_dqn_pipeline() {
     local group="$1"
-    local algo="$2"
-    local dataset="$3"
-    local symbol="$4"
-    local pretrain_id="$5"
-    local checkpoint="$6"
-    shift 6
+    local symbol="$2"
+    local pretrain_id="$3"
+    local checkpoint="$4"
+    shift 4
 
     SYMBOL="${symbol}"
-    RUN_NAME="${RUN_NAME_PREFIX:-piroth2}_${group}_${algo}_${dataset}_${symbol}_${STAMP}"
+    RUN_NAME="${RUN_NAME_PREFIX:-piroth2}_${group}_dqn_real_${symbol}_${STAMP}"
     RUN_ENV=("CHECKPOINT=${checkpoint}" "$@")
 
-    local train_stage eval_kind train_id eval_id baseline_id
-    case "${algo}" in
-        ppo) train_stage="train-ppo"; eval_kind="evaluate-ppo" ;;
-        dqn) train_stage="train-dqn"; eval_kind="evaluate-dqn" ;;
-        *) echo "Unknown algo: ${algo}" >&2; exit 1 ;;
-    esac
-    train_id="$(submit_stage "${train_stage}" "afterok:${pretrain_id}")"
-    eval_id="$(submit_stage evaluate "afterok:${train_id}" "${eval_kind}")"
+    local train_id eval_id baseline_id
+    train_id="$(submit_stage train-dqn "afterok:${pretrain_id}")"
+    eval_id="$(submit_stage evaluate "afterok:${train_id}" evaluate-dqn)"
     baseline_id="$(submit_stage evaluate "" paper-baselines)"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "${group}" "${algo}" "${dataset}" "${symbol}" "${RUN_NAME}" "${pretrain_id}" "${train_id}" "${eval_id}" "${baseline_id}" "${checkpoint}"
-}
-
-synth_env() {
-    local seed="$1"
-    printf '%s\n' \
-        "DATA_SOURCE=synthetic" \
-        "SEED=${seed}" \
-        "NUM_DAYS=24" \
-        "TRAIN_DAYS=14" \
-        "TEST_DAYS=10" \
-        "EVENTS_PER_DAY_OVERRIDE=60000" \
-        "EPISODE_LENGTH=2000" \
-        "MAX_TRAIN_EPISODES_PER_DAY=14" \
-        "MAX_EVAL_EPISODES_PER_DAY=12" \
-        "ORDER_FLOW_MEMORY=0.35" \
-        "VOLATILITY_CLUSTER_STRENGTH=0.45" \
-        "VOLATILITY_CLUSTER_PERSISTENCE=0.992"
+    printf '%s,dqn,real,%s,%s,%s,%s,%s,%s,%s\n' "${group}" "${symbol}" "${RUN_NAME}" "${pretrain_id}" "${train_id}" "${eval_id}" "${baseline_id}" "${checkpoint}"
 }
 
 real_env() {
@@ -121,17 +93,6 @@ REPO="$(repo_root)"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 printf 'group,algo,dataset,symbol,run_name,pretrain_job,train_job,eval_job,baseline_job,checkpoint\n'
 
-COMMON_PPO=(
-    "TORCH_BATCH_SIZE=4096"
-    "TORCH_LEARNING_RATE=0.00025"
-    "PPO_EPOCHS=40"
-    "PPO_ROLLOUTS_PER_EPOCH=192"
-    "PPO_UPDATE_EPOCHS=8"
-    "PPO_INITIAL_LOG_STD=-1.35"
-    "PPO_INITIAL_SPREAD_BIAS=-0.70"
-    "PPO_ENTROPY_COEF=0.008"
-    "PPO_ENTROPY_COEF_FINAL=0.0001"
-)
 COMMON_DQN=(
     "TORCH_BATCH_SIZE=2048"
     "TORCH_LEARNING_RATE=0.00025"
@@ -152,14 +113,6 @@ BASE_REWARD=(
     "REWARD_SPREAD_PENALTY_WEIGHT=0"
     "MAKER_REBATE_PER_SHARE=0"
 )
-SYNTH_U2_Z2=(
-    "TRADE_UNIT_OVERRIDE=2"
-    "REWARD_USE_TRADING_PNL=false"
-    "REWARD_TRADING_PNL_WEIGHT=0"
-    "REWARD_USE_INVENTORY_PENALTY=true"
-    "REWARD_ZETA=0.000002"
-    "REWARD_INVENTORY_PENALTY_WEIGHT=1.0"
-)
 REAL_Z1_U1=(
     "TRADE_UNIT_OVERRIDE=1"
     "REWARD_USE_TRADING_PNL=false"
@@ -176,22 +129,27 @@ REAL_U2_Z2=(
     "REWARD_ZETA=0.000002"
     "REWARD_INVENTORY_PENALTY_WEIGHT=1.0"
 )
-
-for seed in 7 11 17; do
-    for symbol in 000858 000001 002415; do
-        mapfile -t ENV < <(synth_env "${seed}")
-        IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "confirm_synth_seed${seed}" "${symbol}" "${ENV[@]}" "${COMMON_PPO[@]}")
-        submit_pipeline "confirm_synth_u2_z2_seed${seed}" ppo synth "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_PPO[@]}" "${BASE_REWARD[@]}" "${SYNTH_U2_Z2[@]}"
-    done
-done
+ENC01=(
+    "TORCH_ENCODER_LEARNING_RATE_SCALE=0.1"
+    "TORCH_BACKBONE_LEARNING_RATE_SCALE=0.5"
+)
+ENC00=(
+    "TORCH_ENCODER_LEARNING_RATE_SCALE=0.0"
+    "TORCH_BACKBONE_LEARNING_RATE_SCALE=0.5"
+)
 
 for seed in 7 11; do
     for stride in 100 250; do
         for symbol in AAPL GOOGL; do
             mapfile -t ENV < <(real_env "${seed}" "${stride}")
-            IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "confirm_real_s${stride}_seed${seed}" "${symbol}" "${ENV[@]}" "${COMMON_DQN[@]}")
-            submit_pipeline "confirm_real_z1_u1_s${stride}_seed${seed}" dqn real "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}"
-            submit_pipeline "confirm_real_u2_z2_s${stride}_seed${seed}" dqn real "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_U2_Z2[@]}"
+            IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "realfix_s${stride}_seed${seed}" "${symbol}" "${ENV[@]}" "${COMMON_DQN[@]}")
+            submit_dqn_pipeline "realfix_z1_u1_s${stride}_seed${seed}" "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}"
+            submit_dqn_pipeline "realfix_u2_z2_s${stride}_seed${seed}" "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_U2_Z2[@]}"
         done
     done
 done
+
+mapfile -t ENV < <(real_env 23 250)
+IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "realfix_optblock_s250_seed23" "GOOGL" "${ENV[@]}" "${COMMON_DQN[@]}")
+submit_dqn_pipeline "realfix_optblock_z1_u1_s250_enc01_seed23" "GOOGL" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}" "${ENC01[@]}"
+submit_dqn_pipeline "realfix_optblock_z1_u1_s250_enc00_seed23" "GOOGL" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}" "${ENC00[@]}"

@@ -108,9 +108,9 @@ real_env() {
         "REAL_START_TIME=09:30:00" \
         "REAL_END_TIME=16:00:00" \
         "SEED=${seed}" \
-        "NUM_DAYS=16" \
-        "TRAIN_DAYS=10" \
-        "TEST_DAYS=6" \
+        "NUM_DAYS=10" \
+        "TRAIN_DAYS=6" \
+        "TEST_DAYS=4" \
         "EVENTS_PER_DAY_OVERRIDE=60000" \
         "EPISODE_LENGTH=2000" \
         "MAX_TRAIN_EPISODES_PER_DAY=12" \
