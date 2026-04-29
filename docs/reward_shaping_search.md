@@ -300,6 +300,42 @@ A real-only rerun was submitted with stamp `20260429_101000`, covering the same
 real DQN candidates (`z1_u1`, `u2_z2`) for AAPL/GOOGL, strides 100/250, seeds
 7/11, plus the real optimizer blocker variants on GOOGL stride 250 seed 23.
 
+Corrected real-data consistency results:
+
+| candidate | cells | mean PnL | worst cell PnL | mean median PnL | mean positive rate | mean avg abs position | mean fill rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `z1_u1` | 8 | +0.0382 | -0.2742 | -0.0456 | 0.4601 | 1.2299 | 0.4292 |
+| `u2_z2` | 8 | -0.3036 | -0.8020 | -0.2100 | 0.4026 | 2.3184 | 0.3958 |
+
+The same corrected aggregate baselines were AAPL AS `0.0000`, AAPL Fixed_3
+`+0.0991`, GOOGL AS `-0.0010`, and GOOGL Fixed_2 `-0.3663`. Real DQN therefore
+beats many active baselines on average, but it is not consistently positive:
+median PnL is negative, positive-rate is well below the 65% bar, and several
+symbol/stride/seed cells remain negative. The GOOGL stride-250 optimizer
+blocker also did not fix the issue: frozen encoder (`enc00`) reached PnL
+`-0.2832`, while low encoder LR (`enc01`) reached `-0.4529`.
+
+The corrected real result points less to catastrophic encoder drift and more to
+real-data action aggressiveness/adverse selection: DQN fill rates stay near
+`0.4` even when inventory is controlled. A non-paper diagnostic knob was added
+for DQN only:
+
+- `DQN_DISCRETE_OFFSET_PAIRS`, default
+  `0:0,0:1,1:0,1:1,0:2,2:0,2:2`, exactly preserves the existing author-style
+  discrete quote actions.
+- A wider real-data diagnostic uses
+  `1:1,1:2,2:1,2:2,1:3,3:1,3:3` to test whether the real-data blocker is the
+  touch-heavy DQN action set rather than reward shaping alone.
+
+Submitted wide-action real-data diagnostic `20260429_222000`:
+
+| group | symbol | seed | pretrain | train | eval | baseline |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `realwide_z1_u1_s250_seed7` | AAPL | 7 | 65208457 | 65208459 | 65208541 | 65208543 |
+| `realwide_z1_u1_s250_seed7` | GOOGL | 7 | 65208570 | 65208572 | 65208573 | 65208574 |
+| `realwide_z1_u1_s250_seed11` | AAPL | 11 | 65208575 | 65208580 | 65208582 | 65208583 |
+| `realwide_z1_u1_s250_seed11` | GOOGL | 11 | 65208584 | 65208585 | 65208586 | 65208588 |
+
 The slow synthetic optimizer pretrain from the original blocker batch was
 cancelled near its 12-hour limit before producing a checkpoint. The replacement
 synthetic optimizer blocker reuses the completed seed-17 synthetic 000858

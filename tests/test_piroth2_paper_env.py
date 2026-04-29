@@ -210,6 +210,25 @@ def test_trade_unit_override_changes_policy_size_and_inventory_limit() -> None:
     assert action.bid_volume == 1
 
 
+def test_discrete_policy_can_use_configured_wider_quote_offsets() -> None:
+    day = _minimal_day()
+    config = DiagnosticsConfig(
+        mode="smoke",
+        lookback=1,
+        latency=0,
+        episode_length=2,
+        stable_windows=["10:00:00-10:01:00"],
+        dqn_discrete_offset_pairs="1:1,1:2,2:1,2:2,1:3,3:1,3:3",
+    )
+    env = PaperTradingEnv(day, config, episode_start=0, episode_stop=2, episode_index=0)
+    env.reset()
+
+    action = DiscreteActionPolicy(0).act(env.state(), env)
+
+    assert np.isclose(action.ask_price, 10.02)
+    assert np.isclose(action.bid_price, 9.98)
+
+
 def test_author_raw_continuous_policy_keeps_literal_reference_action_scale() -> None:
     day = _minimal_day()
     config = DiagnosticsConfig(

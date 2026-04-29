@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from functools import lru_cache
 
 import numpy as np
 
@@ -139,16 +140,7 @@ class DiscreteActionPolicy:
             if env.inventory > 0:
                 return PaperAction(ask_price=tick, ask_volume=-env.inventory, bid_price=0.0, bid_volume=0)
             return PaperAction(ask_price=0.0, ask_volume=0, bid_price=0.0, bid_volume=0)
-        offsets = {
-            0: (0, 0),
-            1: (0, 1),
-            2: (1, 0),
-            3: (1, 1),
-            4: (0, 2),
-            5: (2, 0),
-            6: (2, 2),
-        }
-        ask_offset, bid_offset = offsets.get(action, (0, 0))
+        ask_offset, bid_offset = _dqn_discrete_offsets(env.config.dqn_discrete_offset_pairs).get(action, (0, 0))
         ask_volume = -lot
         bid_volume = lot
         inventory_limit = env.config.max_inventory_units * lot
@@ -162,6 +154,26 @@ class DiscreteActionPolicy:
             bid_price=bid1 - bid_offset * tick,
             bid_volume=bid_volume,
         )
+
+
+@lru_cache(maxsize=32)
+def _dqn_discrete_offsets(raw_offsets: str) -> dict[int, tuple[int, int]]:
+    pairs: list[tuple[int, int]] = []
+    for raw_pair in raw_offsets.split(","):
+        item = raw_pair.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            raise ValueError(f"Invalid dqn_discrete_offset_pairs item {item!r}; expected ask_ticks:bid_ticks")
+        raw_ask, raw_bid = item.split(":", 1)
+        ask_offset = int(raw_ask)
+        bid_offset = int(raw_bid)
+        if ask_offset < 0 or bid_offset < 0:
+            raise ValueError("dqn_discrete_offset_pairs offsets must be non-negative")
+        pairs.append((ask_offset, bid_offset))
+    if len(pairs) != 7:
+        raise ValueError("dqn_discrete_offset_pairs must define exactly 7 quote actions")
+    return {action: pair for action, pair in enumerate(pairs)}
 
 
 def _round_up(value: float, tick_size: float) -> float:

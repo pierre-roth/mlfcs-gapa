@@ -224,6 +224,7 @@ class SimulatorConfig:
     dqn_epsilon_start: float = 0.20
     dqn_epsilon_end: float = 0.02
     dqn_epsilon_decay: float = 0.80
+    dqn_discrete_offset_pairs: str = "0:0,0:1,1:0,1:1,0:2,2:0,2:2"
     discount: float = 0.99
 
     def apply_mode_defaults(self) -> None:
