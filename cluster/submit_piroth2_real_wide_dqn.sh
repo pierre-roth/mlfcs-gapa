@@ -91,6 +91,8 @@ real_env() {
 
 REPO="$(repo_root)"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
+ACTION_LABEL="${ACTION_LABEL:-realwide}"
+DQN_DISCRETE_OFFSET_PAIRS="${DQN_DISCRETE_OFFSET_PAIRS:-1:1,1:2,2:1,2:2,1:3,3:1,3:3}"
 printf 'group,algo,dataset,symbol,run_name,pretrain_job,train_job,eval_job,baseline_job,checkpoint\n'
 
 COMMON_DQN=(
@@ -122,13 +124,13 @@ REAL_Z1_U1=(
     "REWARD_INVENTORY_PENALTY_WEIGHT=1.0"
 )
 WIDE_ACTIONS=(
-    "DQN_DISCRETE_OFFSET_PAIRS=1:1,1:2,2:1,2:2,1:3,3:1,3:3"
+    "DQN_DISCRETE_OFFSET_PAIRS=${DQN_DISCRETE_OFFSET_PAIRS}"
 )
 
 for seed in 7 11; do
     for symbol in AAPL GOOGL; do
         mapfile -t ENV < <(real_env "${seed}" 250)
-        IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "realwide_s250_seed${seed}" "${symbol}" "${ENV[@]}" "${COMMON_DQN[@]}" "${WIDE_ACTIONS[@]}")
-        submit_dqn_pipeline "realwide_z1_u1_s250_seed${seed}" "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}" "${WIDE_ACTIONS[@]}"
+        IFS='|' read -r pretrain_id checkpoint < <(submit_shared_pretrain "${ACTION_LABEL}_s250_seed${seed}" "${symbol}" "${ENV[@]}" "${COMMON_DQN[@]}" "${WIDE_ACTIONS[@]}")
+        submit_dqn_pipeline "${ACTION_LABEL}_z1_u1_s250_seed${seed}" "${symbol}" "${pretrain_id}" "${checkpoint}" "${ENV[@]}" "${COMMON_DQN[@]}" "${BASE_REWARD[@]}" "${REAL_Z1_U1[@]}" "${WIDE_ACTIONS[@]}"
     done
 done

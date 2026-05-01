@@ -336,6 +336,36 @@ Submitted wide-action real-data diagnostic `20260429_222000`:
 | `realwide_z1_u1_s250_seed11` | AAPL | 11 | 65208575 | 65208580 | 65208582 | 65208583 |
 | `realwide_z1_u1_s250_seed11` | GOOGL | 11 | 65208584 | 65208585 | 65208586 | 65208588 |
 
+The wide-action diagnostic completed successfully. It improved real DQN
+consistency but still missed the stricter episode-level bar:
+
+| symbol | seed | episodes | PnL | median PnL | positive rate | avg abs position | avg spread | fill rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AAPL | 7 | 20 | +0.3950 | -0.0200 | 0.5000 | 0.9185 | 0.0604 | 0.2978 |
+| AAPL | 11 | 20 | +0.3010 | +0.2050 | 0.6500 | 1.1064 | 0.0606 | 0.2918 |
+| GOOGL | 7 | 31 | +0.0626 | +0.0600 | 0.5484 | 1.0491 | 0.0604 | 0.3137 |
+| GOOGL | 11 | 31 | +0.0229 | +0.0100 | 0.5161 | 1.3899 | 0.0604 | 0.2784 |
+
+Aggregate over four symbol/seed cells: mean PnL `+0.1954`, worst-cell PnL
+`+0.0229`, mean median PnL `+0.0637`, mean positive rate `0.5536`, mean avg
+abs position `1.1160`, and mean fill rate `0.2954`. Compared with the corrected
+standard real DQN (`z1_u1`) this raises mean PnL from `+0.0382` to `+0.1954`,
+turns the worst cell from `-0.2742` to `+0.0229`, and lowers fill rate from
+about `0.4292` to `0.2954`. It therefore supports the action-aggressiveness
+hypothesis, but it is not yet robust enough because episode positive rates are
+mostly below 65%.
+
+A more passive follow-up was submitted with stamp `20260501_121500`, holding
+the reward/training recipe fixed and changing only `DQN_DISCRETE_OFFSET_PAIRS`
+to `2:2,2:3,3:2,3:3,2:4,4:2,4:4`:
+
+| group | symbol | seed | pretrain | train | eval | baseline |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `realwider_z1_u1_s250_seed7` | AAPL | 7 | 65244985 | 65244986 | 65244987 | 65244988 |
+| `realwider_z1_u1_s250_seed7` | GOOGL | 7 | 65244989 | 65244990 | 65244991 | 65244992 |
+| `realwider_z1_u1_s250_seed11` | AAPL | 11 | 65244993 | 65244994 | 65244995 | 65244996 |
+| `realwider_z1_u1_s250_seed11` | GOOGL | 11 | 65244997 | 65244998 | 65244999 | 65245000 |
+
 The slow synthetic optimizer pretrain from the original blocker batch was
 cancelled near its 12-hour limit before producing a checkpoint. The replacement
 synthetic optimizer blocker reuses the completed seed-17 synthetic 000858
@@ -346,6 +376,21 @@ jobs:
 | --- | ---: | ---: |
 | `optblock_synth_enc01_seed17` | 65122879 | 65122884 |
 | `optblock_synth_enc00_seed17` | 65122890 | 65122894 |
+
+Those replacement synthetic optimizer-blocker jobs completed successfully. They
+do not indicate that frozen/low-LR encoder tuning is required for the synthetic
+PPO result:
+
+| group | PnL | reward | median PnL | positive rate | avg abs position | avg spread | fill rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `optblock_synth_enc00_seed17` | +1.4393 | +1.4387 | +1.1900 | 0.9417 | 0.5868 | 0.0355 | 0.0685 |
+| `optblock_synth_enc01_seed17` | +1.3180 | +1.3174 | +1.1100 | 0.9583 | 0.5658 | 0.0364 | 0.0676 |
+
+The frozen-encoder variant improves mean synthetic 000858 PnL relative to the
+earlier seed-17 consistency PPO (`+1.3360`), but by a modest amount and with a
+slightly lower positive rate. This is useful for training-recipe diagnosis, but
+the dominant remaining blocker is still real-data consistency rather than
+synthetic PPO profitability.
 
 ## Decision Rule
 
