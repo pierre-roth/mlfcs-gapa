@@ -66,11 +66,14 @@ def train_ppo(envs, model, config: TrainConfig, select_fn=None):
     best_epoch = -1
     for epoch in range(config.ppo_epochs):
         rollout_steps = []
-        for _ in range(config.ppo_rollouts_per_epoch):
+        episode_rewards = []
+        for ep_idx in range(config.ppo_rollouts_per_epoch):
             env, span = episode_queue[0]
             episode_queue.rotate(-1)
             obs = env.reset(span)
             done = False
+            ep_reward = 0.0
+            ep_steps = 0
             while not done:
                 lob = torch.tensor(obs.lob[None, :, :], dtype=torch.float32, device=config.device)
                 flat = torch.tensor(obs.flat[None, :], dtype=torch.float32, device=config.device)
@@ -90,7 +93,10 @@ def train_ppo(envs, model, config: TrainConfig, select_fn=None):
                         "done": bool(done),
                     }
                 )
+                ep_reward += float(reward)
+                ep_steps += 1
                 obs = next_obs
+            episode_rewards.append(ep_reward)
         batch = _batch_from_rollouts(rollout_steps, config)
         losses = []
         for _ in range(config.ppo_updates):
@@ -121,7 +127,30 @@ def train_ppo(envs, model, config: TrainConfig, select_fn=None):
                     best_metric = metric
                     best_epoch = epoch
                     best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
-        history.append({"epoch": epoch, "loss": float(np.mean(losses) if losses else 0.0), "selected_metric": metric})
+        mean_loss = float(np.mean(losses) if losses else 0.0)
+        metric_str = f"{metric:.4f}" if metric is not None else "N/A"
+        ep_arr = np.array(episode_rewards, dtype=np.float32)
+        ep_mean = float(ep_arr.mean()) if len(ep_arr) > 0 else 0.0
+        ep_std = float(ep_arr.std()) if len(ep_arr) > 0 else 0.0
+        ep_best = float(ep_arr.max()) if len(ep_arr) > 0 else 0.0
+        trades_str = "N/A"
+        fill_str = "N/A"
+        if select_fn is not None and summary is not None:
+            trades_val = summary.get("trades_mean")
+            fill_val = summary.get("fill_rate_mean")
+            if trades_val is not None:
+                trades_str = f"{trades_val:.2f}"
+            if fill_val is not None:
+                fill_str = f"{fill_val:.3f}"
+        print(
+            f"  [ppo] epoch {epoch+1}/{config.ppo_epochs} "
+            f"loss={mean_loss:.4f} "
+            f"ep_reward={ep_mean:.2f}±{ep_std:.2f} best={ep_best:.2f} "
+            f"val_{config.ppo_selection_metric}={metric_str} "
+            f"val_trades={trades_str} val_fill={fill_str} "
+            f"best_epoch={best_epoch}"
+        )
+        history.append({"epoch": epoch, "loss": mean_loss, "selected_metric": metric})
     model.load_state_dict(best_state)
     return model, history, {"selected_epoch": float(best_epoch), "selected_metric": float(best_metric) if best_metric > float("-inf") else None}
 

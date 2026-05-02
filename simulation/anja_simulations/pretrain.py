@@ -84,8 +84,10 @@ def run_pretrain(config: PretrainConfig) -> dict[str, dict[str, float]]:
                 loss.backward()
                 opt.step()
                 losses.append(float(loss.item()))
+            mean_loss = float(np.mean(losses) if losses else 0.0)
             val_metrics = _evaluate(model, val_loader, config.device)
-            history.append({"epoch": epoch, "loss": float(np.mean(losses) if losses else 0.0), **val_metrics})
+            print(f"  [pretrain] epoch {epoch+1}/{config.pretrain_epochs} loss={mean_loss:.4f} val_f1={val_metrics['f1']:.4f}")
+            history.append({"epoch": epoch, "loss": mean_loss, **val_metrics})
             if val_metrics["f1"] > best_f1:
                 best_f1 = val_metrics["f1"]
                 best_state = {key: value.detach().cpu() for key, value in backbone.state_dict().items()}

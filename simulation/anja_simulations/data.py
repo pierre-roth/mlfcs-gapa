@@ -54,6 +54,13 @@ class DayData:
         return valid
 
 
+def _signal_labels(signal: np.ndarray, threshold: float) -> np.ndarray:
+    labels = np.full(len(signal), 1, dtype=np.float32)  # default: flat
+    labels[signal >= threshold] = 0   # positive signal → up
+    labels[signal <= -threshold] = 2  # negative signal → down
+    return labels
+
+
 def _paper_labels(midprice: np.ndarray, horizon: int, threshold: float) -> np.ndarray:
     price_series = pd.Series(midprice)
     price_past = price_series.rolling(window=horizon).mean().to_numpy()
@@ -99,31 +106,29 @@ def _paper_normalize_lob(
     midprice: np.ndarray,
     volume_normalizers: tuple[dict[int, float], dict[int, float]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    raw_rows = []
-    norm_rows = []
     if volume_normalizers is not None:
         ask_vol_max, bid_vol_max = volume_normalizers
     else:
         ask_vol_max = {level: max(float(ask[f"ask{level}_volume"].max()), 1.0) for level in range(1, 11)}
         bid_vol_max = {level: max(float(bid[f"bid{level}_volume"].max()), 1.0) for level in range(1, 11)}
-    for idx, mid in enumerate(midprice):
-        raw = []
-        norm = []
-        for level in range(1, 11):
-            ask_p = float(ask.iloc[idx][f"ask{level}_price"])
-            ask_v = float(ask.iloc[idx][f"ask{level}_volume"])
-            bid_p = float(bid.iloc[idx][f"bid{level}_price"])
-            bid_v = float(bid.iloc[idx][f"bid{level}_volume"])
-            raw.extend([ask_p, ask_v, bid_p, bid_v])
-            norm.extend([
-                ask_p / max(mid, 1e-8) - 1.0,
-                ask_v / ask_vol_max[level],
-                bid_p / max(mid, 1e-8) - 1.0,
-                bid_v / bid_vol_max[level],
-            ])
-        raw_rows.append(raw)
-        norm_rows.append(norm)
-    return np.asarray(raw_rows, dtype=np.float32), np.asarray(norm_rows, dtype=np.float32)
+    mid = np.maximum(midprice, 1e-8)
+    raw_cols = []
+    norm_cols = []
+    for level in range(1, 11):
+        ask_p = ask[f"ask{level}_price"].to_numpy(dtype=np.float32)
+        ask_v = ask[f"ask{level}_volume"].to_numpy(dtype=np.float32)
+        bid_p = bid[f"bid{level}_price"].to_numpy(dtype=np.float32)
+        bid_v = bid[f"bid{level}_volume"].to_numpy(dtype=np.float32)
+        raw_cols.extend([ask_p, ask_v, bid_p, bid_v])
+        norm_cols.extend([
+            ask_p / mid - 1.0,
+            ask_v / ask_vol_max[level],
+            bid_p / mid - 1.0,
+            bid_v / bid_vol_max[level],
+        ])
+    raw = np.stack(raw_cols, axis=1).astype(np.float32)
+    norm = np.stack(norm_cols, axis=1).astype(np.float32)
+    return raw, norm
 
 
 def _stable_mask(timestamps: pd.DatetimeIndex, windows: list[str]) -> np.ndarray:
@@ -182,7 +187,10 @@ def load_day(
     spread = ask1 - bid1
     lob, normalized_lob = _paper_normalize_lob(ask, bid, midprice, volume_normalizers)
     dynamic = build_market_features(timestamps, midprice.astype(np.float64), msg, config.rv_windows_s, config.rsi_windows_s, config.osi_windows_s)
-    labels = _paper_labels(midprice.astype(np.float64), config.pretrain_horizon, config.pretrain_alpha)
+    if config.pretrain_label_source == "signal":
+        labels = _signal_labels(latent["latent_alpha"].to_numpy(dtype=np.float64), config.pretrain_signal_threshold)
+    else:
+        labels = _paper_labels(midprice.astype(np.float64), config.pretrain_horizon, config.pretrain_alpha)
     stable_mask = _stable_mask(timestamps, config.stable_windows if config.use_stable_hours else [])
     return DayData(
         symbol=symbol,

@@ -273,7 +273,7 @@ class AgentBasedLOB:
         spread = self.spread_ticks
         if spread > 1:
             # Narrowing probability: fairly aggressive at 2 ticks, very strong at 3+
-            narrow_prob = min(0.92, 0.55 * (spread - 1))
+            narrow_prob = min(0.97, 0.80 * (spread - 1))
             if self.rng.random() < narrow_prob:
                 mid = self.midprice
                 inner_levels = min(spread - 1, 3)
@@ -291,7 +291,7 @@ class AgentBasedLOB:
     def _step_latent(self) -> tuple[int, float]:
         self.regime_clock += 1
         regime_shift = 0
-        if self.regime_clock > 300 and self.rng.random() < 0.004:
+        if self.regime_clock > self.config.regime_min_duration and self.rng.random() < self.config.regime_switch_prob:
             self.regime = int(self.rng.choice([-1, 0, 1], p=[0.3, 0.4, 0.3]))
             self.regime_clock = 0
             regime_shift = 1
@@ -302,7 +302,7 @@ class AgentBasedLOB:
             + self.rng.normal(0.0, self.profile.signal_noise * self.config.alpha_signal_scale)
         )
         # --- volatility clustering (gentle GARCH-like) ---
-        vol_target = 1.0 + 0.3 * abs(self.regime) + 0.1 * min(abs(self.signal), 2.0)
+        vol_target = 0.9 + 0.1 * min(abs(self.signal), 2.0)
         vol_shock = 0.003 * abs(self.rng.normal())
         self.vol_state = np.clip(
             0.99 * self.vol_state + 0.01 * vol_target + vol_shock,
@@ -328,6 +328,13 @@ class AgentBasedLOB:
             + price_scale * 0.0022 * self.signal
             + self.rng.normal(0.0, price_scale * self.vol_state * 0.35 * self.config.price_noise_scale)
         )
+        # Random news jumps (~8/day at 120k events): create fat tails and
+        # random vol spikes not tied to regime, reducing systematic clustering.
+        if self.rng.random() < 0.00007:
+            jump = self.rng.choice([-1.0, 1.0]) * self.rng.uniform(0.05, 0.15) * price_scale
+            fair_move += jump
+            self.vol_state = min(1.8, self.vol_state + 0.4)
+
         self.fair_value = max(self.tick, self.fair_value + fair_move)
         return regime_shift, fair_move
 

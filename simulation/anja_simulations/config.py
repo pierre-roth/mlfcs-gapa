@@ -31,6 +31,8 @@ class ExperimentConfig:
 
     pretrain_horizon: int = 10
     pretrain_alpha: float = 1e-5
+    pretrain_label_source: str = "price"  # "price" or "signal"
+    pretrain_signal_threshold: float = 0.1
     pretrain_backbone: str = "attn"
     pretrain_epochs: int = 10
     pretrain_batch_size: int = 128
@@ -115,8 +117,12 @@ class ExperimentConfig:
 
     signal_threshold_for_lob_leak: float = 0.5
     lob_leak_strength: float = 0.3
-    informed_hawkes_alpha: float = 0.1
+    informed_hawkes_alpha: float = 0.04
     informed_hawkes_decay: float = 0.97
+
+    # Regime persistence: how long (events) before regime can switch, and per-event prob.
+    regime_min_duration: int = 2000
+    regime_switch_prob: float = 0.001
 
     def apply_mode_defaults(self) -> "ExperimentConfig":
         if self.mode == "smoke":
