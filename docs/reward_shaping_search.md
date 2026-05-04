@@ -366,6 +366,19 @@ to `2:2,2:3,3:2,3:3,2:4,4:2,4:4`:
 | `realwider_z1_u1_s250_seed11` | AAPL | 11 | 65244993 | 65244994 | 65244995 | 65244996 |
 | `realwider_z1_u1_s250_seed11` | GOOGL | 11 | 65244997 | 65244998 | 65244999 | 65245000 |
 
+Status update on 2026-05-04: all four `realwider` pretrain, DQN training, and
+baseline jobs completed successfully, but the four policy evaluation jobs
+remained pending in `normal.24h` for priority despite their training
+dependencies being complete. The stale pending eval jobs `65244987`,
+`65244991`, `65244995`, and `65244999` were cancelled and replacement
+`normal.4h` eval jobs were submitted with the same run configuration:
+`65374579`, `65374583`, `65374585`, and `65374589`. The trained checkpoints and
+baseline CSVs exist, but `dqn_episodes.csv` has not yet been written for the
+`realwider` runs, so no held-out `realwider` PnL table should be interpreted
+yet. The final DQN training rows were negative across the four cells, which is
+a warning sign, but the held-out evaluation is still needed before comparing
+against the less passive `realwide` result.
+
 The slow synthetic optimizer pretrain from the original blocker batch was
 cancelled near its 12-hour limit before producing a checkpoint. The replacement
 synthetic optimizer blocker reuses the completed seed-17 synthetic 000858
