@@ -14,7 +14,7 @@ Current scope:
 - synthetic data visual report
 
 Main files:
-- [paper.tex](/Users/piroth/Documents/projects/mlfcs-gapa/paper.tex)
+- [paper/paper.tex](/Users/piroth/Documents/projects/mlfcs-gapa/paper/paper.tex)
 - [docs/piroth2_simulator.md](/Users/piroth/Documents/projects/mlfcs-gapa/docs/piroth2_simulator.md)
 - [docs/paper_alignment.md](/Users/piroth/Documents/projects/mlfcs-gapa/docs/paper_alignment.md)
 - [piroth/config.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/config.py)
