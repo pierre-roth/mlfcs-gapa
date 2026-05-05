@@ -90,7 +90,8 @@ def main() -> None:
         build_synthetic_data_report(days, config, output_dir / "visual_report")
     elif args.kind == "pretrain":
         days = load_market_days(config, "train")
-        train_pretrain_classifier(days, config, output_dir / "models", device=args.device)
+        eval_days = load_market_days(config, "test")
+        train_pretrain_classifier(days, config, output_dir / "models", device=args.device, eval_days=eval_days)
     elif args.kind == "train-ppo":
         days = load_market_days(config, "train")
         pretrain_path = Path(args.checkpoint) if args.checkpoint else output_dir / "models" / "attnlob_pretrain.pt"

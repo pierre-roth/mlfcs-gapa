@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import torch
 
-from piroth.models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, TradingBackbone
+from piroth.models import (
+    AttnLOBEncoder,
+    ConvLOBEncoder,
+    DeepLOBEncoder,
+    DuelingDQN,
+    FCLOBEncoder,
+    PPOActorCritic,
+    TradingBackbone,
+    build_pretrain_classifier,
+)
 from piroth.config import DiagnosticsConfig
 from piroth.training import _linear_schedule, _optimizer_for_model
 
@@ -15,6 +24,27 @@ def test_attnlob_encoder_matches_paper_output_shape() -> None:
         encoded = encoder(torch.zeros(2, 50, 40, 1))
 
     assert encoded.shape == (2, 64)
+
+
+def test_pretraining_comparison_encoders_match_latent_shape() -> None:
+    lob = torch.zeros(2, 50, 40, 1)
+
+    for encoder in [FCLOBEncoder(), ConvLOBEncoder(), DeepLOBEncoder(), AttnLOBEncoder()]:
+        encoder.eval()
+        with torch.no_grad():
+            encoded = encoder(lob)
+        assert encoded.shape == (2, 64)
+
+
+def test_pretraining_comparison_classifiers_match_label_shape() -> None:
+    lob = torch.zeros(2, 50, 40, 1)
+
+    for model_type in ["fclob", "convlob", "deeplob", "attnlob"]:
+        classifier = build_pretrain_classifier(model_type)
+        classifier.eval()
+        with torch.no_grad():
+            logits = classifier(lob)
+        assert logits.shape == (2, 3)
 
 
 def test_trading_heads_accept_lob_dynamic_and_agent_state() -> None:

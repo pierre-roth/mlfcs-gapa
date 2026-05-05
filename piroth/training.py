@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
@@ -15,7 +16,7 @@ from tqdm import tqdm
 
 from .baselines import calibrate_avellaneda_stoikov
 from .config import DiagnosticsConfig
-from .models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, PretrainClassifier, TradingBackbone
+from .models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, PretrainClassifier, TradingBackbone, build_pretrain_classifier
 from .paper_env import PaperAction, PaperTradingEnv, run_episode
 from .paper_features import LOB_COLUMNS, combine_orderbook, lob_tensor_from_values, midprice_direction_labels
 from .paper_policies import AvellanedaStoikovPaperPolicy, ContinuousActionPolicy, DiscreteActionPolicy
@@ -30,6 +31,8 @@ class PretrainDataset(Dataset):
         self.index: list[tuple[int, int, int]] = []
         for day_idx, day in enumerate(days):
             labels = midprice_direction_labels(day.price["midprice"], config.pretrain_horizon, config.pretrain_threshold)
+            if config.pretrain_stable_windows_only:
+                labels = labels.loc[_stable_window_mask(day.price["timestamp"], config.stable_windows)]
             day_items = [(int(event_idx), int(label)) for event_idx, label in labels.dropna().astype(int).items() if int(event_idx) >= config.lookback]
             if config.max_pretrain_samples_per_day is not None and len(day_items) > config.max_pretrain_samples_per_day:
                 rng = np.random.default_rng(config.seed + day_idx)
@@ -48,11 +51,12 @@ class PretrainDataset(Dataset):
         return torch.from_numpy(lob), torch.tensor(label, dtype=torch.long)
 
 
-def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfig, output_dir: Path, device: str = "cpu") -> Path:
+def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfig, output_dir: Path, device: str = "cpu", eval_days: list[SyntheticDay] | None = None) -> Path:
     _configure_torch(device)
     dataset = PretrainDataset(days, config)
     if len(dataset) == 0:
-        raise ValueError("No Attn-LOB pretraining samples were generated; check lookback, horizon, and synthetic event count.")
+        raise ValueError("No LOB pretraining samples were generated; check lookback, horizon, sampling windows, and event count.")
+    eval_dataset = PretrainDataset(eval_days, config) if eval_days else None
     loader = DataLoader(
         dataset,
         batch_size=config.torch_batch_size,
@@ -61,7 +65,19 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
         pin_memory=device.startswith("cuda"),
         persistent_workers=_dataloader_workers(device) > 0,
     )
-    model = PretrainClassifier().to(device)
+    eval_loader = (
+        DataLoader(
+            eval_dataset,
+            batch_size=config.torch_batch_size,
+            shuffle=False,
+            num_workers=_dataloader_workers(device),
+            pin_memory=device.startswith("cuda"),
+            persistent_workers=_dataloader_workers(device) > 0,
+        )
+        if eval_dataset is not None and len(eval_dataset)
+        else None
+    )
+    model = build_pretrain_classifier(config.pretrain_model_type, lookback=config.lookback).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.torch_learning_rate)
     criterion = nn.CrossEntropyLoss()
     history = []
@@ -81,12 +97,98 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
             losses.append(float(loss.detach().cpu()))
             correct += int((logits.argmax(dim=1) == label).sum().detach().cpu())
             total += int(label.numel())
-        history.append({"epoch": epoch + 1, "loss": float(np.mean(losses)), "accuracy": correct / max(total, 1)})
+        row = {
+            "epoch": epoch + 1,
+            "model_type": config.pretrain_model_type,
+            "train_loss": float(np.mean(losses)),
+            "train_accuracy": correct / max(total, 1),
+            "train_samples": total,
+        }
+        if eval_loader is not None:
+            row.update(_evaluate_pretrain_classifier(model, eval_loader, criterion, device, prefix="eval"))
+        history.append(row)
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "attnlob_pretrain.pt"
+    model_slug = _pretrain_model_slug(config.pretrain_model_type)
+    path = output_dir / ("attnlob_pretrain.pt" if model_slug == "attnlob" else f"{model_slug}_pretrain.pt")
     torch.save({"model": model.state_dict(), "config": asdict(config), "history": history}, path)
-    pd.DataFrame(history).to_csv(output_dir / "attnlob_pretrain_history.csv", index=False)
+    history_path = output_dir / ("attnlob_pretrain_history.csv" if model_slug == "attnlob" else f"{model_slug}_pretrain_history.csv")
+    pd.DataFrame(history).to_csv(history_path, index=False)
+    summary = {
+        "model_type": model_slug,
+        "checkpoint": str(path),
+        "history": str(history_path),
+        "train_days": len(days),
+        "eval_days": len(eval_days or []),
+        "final": history[-1],
+        "parameters": sum(parameter.numel() for parameter in model.parameters()),
+    }
+    with (output_dir / f"{model_slug}_pretrain_summary.json").open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, sort_keys=True)
     return path
+
+
+def _evaluate_pretrain_classifier(model: PretrainClassifier, loader: DataLoader, criterion: nn.Module, device: str, prefix: str) -> dict[str, float | int]:
+    model.eval()
+    losses = []
+    predictions = []
+    targets = []
+    with torch.no_grad():
+        for lob, label in loader:
+            lob = lob.to(device=device, dtype=torch.float32)
+            label = label.to(device=device)
+            logits = model(lob)
+            losses.append(float(criterion(logits, label).detach().cpu()))
+            predictions.append(logits.argmax(dim=1).detach().cpu().numpy())
+            targets.append(label.detach().cpu().numpy())
+    pred = np.concatenate(predictions) if predictions else np.array([], dtype=np.int64)
+    target = np.concatenate(targets) if targets else np.array([], dtype=np.int64)
+    metrics = _classification_metrics(target, pred, num_classes=3)
+    return {
+        f"{prefix}_loss": float(np.mean(losses)) if losses else float("nan"),
+        f"{prefix}_accuracy": metrics["accuracy"],
+        f"{prefix}_precision_macro": metrics["precision_macro"],
+        f"{prefix}_recall_macro": metrics["recall_macro"],
+        f"{prefix}_f1_macro": metrics["f1_macro"],
+        f"{prefix}_samples": int(target.size),
+    }
+
+
+def _classification_metrics(target: np.ndarray, prediction: np.ndarray, num_classes: int) -> dict[str, float]:
+    if target.size == 0:
+        return {"accuracy": float("nan"), "precision_macro": float("nan"), "recall_macro": float("nan"), "f1_macro": float("nan")}
+    precision = []
+    recall = []
+    f1 = []
+    for klass in range(num_classes):
+        tp = float(np.sum((prediction == klass) & (target == klass)))
+        fp = float(np.sum((prediction == klass) & (target != klass)))
+        fn = float(np.sum((prediction != klass) & (target == klass)))
+        p = tp / (tp + fp) if tp + fp else 0.0
+        r = tp / (tp + fn) if tp + fn else 0.0
+        precision.append(p)
+        recall.append(r)
+        f1.append(2.0 * p * r / (p + r) if p + r else 0.0)
+    return {
+        "accuracy": float(np.mean(prediction == target)),
+        "precision_macro": float(np.mean(precision)),
+        "recall_macro": float(np.mean(recall)),
+        "f1_macro": float(np.mean(f1)),
+    }
+
+
+def _pretrain_model_slug(model_type: str) -> str:
+    normalized = model_type.strip().lower().replace("_", "").replace("-", "")
+    aliases = {"attn": "attnlob", "fc": "fclob", "conv": "convlob", "deep": "deeplob"}
+    return aliases.get(normalized, normalized)
+
+
+def _stable_window_mask(timestamps: pd.Series, windows: list[str]) -> np.ndarray:
+    clock = timestamps.dt.strftime("%H:%M:%S")
+    mask = np.zeros(len(clock), dtype=bool)
+    for raw in windows:
+        start, end = raw.split("-", maxsplit=1)
+        mask |= (clock >= start) & (clock <= end)
+    return mask
 
 
 class PPOModelPolicy:

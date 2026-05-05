@@ -10,6 +10,15 @@ inconsistent, so this branch treats it as intent rather than an executable spec.
 ## Architecture Mapping
 
 - LOB input: `T x 40 x 1`, with `T=50` by default.
+- Pretraining-comparison encoders:
+  - `fclob`: fully connected baseline with `2000 -> 1024 -> 256 -> 64`
+    hidden representation.
+  - `convlob`: fully convolutional baseline with temporal dilated
+    convolutions and a 64-dimensional pooled representation.
+  - `deeplob`: DeepLOB-style CNN/inception front-end with LSTM temporal
+    aggregation.
+  - `attnlob`: paper/reference-code attention architecture used as the default
+    trading encoder.
 - Early convolutions:
   - `Conv2D(32, 1x2, stride 1x2)`
   - two `Conv2D(32, 4x1, same)` layers

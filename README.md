@@ -10,7 +10,7 @@ Current scope:
 - richer simulator internals in `event_log.csv` and `latent.csv`
 - paper-style dynamic state, agent state, LOB normalization, and Attn-LOB pretraining labels
 - paper-style random, fixed, and Avellaneda-Stoikov evaluations
-- PyTorch implementations of Attn-LOB, C-PPO, and D-DQN
+- PyTorch implementations of FC-LOB, Conv-LOB, DeepLOB, Attn-LOB, C-PPO, and D-DQN
 - synthetic data visual report
 
 Main files:
@@ -28,6 +28,7 @@ Main files:
 - [piroth/results_summary.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/results_summary.py)
 - [piroth/diagnostics.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/diagnostics.py)
 - [cluster/submit_piroth2_ppo_sweep.sh](/Users/piroth/Documents/projects/mlfcs-gapa/cluster/submit_piroth2_ppo_sweep.sh)
+- [cluster/submit_piroth2_pretrain_comparison.sh](/Users/piroth/Documents/projects/mlfcs-gapa/cluster/submit_piroth2_pretrain_comparison.sh)
 
 Cluster jobs:
 
@@ -56,6 +57,9 @@ cluster/submit_piroth2.sh report
 
 # Attn-LOB pretraining
 cluster/submit_piroth2.sh pretrain
+
+# Table-I-style LOB encoder pretraining comparison
+cluster/submit_piroth2_pretrain_comparison.sh
 
 # C-PPO / D-DQN
 cluster/submit_piroth2.sh train-ppo

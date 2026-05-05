@@ -4,6 +4,108 @@ import torch
 from torch import nn
 
 
+class FCLOBEncoder(nn.Module):
+    """Fully connected LOB encoder baseline from the paper's Table I."""
+
+    def __init__(self, output_dim: int = 64, lookback: int = 50, features: int = 40) -> None:
+        super().__init__()
+        self.output_dim = output_dim
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(lookback * features, 1024),
+            nn.LeakyReLU(0.01),
+            nn.Linear(1024, 256),
+            nn.LeakyReLU(0.01),
+            nn.Linear(256, output_dim),
+            nn.LeakyReLU(0.01),
+        )
+
+    def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
+        if lob_state.ndim != 4:
+            raise ValueError(f"Expected LOB tensor with 4 dims, got {tuple(lob_state.shape)}")
+        return self.net(lob_state)
+
+
+class ConvLOBEncoder(nn.Module):
+    """Dilated convolutional LOB encoder baseline.
+
+    The paper describes Conv-LOB as a fully convolutional network using dilated
+    convolutions to accept longer temporal context. This implementation keeps
+    the same 50x40 input used by the replication and emits the standard
+    64-dimensional latent vector.
+    """
+
+    def __init__(self, output_dim: int = 64) -> None:
+        super().__init__()
+        self.output_dim = output_dim
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=(1, 2), stride=(1, 2)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(3, 1), padding=(1, 0), dilation=(1, 1)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(3, 1), padding=(2, 0), dilation=(2, 1)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 64, kernel_size=(3, 1), padding=(4, 0), dilation=(4, 1)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(64, 64, kernel_size=(3, 1), padding=(8, 0), dilation=(8, 1)),
+            nn.LeakyReLU(0.01),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(64, output_dim),
+            nn.LeakyReLU(0.01),
+        )
+
+    def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
+        if lob_state.ndim != 4:
+            raise ValueError(f"Expected LOB tensor with 4 dims, got {tuple(lob_state.shape)}")
+        x = lob_state.permute(0, 3, 1, 2).contiguous()
+        return self.net(x)
+
+
+class DeepLOBEncoder(nn.Module):
+    """DeepLOB-style CNN plus recurrent encoder baseline.
+
+    DeepLOB uses convolutional spatial feature extraction followed by recurrent
+    temporal aggregation. The spatial/inception front-end mirrors the LOB CNN
+    used by Attn-LOB; the temporal aggregator is an LSTM rather than attention.
+    """
+
+    def __init__(self, output_dim: int = 64, hidden_dim: int = 64) -> None:
+        super().__init__()
+        self.output_dim = output_dim
+        self.spatial = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=(1, 2), stride=(1, 2)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(1, 5), stride=(1, 5)),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(1, 4)),
+            nn.LeakyReLU(0.01),
+        )
+        self.inception_3 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, kernel_size=(3, 1), padding="same"), nn.LeakyReLU(0.01))
+        self.inception_5 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, kernel_size=(5, 1), padding="same"), nn.LeakyReLU(0.01))
+        self.inception_pool = nn.Sequential(nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)), nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01))
+        self.lstm = nn.LSTM(input_size=192, hidden_size=hidden_dim, batch_first=True)
+        self.projection = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
+        if lob_state.ndim != 4:
+            raise ValueError(f"Expected LOB tensor with 4 dims, got {tuple(lob_state.shape)}")
+        x = lob_state.permute(0, 3, 1, 2).contiguous()
+        x = self.spatial(x)
+        x = torch.cat([self.inception_3(x), self.inception_5(x), self.inception_pool(x)], dim=1)
+        x = x.squeeze(-1).permute(0, 2, 1).contiguous()
+        _, (hidden, _) = self.lstm(x)
+        return self.projection(hidden[-1])
+
+
 class AttnLOBEncoder(nn.Module):
     """Paper-faithful Attn-LOB encoder.
 
@@ -66,13 +168,30 @@ class AttnLOBEncoder(nn.Module):
 
 
 class PretrainClassifier(nn.Module):
-    def __init__(self, encoder: AttnLOBEncoder | None = None) -> None:
+    def __init__(self, encoder: nn.Module | None = None, output_dim: int = 64) -> None:
         super().__init__()
         self.encoder = encoder or AttnLOBEncoder()
-        self.head = nn.Linear(64, 3)
+        self.head = nn.Linear(output_dim, 3)
 
     def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
         return self.head(self.encoder(lob_state))
+
+
+def build_lob_encoder(model_type: str, output_dim: int = 64, lookback: int = 50) -> nn.Module:
+    normalized = model_type.strip().lower().replace("_", "").replace("-", "")
+    if normalized in {"attnlob", "attn"}:
+        return AttnLOBEncoder(output_dim=output_dim)
+    if normalized in {"fclob", "fc"}:
+        return FCLOBEncoder(output_dim=output_dim, lookback=lookback)
+    if normalized in {"convlob", "conv"}:
+        return ConvLOBEncoder(output_dim=output_dim)
+    if normalized in {"deeplob", "deep"}:
+        return DeepLOBEncoder(output_dim=output_dim)
+    raise ValueError(f"Unknown pretrain_model_type: {model_type!r}")
+
+
+def build_pretrain_classifier(model_type: str = "attnlob", output_dim: int = 64, lookback: int = 50) -> PretrainClassifier:
+    return PretrainClassifier(build_lob_encoder(model_type, output_dim=output_dim, lookback=lookback), output_dim=output_dim)
 
 
 class TradingBackbone(nn.Module):

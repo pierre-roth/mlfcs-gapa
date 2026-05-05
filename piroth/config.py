@@ -190,8 +190,10 @@ class SimulatorConfig:
     reward_spread_penalty_weight: float = 1.0
     maker_rebate_per_share: float = 0.0
 
+    pretrain_model_type: str = "attnlob"
     pretrain_horizon: int = 10
     pretrain_threshold: float = 1e-5
+    pretrain_stable_windows_only: bool = False
     include_lob_state: bool = True
     include_market_state: bool = True
     include_agent_state: bool = True
