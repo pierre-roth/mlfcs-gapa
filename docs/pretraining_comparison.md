@@ -75,7 +75,37 @@ Final Slurm status: all 20 jobs completed successfully with exit code `0:0`.
 Synthetic jobs took about 11-15 minutes each; real AAPL took about 36-44
 minutes; real GOOGL took about 65 minutes.
 
+## Real-Data Subsampling Correction
+
+The first real-data rows below used `REAL_EVENT_STRIDE=250`,
+`EVENTS_PER_DAY_OVERRIDE=60000`, and `MAX_PRETRAIN_SAMPLES_PER_DAY=80000`.
+Those settings were useful for a bounded smoke comparison, but they are not an
+acceptable real-data replication result because they subsample/cap the L3
+stream. They are retained only as a superseded diagnostic.
+
+The corrected real-data rerun uses:
+
+| setting | value |
+|---|---|
+| `REAL_EVENT_STRIDE` | 1 |
+| `EVENTS_PER_DAY_OVERRIDE` | unset |
+| `MAX_PRETRAIN_SAMPLES_PER_DAY` | unset |
+| `PRETRAIN_THRESHOLD` | `1e-5` |
+
+`PRETRAIN_THRESHOLD` has not been tuned to fit the data. It remains fixed at
+the paper value for the replication run. The rerun summaries include
+train/eval label counts so the paper threshold can be audited after completion.
+
+Submitted corrected full-real rerun on Euler as `20260507_fullreal`:
+
+| dataset | symbol | FC-LOB | Conv-LOB | DeepLOB | Attn-LOB |
+|---|---|---:|---:|---:|---:|
+| real | `AAPL` | 65689381 | 65689384 | 65689385 | 65689387 |
+| real | `GOOGL` | 65689389 | 65689391 | 65689392 | 65689393 |
+
 ## Results
+
+### Superseded Bounded Results
 
 | dataset | symbol | model | params | train acc | eval acc | eval macro F1 | eval loss | train samples | eval samples |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -115,3 +145,7 @@ minutes; real GOOGL took about 65 minutes.
   paper, but they do not reproduce the paper's exact ranking because the data
   sources differ and Conv-LOB/DeepLOB are reimplemented from descriptions rather
   than copied from reference code.
+
+### Corrected Full-Real Results
+
+Pending rerun.

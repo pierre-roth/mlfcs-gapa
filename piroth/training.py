@@ -41,6 +41,7 @@ class PretrainDataset(Dataset):
             for event_idx, label in day_items:
                 if event_idx >= config.lookback:
                     self.index.append((day_idx, event_idx, label))
+        self.label_counts = np.bincount([label for _, _, label in self.index], minlength=3).astype(int).tolist()
 
     def __len__(self) -> int:
         return len(self.index)
@@ -119,6 +120,8 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
         "history": str(history_path),
         "train_days": len(days),
         "eval_days": len(eval_days or []),
+        "train_label_counts": dataset.label_counts,
+        "eval_label_counts": eval_dataset.label_counts if eval_dataset is not None else None,
         "final": history[-1],
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
     }

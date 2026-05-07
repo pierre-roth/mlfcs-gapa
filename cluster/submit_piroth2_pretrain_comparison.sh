@@ -44,10 +44,9 @@ COMMON_PRETRAIN=(
     "LOOKBACK=50"
     "PRETRAIN_HORIZON=10"
     "PRETRAIN_THRESHOLD=0.00001"
-    "TORCH_BATCH_SIZE=2048"
-    "TORCH_LEARNING_RATE=0.0003"
-    "TORCH_EPOCHS=8"
-    "MAX_PRETRAIN_SAMPLES_PER_DAY=80000"
+    "TORCH_BATCH_SIZE=${TORCH_BATCH_SIZE:-2048}"
+    "TORCH_LEARNING_RATE=${TORCH_LEARNING_RATE:-0.0003}"
+    "TORCH_EPOCHS=${TORCH_EPOCHS:-8}"
 )
 
 SYNTH_ENV=(
@@ -56,6 +55,7 @@ SYNTH_ENV=(
     "TRAIN_DAYS=10"
     "TEST_DAYS=6"
     "EVENTS_PER_DAY_OVERRIDE=60000"
+    "MAX_PRETRAIN_SAMPLES_PER_DAY=80000"
     "ORDER_FLOW_MEMORY=0.35"
     "VOLATILITY_CLUSTER_STRENGTH=0.45"
     "VOLATILITY_CLUSTER_PERSISTENCE=0.992"
@@ -64,27 +64,32 @@ SYNTH_ENV=(
 REAL_ENV=(
     "DATA_SOURCE=real"
     "REAL_DATA_ROOT=/cluster/work/math/piroth/mlfcs-gapa/data/processed"
-    "REAL_EVENT_STRIDE=250"
+    "REAL_EVENT_STRIDE=1"
     "REAL_START_TIME=09:30:00"
     "REAL_END_TIME=16:00:00"
     "NUM_DAYS=12"
     "TRAIN_DAYS=8"
     "TEST_DAYS=4"
-    "EVENTS_PER_DAY_OVERRIDE=60000"
 )
 
 MODELS=(fclob convlob deeplob attnlob)
 SYNTH_SYMBOLS=(000001 000858 002415)
 REAL_SYMBOLS=(AAPL GOOGL)
+RUN_SYNTHETIC="${RUN_SYNTHETIC:-1}"
+RUN_REAL="${RUN_REAL:-1}"
 
 printf 'dataset,symbol,model_type,run_name,pretrain_job\n'
-for symbol in "${SYNTH_SYMBOLS[@]}"; do
-    for model_type in "${MODELS[@]}"; do
-        submit_pretrain synthetic "${symbol}" "${model_type}" "${COMMON_PRETRAIN[@]}" "${SYNTH_ENV[@]}"
+if [[ "${RUN_SYNTHETIC}" == "1" ]]; then
+    for symbol in "${SYNTH_SYMBOLS[@]}"; do
+        for model_type in "${MODELS[@]}"; do
+            submit_pretrain synthetic "${symbol}" "${model_type}" "${COMMON_PRETRAIN[@]}" "${SYNTH_ENV[@]}"
+        done
     done
-done
-for symbol in "${REAL_SYMBOLS[@]}"; do
-    for model_type in "${MODELS[@]}"; do
-        submit_pretrain real "${symbol}" "${model_type}" "${COMMON_PRETRAIN[@]}" "${REAL_ENV[@]}"
+fi
+if [[ "${RUN_REAL}" == "1" ]]; then
+    for symbol in "${REAL_SYMBOLS[@]}"; do
+        for model_type in "${MODELS[@]}"; do
+            submit_pretrain real "${symbol}" "${model_type}" "${COMMON_PRETRAIN[@]}" "${REAL_ENV[@]}"
+        done
     done
-done
+fi
