@@ -166,13 +166,41 @@ Implemented diagnostics:
 - `cluster/submit_piroth2_pretrain_threshold_sweep.sh`: full-real pretraining
   sweep over thresholds and class-weighting modes.
 
-Active label-scan job:
+Completed label-scan job:
 
 | job | purpose | data | output |
 |---:|---|---|---|
 | 65691807 | full-real threshold label-balance scan | AAPL/GOOGL, `REAL_EVENT_STRIDE=1` | `/cluster/project/math/piroth/mlfcs-gapa/artifacts_piroth2/pretrain_threshold_scan_20260507_fullreal.csv` |
 
-The training sweep should be launched after the label scan and the fixed-paper
-full-real baseline are available, so the search can be narrowed to thresholds
-that produce a usable class distribution instead of blindly launching a large
-grid.
+Label-balance scan summary:
+
+| symbol | split | threshold | up frac | stationary frac | down frac | minority frac |
+|---|---|---:|---:|---:|---:|---:|
+| AAPL | train | `2.5e-6` | 0.2343 | 0.5307 | 0.2350 | 0.2343 |
+| AAPL | train | `5e-6` | 0.2121 | 0.5750 | 0.2129 | 0.2121 |
+| AAPL | train | `1e-5` | 0.1489 | 0.7022 | 0.1489 | 0.1489 |
+| AAPL | eval | `2.5e-6` | 0.2387 | 0.5238 | 0.2376 | 0.2376 |
+| AAPL | eval | `5e-6` | 0.2152 | 0.5705 | 0.2143 | 0.2143 |
+| AAPL | eval | `1e-5` | 0.1474 | 0.7054 | 0.1472 | 0.1472 |
+| GOOGL | train | `2.5e-6` | 0.3395 | 0.3209 | 0.3396 | 0.3209 |
+| GOOGL | train | `5e-6` | 0.2790 | 0.4422 | 0.2788 | 0.2788 |
+| GOOGL | train | `1e-5` | 0.1862 | 0.6281 | 0.1856 | 0.1856 |
+| GOOGL | eval | `2.5e-6` | 0.3297 | 0.3409 | 0.3294 | 0.3294 |
+| GOOGL | eval | `5e-6` | 0.2527 | 0.4951 | 0.2522 | 0.2522 |
+| GOOGL | eval | `1e-5` | 0.1613 | 0.6774 | 0.1612 | 0.1612 |
+
+Rejected thresholds: `0` has no stationary class; `2e-5` leaves only about
+5-6% directional minority; `5e-5` and `1e-4` collapse almost entirely to the
+stationary class.
+
+Active threshold/class-weight training sweep `20260507_thrsweep1` uses full real
+data, no stride, no event cap, no pretraining-sample cap. It trains FC-LOB,
+DeepLOB, and Attn-LOB for thresholds `2.5e-6`, `5e-6`, and paper-control
+`1e-5`, with `PRETRAIN_CLASS_WEIGHT_MODE=none` and `balanced` on AAPL/GOOGL.
+This is 36 jobs: `65696145`, `65696148`, `65696151`, `65696152`, `65696153`,
+`65696155`, `65696156`, `65696157`, `65696158`, `65696159`, `65696160`,
+`65696162`, `65696163`, `65696165`, `65696167`, `65696171`, `65696173`,
+`65696174`, `65696175`, `65696176`, `65696177`, `65696178`, `65696180`,
+`65696181`, `65696182`, `65696183`, `65696190`, `65696191`, `65696196`,
+`65696197`, `65696198`, `65696199`, `65696200`, `65696201`, `65696202`,
+`65696203`.
