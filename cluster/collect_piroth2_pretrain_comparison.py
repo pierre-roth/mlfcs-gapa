@@ -13,8 +13,15 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = []
-    pattern = f"piroth2_pretraincmp_*_{args.stamp}" if args.stamp else "piroth2_pretraincmp_*"
-    for run_dir in sorted(Path(args.root).glob(pattern)):
+    patterns = (
+        [f"piroth2_pretraincmp_*_{args.stamp}", f"piroth2_pretrainthr_*_{args.stamp}"]
+        if args.stamp
+        else ["piroth2_pretraincmp_*", "piroth2_pretrainthr_*"]
+    )
+    run_dirs = []
+    for pattern in patterns:
+        run_dirs.extend(Path(args.root).glob(pattern))
+    for run_dir in sorted(set(run_dirs)):
         summary_files = sorted((run_dir / "models").glob("*_pretrain_summary.json"))
         for summary_file in summary_files:
             summary = json.loads(summary_file.read_text(encoding="utf-8"))
@@ -37,6 +44,9 @@ def main() -> None:
                     "eval_loss": final.get("eval_loss", ""),
                     "train_samples": final.get("train_samples", ""),
                     "eval_samples": final.get("eval_samples", ""),
+                    "train_label_counts": summary.get("train_label_counts", ""),
+                    "eval_label_counts": summary.get("eval_label_counts", ""),
+                    "class_weight_mode": summary.get("class_weight_mode", ""),
                     "run_name": run_dir.name,
                 }
             )
@@ -53,6 +63,9 @@ def main() -> None:
         "eval_loss",
         "train_samples",
         "eval_samples",
+        "train_label_counts",
+        "eval_label_counts",
+        "class_weight_mode",
         "run_name",
     ]
     if args.format == "csv":

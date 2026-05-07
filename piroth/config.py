@@ -194,6 +194,7 @@ class SimulatorConfig:
     pretrain_horizon: int = 10
     pretrain_threshold: float = 1e-5
     pretrain_stable_windows_only: bool = False
+    pretrain_class_weight_mode: str = "none"
     include_lob_state: bool = True
     include_market_state: bool = True
     include_agent_state: bool = True

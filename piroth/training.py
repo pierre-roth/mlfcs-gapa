@@ -80,7 +80,8 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
     )
     model = build_pretrain_classifier(config.pretrain_model_type, lookback=config.lookback).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.torch_learning_rate)
-    criterion = nn.CrossEntropyLoss()
+    class_weights = _pretrain_class_weights(dataset.label_counts, config.pretrain_class_weight_mode, device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     history = []
     for epoch in range(config.torch_epochs):
         model.train()
@@ -122,6 +123,8 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
         "eval_days": len(eval_days or []),
         "train_label_counts": dataset.label_counts,
         "eval_label_counts": eval_dataset.label_counts if eval_dataset is not None else None,
+        "class_weight_mode": config.pretrain_class_weight_mode,
+        "class_weights": class_weights.detach().cpu().tolist() if class_weights is not None else None,
         "final": history[-1],
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
     }
@@ -183,6 +186,21 @@ def _pretrain_model_slug(model_type: str) -> str:
     normalized = model_type.strip().lower().replace("_", "").replace("-", "")
     aliases = {"attn": "attnlob", "fc": "fclob", "conv": "convlob", "deep": "deeplob"}
     return aliases.get(normalized, normalized)
+
+
+def _pretrain_class_weights(label_counts: list[int], mode: str, device: str) -> torch.Tensor | None:
+    normalized = mode.strip().lower().replace("-", "_")
+    if normalized in {"", "none", "off", "false"}:
+        return None
+    counts = torch.tensor(label_counts, dtype=torch.float32, device=device)
+    if normalized == "balanced":
+        total = counts.sum()
+        classes = max(int((counts > 0).sum().item()), 1)
+        weights = torch.zeros_like(counts)
+        positive = counts > 0
+        weights[positive] = total / (classes * counts[positive])
+        return weights
+    raise ValueError(f"Unknown pretrain_class_weight_mode: {mode!r}")
 
 
 def _stable_window_mask(timestamps: pd.Series, windows: list[str]) -> np.ndarray:

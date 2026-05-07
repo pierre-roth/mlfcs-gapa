@@ -149,3 +149,30 @@ Submitted corrected full-real rerun on Euler as `20260507_fullreal`:
 ### Corrected Full-Real Results
 
 Pending rerun.
+
+## Threshold And Class-Imbalance Diagnostics
+
+The paper replication uses `PRETRAIN_THRESHOLD=1e-5` unchanged. In parallel, a
+diagnostic sweep is being added to check whether a different threshold is more
+appropriate for the real NASDAQ data and whether class-balanced cross-entropy
+improves held-out macro F1.
+
+Implemented diagnostics:
+
+- `cluster/scan_piroth2_pretrain_thresholds.py`: full-real price-only label
+  balance scan over thresholds, with no stride or event cap.
+- `PRETRAIN_CLASS_WEIGHT_MODE=balanced`: inverse-frequency class weighting for
+  supervised pretraining.
+- `cluster/submit_piroth2_pretrain_threshold_sweep.sh`: full-real pretraining
+  sweep over thresholds and class-weighting modes.
+
+Active label-scan job:
+
+| job | purpose | data | output |
+|---:|---|---|---|
+| 65691807 | full-real threshold label-balance scan | AAPL/GOOGL, `REAL_EVENT_STRIDE=1` | `/cluster/project/math/piroth/mlfcs-gapa/artifacts_piroth2/pretrain_threshold_scan_20260507_fullreal.csv` |
+
+The training sweep should be launched after the label scan and the fixed-paper
+full-real baseline are available, so the search can be narrowed to thresholds
+that produce a usable class distribution instead of blindly launching a large
+grid.
