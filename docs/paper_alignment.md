@@ -255,6 +255,43 @@ details for these baselines are not fully specified, so the output should be
 reported as transparent, paper-aligned tabular baselines rather than claimed as
 byte-for-byte reproductions of the authors' private experiment code.
 
+### Real-Data Table II Run, 2026-05-08
+
+The first end-to-end real-data Table-II-style run completed on AAPL and GOOGL
+with raw real events, 2,000-event windows, the paper reward settings, the
+paper-style z-normalized LOB features, and the implemented Table II agents:
+AS, Fixed_1/2/3, Random, Inventory-RL, LOB-RL, C-PPO, and D-DQN. Full numeric
+results are stored in
+[docs/results/real_table2_20260508.csv](/Users/piroth/Documents/projects/mlfcs-gapa/docs/results/real_table2_20260508.csv).
+
+The AAPL test set has no convincing learned-policy replication success. Fixed_3
+is roughly flat and best by mean PnL (`+0.0625`). LOB-RL is also near flat
+(`-0.0417`), followed by Fixed_2 (`-0.7917`) and Inventory-RL (`-1.4583`).
+The neural policies lose more: C-PPO evaluates at `-4.8750` PnL and D-DQN at
+`-8.0000`. AS is also negative (`-7.3542`) because on these raw real-event
+windows its quotes fill much more often than in the earlier strided smoke
+setting.
+
+The GOOGL test set is similarly disappointing for neural RL. Random is best by
+mean PnL (`+1.8125`), LOB-RL is near flat (`+0.0417`), and Fixed_3 loses only
+`-0.5833`. Inventory-RL loses `-1.7708`. D-DQN (`-12.9375`) and C-PPO
+(`-17.7917`) both underperform simple baselines, and AS is worst at `-19.8958`.
+
+The completed table supports the negative replication finding the project is
+trying to make explicit: under the current paper-faithful real-data setup,
+neural RL does not dominate simple quoting or tabular baselines. LOB-RL is the
+most robust learned row in this run, but it is only near-flat rather than a
+strong market-making result.
+
+The matching real-data encoder pretraining comparison also completed. Under the
+paper-style z-normalized real-data setup, DeepLOB is the strongest encoder on
+both symbols: AAPL final eval accuracy is `0.7238` versus AttnLOB `0.6932`,
+FC-LOB `0.6879`, and ConvLOB `0.6766`; GOOGL final eval accuracy is `0.6490`
+versus AttnLOB `0.5975`, FC-LOB `0.5960`, and ConvLOB `0.5870`. This differs
+from a literal expectation that AttnLOB should necessarily be best, but it is
+internally consistent with the weak downstream neural-RL results on these real
+NASDAQ feeds.
+
 ## Real NASDAQ Data
 
 The paper-style pipeline now supports `data_source=real` via
