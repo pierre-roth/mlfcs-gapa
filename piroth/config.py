@@ -99,6 +99,7 @@ class SimulatorConfig:
     real_end_time: str = "15:30:00"
     real_chunk_size: int = 250_000
     real_event_stride: int = 1
+    real_build_depth_cube: bool = False
     symbol: str = "000001"
     seed: int = 7
     events_per_day_override: int | None = None

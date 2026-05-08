@@ -86,7 +86,11 @@ class RealMarketDataLoader:
             msg=msg.reset_index(drop=True),
             event_log=event_log,
             latent=latent.reset_index(drop=True),
-            depth_cube=_depth_cube_from_lob(ask, bid, price, radius=self.config.export_depth_radius_ticks),
+            depth_cube=(
+                _depth_cube_from_lob(ask, bid, price, radius=self.config.export_depth_radius_ticks)
+                if self.config.real_build_depth_cube
+                else np.zeros((0, 0), dtype=np.float32)
+            ),
         )
 
 

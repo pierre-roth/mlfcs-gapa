@@ -13,7 +13,8 @@ from piroth.models import (
     build_pretrain_classifier,
 )
 from piroth.config import DiagnosticsConfig
-from piroth.training import _linear_schedule, _optimizer_for_model
+from piroth.simulator import SyntheticMarketGenerator
+from piroth.training import PretrainDataset, _linear_schedule, _optimizer_for_model
 
 
 def test_attnlob_encoder_matches_paper_output_shape() -> None:
@@ -45,6 +46,30 @@ def test_pretraining_comparison_classifiers_match_label_shape() -> None:
         with torch.no_grad():
             logits = classifier(lob)
         assert logits.shape == (2, 3)
+
+
+def test_pretrain_dataset_vectorized_batch_matches_single_items() -> None:
+    config = DiagnosticsConfig(
+        mode="smoke",
+        num_days=1,
+        train_days=1,
+        test_days=0,
+        events_per_day_override=300,
+        lookback=20,
+        pretrain_horizon=5,
+        pretrain_threshold=0.0,
+    )
+    generator = SyntheticMarketGenerator(config)
+    days = [generator.generate_day(generator.train_days()[0])]
+    dataset = PretrainDataset(days, config)
+    items = torch.arange(min(8, len(dataset))).numpy()
+
+    batch_lob, batch_label = dataset.batch(items)
+
+    for row, item in enumerate(items):
+        lob, label = dataset[int(item)]
+        assert torch.allclose(batch_lob[row], lob)
+        assert int(batch_label[row]) == int(label)
 
 
 def test_trading_heads_accept_lob_dynamic_and_agent_state() -> None:

@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Normal
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from .baselines import calibrate_avellaneda_stoikov
@@ -28,28 +28,56 @@ class PretrainDataset(Dataset):
         self.days = days
         self.config = config
         self.lob_values = [combine_orderbook(day.ask, day.bid)[LOB_COLUMNS].to_numpy(dtype=np.float32) for day in days]
-        self.index: list[tuple[int, int, int]] = []
+        day_indices = []
+        event_indices = []
+        label_values = []
         for day_idx, day in enumerate(days):
             labels = midprice_direction_labels(day.price["midprice"], config.pretrain_horizon, config.pretrain_threshold)
             if config.pretrain_stable_windows_only:
                 labels = labels.loc[_stable_window_mask(day.price["timestamp"], config.stable_windows)]
-            day_items = [(int(event_idx), int(label)) for event_idx, label in labels.dropna().astype(int).items() if int(event_idx) >= config.lookback]
-            if config.max_pretrain_samples_per_day is not None and len(day_items) > config.max_pretrain_samples_per_day:
+            valid = labels.dropna().astype(np.int64)
+            events = valid.index.to_numpy(dtype=np.int64)
+            label_array = valid.to_numpy(dtype=np.int64)
+            lookback_mask = events >= config.lookback
+            events = events[lookback_mask]
+            label_array = label_array[lookback_mask]
+            if config.max_pretrain_samples_per_day is not None and len(events) > config.max_pretrain_samples_per_day:
                 rng = np.random.default_rng(config.seed + day_idx)
-                chosen = np.sort(rng.choice(len(day_items), size=config.max_pretrain_samples_per_day, replace=False))
-                day_items = [day_items[int(idx)] for idx in chosen]
-            for event_idx, label in day_items:
-                if event_idx >= config.lookback:
-                    self.index.append((day_idx, event_idx, label))
-        self.label_counts = np.bincount([label for _, _, label in self.index], minlength=3).astype(int).tolist()
+                chosen = np.sort(rng.choice(len(events), size=config.max_pretrain_samples_per_day, replace=False))
+                events = events[chosen]
+                label_array = label_array[chosen]
+            if len(events):
+                day_indices.append(np.full(len(events), day_idx, dtype=np.int16))
+                event_indices.append(events.astype(np.int32, copy=False))
+                label_values.append(label_array.astype(np.int64, copy=False))
+        self.day_indices = np.concatenate(day_indices) if day_indices else np.array([], dtype=np.int16)
+        self.event_indices = np.concatenate(event_indices) if event_indices else np.array([], dtype=np.int32)
+        self.labels = np.concatenate(label_values) if label_values else np.array([], dtype=np.int64)
+        self.label_counts = np.bincount(self.labels, minlength=3).astype(int).tolist()
 
     def __len__(self) -> int:
-        return len(self.index)
+        return int(self.labels.size)
 
     def __getitem__(self, item: int) -> tuple[torch.Tensor, torch.Tensor]:
-        day_idx, event_idx, label = self.index[item]
+        day_idx = int(self.day_indices[item])
+        event_idx = int(self.event_indices[item])
+        label = int(self.labels[item])
         lob = lob_tensor_from_values(self.lob_values[day_idx], event_idx, self.config.lookback)
         return torch.from_numpy(lob), torch.tensor(label, dtype=torch.long)
+
+    def batch(self, items: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+        day_indices = self.day_indices[items]
+        event_indices = self.event_indices[items]
+        labels = self.labels[items]
+        lob = np.empty((len(items), self.config.lookback, len(LOB_COLUMNS), 1), dtype=np.float32)
+        for day_idx in np.unique(day_indices):
+            positions = np.flatnonzero(day_indices == day_idx)
+            lob[positions] = _lob_tensor_batch_from_values(
+                self.lob_values[int(day_idx)],
+                event_indices[positions],
+                self.config.lookback,
+            )
+        return torch.from_numpy(lob), torch.from_numpy(labels.astype(np.int64, copy=False))
 
 
 def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfig, output_dir: Path, device: str = "cpu", eval_days: list[SyntheticDay] | None = None) -> Path:
@@ -58,26 +86,6 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
     if len(dataset) == 0:
         raise ValueError("No LOB pretraining samples were generated; check lookback, horizon, sampling windows, and event count.")
     eval_dataset = PretrainDataset(eval_days, config) if eval_days else None
-    loader = DataLoader(
-        dataset,
-        batch_size=config.torch_batch_size,
-        shuffle=True,
-        num_workers=_dataloader_workers(device),
-        pin_memory=device.startswith("cuda"),
-        persistent_workers=_dataloader_workers(device) > 0,
-    )
-    eval_loader = (
-        DataLoader(
-            eval_dataset,
-            batch_size=config.torch_batch_size,
-            shuffle=False,
-            num_workers=_dataloader_workers(device),
-            pin_memory=device.startswith("cuda"),
-            persistent_workers=_dataloader_workers(device) > 0,
-        )
-        if eval_dataset is not None and len(eval_dataset)
-        else None
-    )
     model = build_pretrain_classifier(config.pretrain_model_type, lookback=config.lookback).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.torch_learning_rate)
     class_weights = _pretrain_class_weights(dataset.label_counts, config.pretrain_class_weight_mode, device)
@@ -88,7 +96,12 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
         losses = []
         correct = 0
         total = 0
-        for lob, label in tqdm(loader, desc=f"pretrain epoch {epoch + 1}", leave=False):
+        for lob, label in tqdm(
+            _iter_pretrain_batches(dataset, config.torch_batch_size, shuffle=True, seed=config.seed + epoch),
+            total=_batch_count(len(dataset), config.torch_batch_size),
+            desc=f"pretrain epoch {epoch + 1}",
+            leave=False,
+        ):
             lob = lob.to(device=device, dtype=torch.float32)
             label = label.to(device=device)
             optimizer.zero_grad()
@@ -106,8 +119,8 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
             "train_accuracy": correct / max(total, 1),
             "train_samples": total,
         }
-        if eval_loader is not None:
-            row.update(_evaluate_pretrain_classifier(model, eval_loader, criterion, device, prefix="eval"))
+        if eval_dataset is not None and len(eval_dataset):
+            row.update(_evaluate_pretrain_classifier(model, eval_dataset, config.torch_batch_size, criterion, device, prefix="eval"))
         history.append(row)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_slug = _pretrain_model_slug(config.pretrain_model_type)
@@ -133,13 +146,13 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
     return path
 
 
-def _evaluate_pretrain_classifier(model: PretrainClassifier, loader: DataLoader, criterion: nn.Module, device: str, prefix: str) -> dict[str, float | int]:
+def _evaluate_pretrain_classifier(model: PretrainClassifier, dataset: PretrainDataset, batch_size: int, criterion: nn.Module, device: str, prefix: str) -> dict[str, float | int]:
     model.eval()
     losses = []
     predictions = []
     targets = []
     with torch.no_grad():
-        for lob, label in loader:
+        for lob, label in _iter_pretrain_batches(dataset, batch_size, shuffle=False, seed=0):
             lob = lob.to(device=device, dtype=torch.float32)
             label = label.to(device=device)
             logits = model(lob)
@@ -157,6 +170,42 @@ def _evaluate_pretrain_classifier(model: PretrainClassifier, loader: DataLoader,
         f"{prefix}_f1_macro": metrics["f1_macro"],
         f"{prefix}_samples": int(target.size),
     }
+
+
+def _batch_count(size: int, batch_size: int) -> int:
+    return int((size + max(batch_size, 1) - 1) // max(batch_size, 1))
+
+
+def _iter_pretrain_batches(dataset: PretrainDataset, batch_size: int, shuffle: bool, seed: int):
+    size = len(dataset)
+    order = np.arange(size, dtype=np.int64)
+    if shuffle:
+        np.random.default_rng(seed).shuffle(order)
+    for start in range(0, size, batch_size):
+        yield dataset.batch(order[start : start + batch_size])
+
+
+def _lob_tensor_batch_from_values(values: np.ndarray, event_indices: np.ndarray, lookback: int) -> np.ndarray:
+    offsets = np.arange(lookback, dtype=np.int32)
+    rows = event_indices.astype(np.int32, copy=False)[:, None] - lookback + offsets[None, :]
+    windows = values[rows]
+    return _normalize_lob_windows(windows).reshape(len(event_indices), lookback, len(LOB_COLUMNS), 1)
+
+
+def _normalize_lob_windows(windows: np.ndarray) -> np.ndarray:
+    data = windows.astype(np.float32, copy=True)
+    mid = (data[:, :, 0].astype(np.float64) + data[:, :, 20].astype(np.float64)) / 2.0
+    mid = np.clip(mid, 1e-8, None)
+    for level in range(1, 11):
+        ask_base = (level - 1) * 2
+        bid_base = 20 + (level - 1) * 2
+        data[:, :, ask_base] = data[:, :, ask_base] / mid - 1.0
+        data[:, :, bid_base] = data[:, :, bid_base] / mid - 1.0
+        ask_v = data[:, :, ask_base + 1]
+        bid_v = data[:, :, bid_base + 1]
+        data[:, :, ask_base + 1] = ask_v / np.maximum(np.max(ask_v, axis=1, keepdims=True), 1.0)
+        data[:, :, bid_base + 1] = bid_v / np.maximum(np.max(bid_v, axis=1, keepdims=True), 1.0)
+    return data
 
 
 def _classification_metrics(target: np.ndarray, prediction: np.ndarray, num_classes: int) -> dict[str, float]:

@@ -148,7 +148,34 @@ Submitted corrected full-real rerun on Euler as `20260507_fullreal`:
 
 ### Corrected Full-Real Results
 
-Pending rerun.
+The first corrected full-real grid attempt (`20260507_fullreal`, jobs
+`65689381`...`65689393`) and the first threshold/class-weight sweep
+(`20260507_thrsweep1`, jobs `65696145`...`65696203`) were cancelled before
+completion. They used `REAL_EVENT_STRIDE=1` and no event/sample cap as intended,
+but exposed two implementation bottlenecks:
+
+- `PretrainDataset` was constructing normalized LOB windows one sample at a
+  time through `DataLoader.__getitem__`, keeping jobs CPU-bound before useful
+  GPU work.
+- The real-data loader always built a visualization-only `depth_cube`; on
+  full NASDAQ days this added a large Python loop before pretraining.
+
+Both issues are now patched. Pretraining batches now construct normalized LOB
+windows vectorized per batch, and real-data `depth_cube` construction is
+disabled by default via `REAL_BUILD_DEPTH_CUBE=false` while remaining available
+for visual diagnostics.
+
+Single-job no-subsampling fix check:
+
+| run | job | data | setting | status | elapsed | train samples | eval samples | eval acc | eval macro F1 | eval loss |
+|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|
+| `piroth2_pretrain_fixcheck_real_AAPL_fclob_t1e5_1day_skipcube_20260508` | 65790168 | AAPL real, first train day + first eval day | FC-LOB, `PRETRAIN_THRESHOLD=1e-5`, no class weights, `REAL_EVENT_STRIDE=1`, no event cap | completed | 13m56s | 2,365,884 | 4,088,257 | 0.7527 | 0.2863 | 0.6934 |
+
+Label counts for the check were train `[316981, 1723640, 325263]` and eval
+`[512782, 3077206, 498269]`. The high accuracy but low macro F1 confirms that
+the paper threshold is dominated by the stationary class on AAPL real data after
+one epoch; threshold/class-weight diagnostics are still needed. This check also
+shows that one full real day is a practical unit for the current implementation.
 
 ## Threshold And Class-Imbalance Diagnostics
 
@@ -193,14 +220,9 @@ Rejected thresholds: `0` has no stationary class; `2e-5` leaves only about
 5-6% directional minority; `5e-5` and `1e-4` collapse almost entirely to the
 stationary class.
 
-Active threshold/class-weight training sweep `20260507_thrsweep1` uses full real
-data, no stride, no event cap, no pretraining-sample cap. It trains FC-LOB,
-DeepLOB, and Attn-LOB for thresholds `2.5e-6`, `5e-6`, and paper-control
-`1e-5`, with `PRETRAIN_CLASS_WEIGHT_MODE=none` and `balanced` on AAPL/GOOGL.
-This is 36 jobs: `65696145`, `65696148`, `65696151`, `65696152`, `65696153`,
-`65696155`, `65696156`, `65696157`, `65696158`, `65696159`, `65696160`,
-`65696162`, `65696163`, `65696165`, `65696167`, `65696171`, `65696173`,
-`65696174`, `65696175`, `65696176`, `65696177`, `65696178`, `65696180`,
-`65696181`, `65696182`, `65696183`, `65696190`, `65696191`, `65696196`,
-`65696197`, `65696198`, `65696199`, `65696200`, `65696201`, `65696202`,
-`65696203`.
+The original threshold/class-weight training sweep `20260507_thrsweep1` was
+cancelled for the same preprocessing reason as the fixed-threshold grid. Do not
+restart the full grid blindly. The next replication step should be either a
+one-day architecture/threshold/class-weight comparison, or a small day-count
+scaling test, using the patched loader/training path and no event-level
+subsampling.

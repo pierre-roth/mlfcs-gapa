@@ -21,6 +21,7 @@ def test_real_loader_normalizes_paper_day(tmp_path: Path) -> None:
         test_days=1,
         events_per_day_override=2,
         real_chunk_size=2,
+        real_build_depth_cube=True,
     )
 
     day = load_market_days(config, "test")[0]
