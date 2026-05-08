@@ -82,6 +82,7 @@ class SyntheticMarketGenerator:
         event_log_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
         latent_rows: list[dict[str, float | int | str | pd.Timestamp]] = []
         depth_frames: list[np.ndarray] = []
+        build_depth_cube = bool(self.config.synthetic_build_depth_cube)
 
         self._seed_book(book, fair_tick, timestamps[0], rng)
         for mm_id in mm_inventory:
@@ -178,8 +179,9 @@ class SyntheticMarketGenerator:
                     "queue_pressure": _queue_pressure(book, fair_tick),
                 }
             )
-            center_tick = int(round(mid / self.spec.tick_size))
-            depth_frames.append(_depth_frame(book, center_tick, self.config.export_depth_radius_ticks))
+            if build_depth_cube:
+                center_tick = int(round(mid / self.spec.tick_size))
+                depth_frames.append(_depth_frame(book, center_tick, self.config.export_depth_radius_ticks))
 
         trades = pd.DataFrame(trade_rows)
         if trades.empty:
@@ -214,7 +216,7 @@ class SyntheticMarketGenerator:
             msg=msg,
             event_log=event_log,
             latent=latent,
-            depth_cube=np.asarray(depth_frames, dtype=np.float32),
+            depth_cube=np.asarray(depth_frames, dtype=np.float32) if build_depth_cube else np.zeros((0, 0), dtype=np.float32),
         )
 
     def _initial_fair_tick(self, rng: np.random.Generator) -> float:

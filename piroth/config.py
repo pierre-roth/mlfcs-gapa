@@ -100,6 +100,7 @@ class SimulatorConfig:
     real_chunk_size: int = 250_000
     real_event_stride: int = 1
     real_build_depth_cube: bool = False
+    synthetic_build_depth_cube: bool = True
     symbol: str = "000001"
     seed: int = 7
     events_per_day_override: int | None = None
