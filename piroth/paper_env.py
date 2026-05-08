@@ -127,7 +127,12 @@ class PaperTradingEnv:
     def state(self) -> PaperState:
         idx = max(self.event_idx - self.config.latency, self.config.lookback)
         return PaperState(
-            lob_state=lob_tensor_from_values(self.lob_values, idx, self.config.lookback),
+            lob_state=lob_tensor_from_values(
+                self.lob_values,
+                idx,
+                self.config.lookback,
+                price_z_norm=self.config.lob_price_z_norm,
+            ),
             market_state=self.market_states[idx],
             agent_state=agent_state(
                 inventory=self.inventory,

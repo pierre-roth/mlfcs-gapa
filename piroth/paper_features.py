@@ -40,31 +40,37 @@ def combine_orderbook(ask: pd.DataFrame, bid: pd.DataFrame) -> pd.DataFrame:
     return frame[["timestamp", *LOB_COLUMNS]]
 
 
-def normalize_lob_window(window: pd.DataFrame) -> np.ndarray:
-    return normalize_lob_values(window[LOB_COLUMNS].to_numpy(dtype=np.float32))
+def normalize_lob_window(window: pd.DataFrame, *, price_z_norm: bool = False) -> np.ndarray:
+    return normalize_lob_values(window[LOB_COLUMNS].to_numpy(dtype=np.float32), price_z_norm=price_z_norm)
 
 
-def normalize_lob_values(values: np.ndarray) -> np.ndarray:
+def normalize_lob_values(values: np.ndarray, *, price_z_norm: bool = False) -> np.ndarray:
     data = values.astype(np.float32, copy=True)
     mid = (data[:, 0].astype(np.float64) + data[:, 20].astype(np.float64)) / 2.0
     mid = np.clip(mid, 1e-8, None)
+    price_columns: list[int] = []
     for level in range(1, 11):
         ask_base = (level - 1) * 2
         bid_base = 20 + (level - 1) * 2
         data[:, ask_base] = data[:, ask_base] / mid - 1.0
         data[:, bid_base] = data[:, bid_base] / mid - 1.0
+        price_columns.extend([ask_base, bid_base])
         ask_v = data[:, ask_base + 1]
         bid_v = data[:, bid_base + 1]
         data[:, ask_base + 1] = ask_v / max(float(np.max(ask_v)), 1.0)
         data[:, bid_base + 1] = bid_v / max(float(np.max(bid_v)), 1.0)
+    if price_z_norm:
+        for column in price_columns:
+            series = data[:, column]
+            data[:, column] = (series - float(np.mean(series))) / (float(np.std(series, ddof=1)) + 1e-7)
     return data
 
 
-def lob_tensor_at(orderbook: pd.DataFrame, event_idx: int, lookback: int) -> np.ndarray:
-    return lob_tensor_from_values(orderbook[LOB_COLUMNS].to_numpy(dtype=np.float32), event_idx, lookback)
+def lob_tensor_at(orderbook: pd.DataFrame, event_idx: int, lookback: int, *, price_z_norm: bool = False) -> np.ndarray:
+    return lob_tensor_from_values(orderbook[LOB_COLUMNS].to_numpy(dtype=np.float32), event_idx, lookback, price_z_norm=price_z_norm)
 
 
-def lob_tensor_from_values(values: np.ndarray, event_idx: int, lookback: int) -> np.ndarray:
+def lob_tensor_from_values(values: np.ndarray, event_idx: int, lookback: int, *, price_z_norm: bool = False) -> np.ndarray:
     start = max(event_idx - lookback, 0)
     window = values[start:event_idx]
     if len(window) < lookback:
@@ -73,7 +79,7 @@ def lob_tensor_from_values(values: np.ndarray, event_idx: int, lookback: int) ->
             window = np.concatenate([pad, window], axis=0)
         else:
             window = np.repeat(values[[0]], lookback, axis=0)
-    return normalize_lob_values(window).reshape(lookback, 40, 1)
+    return normalize_lob_values(window, price_z_norm=price_z_norm).reshape(lookback, 40, 1)
 
 
 def midprice_direction_labels(midprice: pd.Series, horizon: int, threshold: float) -> pd.Series:

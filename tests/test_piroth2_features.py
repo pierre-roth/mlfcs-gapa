@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from piroth.paper_features import LOB_COLUMNS, lob_tensor_at, lob_tensor_from_values
+from piroth.paper_features import LOB_COLUMNS, lob_tensor_at, lob_tensor_from_values, normalize_lob_values
 
 
 def test_lob_columns_match_author_ask_then_bid_order() -> None:
@@ -29,3 +29,23 @@ def test_lob_tensor_from_values_matches_dataframe_path() -> None:
     from_values = lob_tensor_from_values(orderbook[LOB_COLUMNS].to_numpy(dtype=np.float32), event_idx=32, lookback=50)
 
     np.testing.assert_allclose(from_values, from_frame, rtol=1e-6, atol=1e-7)
+
+
+def test_lob_price_z_norm_matches_paper_description() -> None:
+    rows = []
+    for idx in range(50):
+        row: dict[str, float] = {}
+        mid = 10.0 + idx * 0.001
+        for level in range(1, 11):
+            row[f"ask{level}_price"] = mid + level * 0.01 + idx * 0.01
+            row[f"ask{level}_volume"] = 1000 + idx + level
+            row[f"bid{level}_price"] = mid - level * 0.01 + idx * 0.01
+            row[f"bid{level}_volume"] = 1200 + 2 * idx + level
+        rows.append(row)
+    values = pd.DataFrame(rows, columns=LOB_COLUMNS).to_numpy(dtype=np.float32)
+
+    normalized = normalize_lob_values(values, price_z_norm=True)
+
+    price_columns = [idx for idx, column in enumerate(LOB_COLUMNS) if column.endswith("_price")]
+    np.testing.assert_allclose(normalized[:, price_columns].mean(axis=0), 0.0, atol=1e-4)
+    assert np.all(normalized[:, price_columns].std(axis=0, ddof=1) > 0.99)

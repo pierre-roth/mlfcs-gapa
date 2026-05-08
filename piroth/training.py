@@ -62,7 +62,12 @@ class PretrainDataset(Dataset):
         day_idx = int(self.day_indices[item])
         event_idx = int(self.event_indices[item])
         label = int(self.labels[item])
-        lob = lob_tensor_from_values(self.lob_values[day_idx], event_idx, self.config.lookback)
+        lob = lob_tensor_from_values(
+            self.lob_values[day_idx],
+            event_idx,
+            self.config.lookback,
+            price_z_norm=self.config.lob_price_z_norm,
+        )
         return torch.from_numpy(lob), torch.tensor(label, dtype=torch.long)
 
     def batch(self, items: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
@@ -76,6 +81,7 @@ class PretrainDataset(Dataset):
                 self.lob_values[int(day_idx)],
                 event_indices[positions],
                 self.config.lookback,
+                price_z_norm=self.config.lob_price_z_norm,
             )
         return torch.from_numpy(lob), torch.from_numpy(labels.astype(np.int64, copy=False))
 
@@ -185,26 +191,34 @@ def _iter_pretrain_batches(dataset: PretrainDataset, batch_size: int, shuffle: b
         yield dataset.batch(order[start : start + batch_size])
 
 
-def _lob_tensor_batch_from_values(values: np.ndarray, event_indices: np.ndarray, lookback: int) -> np.ndarray:
+def _lob_tensor_batch_from_values(values: np.ndarray, event_indices: np.ndarray, lookback: int, *, price_z_norm: bool = False) -> np.ndarray:
     offsets = np.arange(lookback, dtype=np.int32)
     rows = event_indices.astype(np.int32, copy=False)[:, None] - lookback + offsets[None, :]
     windows = values[rows]
-    return _normalize_lob_windows(windows).reshape(len(event_indices), lookback, len(LOB_COLUMNS), 1)
+    return _normalize_lob_windows(windows, price_z_norm=price_z_norm).reshape(len(event_indices), lookback, len(LOB_COLUMNS), 1)
 
 
-def _normalize_lob_windows(windows: np.ndarray) -> np.ndarray:
+def _normalize_lob_windows(windows: np.ndarray, *, price_z_norm: bool = False) -> np.ndarray:
     data = windows.astype(np.float32, copy=True)
     mid = (data[:, :, 0].astype(np.float64) + data[:, :, 20].astype(np.float64)) / 2.0
     mid = np.clip(mid, 1e-8, None)
+    price_columns: list[int] = []
     for level in range(1, 11):
         ask_base = (level - 1) * 2
         bid_base = 20 + (level - 1) * 2
         data[:, :, ask_base] = data[:, :, ask_base] / mid - 1.0
         data[:, :, bid_base] = data[:, :, bid_base] / mid - 1.0
+        price_columns.extend([ask_base, bid_base])
         ask_v = data[:, :, ask_base + 1]
         bid_v = data[:, :, bid_base + 1]
         data[:, :, ask_base + 1] = ask_v / np.maximum(np.max(ask_v, axis=1, keepdims=True), 1.0)
         data[:, :, bid_base + 1] = bid_v / np.maximum(np.max(bid_v, axis=1, keepdims=True), 1.0)
+    if price_z_norm:
+        for column in price_columns:
+            series = data[:, :, column]
+            mean = np.mean(series, axis=1, keepdims=True)
+            std = np.std(series, axis=1, ddof=1, keepdims=True)
+            data[:, :, column] = (series - mean) / (std + 1e-7)
     return data
 
 

@@ -164,6 +164,7 @@ class SimulatorConfig:
     synthetic_market_impact_scale: float = 0.0
     export_day_count: int = 2
     export_depth_radius_ticks: int = 15
+    synthetic_build_depth_cube: bool = True
     max_pretrain_samples_per_day: int | None = None
     max_train_episodes_per_day: int | None = None
     max_eval_episodes_per_day: int | None = None
@@ -197,6 +198,7 @@ class SimulatorConfig:
     pretrain_threshold: float = 1e-5
     pretrain_stable_windows_only: bool = False
     pretrain_class_weight_mode: str = "none"
+    lob_price_z_norm: bool = False
     include_lob_state: bool = True
     include_market_state: bool = True
     include_agent_state: bool = True
