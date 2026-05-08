@@ -31,12 +31,14 @@ def main() -> None:
             dataset = parts[2]
             symbol = parts[3]
             model_type = summary.get("model_type", parts[4])
+            threshold_label = parts[5] if len(parts) > 5 and parts[1] == "pretrainthr" else ""
             final = summary.get("final", {})
             rows.append(
                 {
                     "dataset": dataset,
                     "symbol": symbol,
                     "model": model_type,
+                    "threshold": threshold_label,
                     "parameters": summary.get("parameters", ""),
                     "train_accuracy": final.get("train_accuracy", ""),
                     "eval_accuracy": final.get("eval_accuracy", ""),
@@ -56,6 +58,7 @@ def main() -> None:
         "dataset",
         "symbol",
         "model",
+        "threshold",
         "parameters",
         "train_accuracy",
         "eval_accuracy",

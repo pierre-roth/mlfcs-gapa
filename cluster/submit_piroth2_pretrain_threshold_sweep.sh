@@ -33,14 +33,15 @@ submit_pretrain() {
         "PRETRAIN_STABLE_WINDOWS_ONLY=true"
         "DATA_SOURCE=real"
         "REAL_DATA_ROOT=/cluster/work/math/piroth/mlfcs-gapa/data/processed"
-        "REAL_EVENT_STRIDE=1"
-        "REAL_START_TIME=09:30:00"
-        "REAL_END_TIME=16:00:00"
-        "NUM_DAYS=12"
-        "TRAIN_DAYS=8"
-        "TEST_DAYS=4"
-        "LOOKBACK=50"
-        "PRETRAIN_HORIZON=10"
+        "REAL_EVENT_STRIDE=${REAL_EVENT_STRIDE:-1}"
+        "REAL_BUILD_DEPTH_CUBE=${REAL_BUILD_DEPTH_CUBE:-false}"
+        "REAL_START_TIME=${REAL_START_TIME:-09:30:00}"
+        "REAL_END_TIME=${REAL_END_TIME:-16:00:00}"
+        "NUM_DAYS=${NUM_DAYS:-12}"
+        "TRAIN_DAYS=${TRAIN_DAYS:-8}"
+        "TEST_DAYS=${TEST_DAYS:-4}"
+        "LOOKBACK=${LOOKBACK:-50}"
+        "PRETRAIN_HORIZON=${PRETRAIN_HORIZON:-10}"
         "PRETRAIN_THRESHOLD=${threshold}"
         "PRETRAIN_CLASS_WEIGHT_MODE=${weight_mode}"
         "TORCH_BATCH_SIZE=${TORCH_BATCH_SIZE:-8192}"
@@ -57,7 +58,7 @@ REPO="$(repo_root)"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 
 SYMBOLS=(${SYMBOLS:-AAPL GOOGL})
-MODELS=(${MODELS:-fclob deeplob attnlob})
+MODELS=(${MODELS:-fclob convlob deeplob attnlob})
 WEIGHT_MODES=(${WEIGHT_MODES:-none balanced})
 
 THRESHOLD_LABELS=(${THRESHOLD_LABELS:-t0 t2p5e6 t5e6 t1e5 t2e5 t5e5})
