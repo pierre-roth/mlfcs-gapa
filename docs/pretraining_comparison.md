@@ -180,9 +180,9 @@ shows that one full real day is a practical unit for the current implementation.
 ## Threshold And Class-Imbalance Diagnostics
 
 The paper replication uses `PRETRAIN_THRESHOLD=1e-5` unchanged. In parallel, a
-diagnostic sweep is being added to check whether a different threshold is more
-appropriate for the real NASDAQ data and whether class-balanced cross-entropy
-improves held-out macro F1.
+diagnostic sweep checks whether a different threshold is more appropriate for
+the real NASDAQ data and whether class-balanced cross-entropy improves held-out
+macro F1.
 
 Implemented diagnostics:
 
@@ -221,8 +221,62 @@ Rejected thresholds: `0` has no stationary class; `2e-5` leaves only about
 stationary class.
 
 The original threshold/class-weight training sweep `20260507_thrsweep1` was
-cancelled for the same preprocessing reason as the fixed-threshold grid. Do not
-restart the full grid blindly. The next replication step should be either a
-one-day architecture/threshold/class-weight comparison, or a small day-count
-scaling test, using the patched loader/training path and no event-level
-subsampling.
+cancelled for the same preprocessing reason as the fixed-threshold grid. The
+replacement one-day, full-event comparison completed successfully as
+`20260508_1day_thrcls` with 48/48 jobs completed and no event-level
+subsampling:
+
+- symbols: AAPL, GOOGL
+- models: FC-LOB, Conv-LOB, DeepLOB, Attn-LOB
+- thresholds: `2.5e-6`, `5e-6`, paper control `1e-5`
+- class weighting: none and balanced
+- data: `REAL_EVENT_STRIDE=1`, `REAL_BUILD_DEPTH_CUBE=false`, no event cap,
+  one train day plus one eval day
+- training: 3 epochs, batch size 4096
+
+Best one-day full-real rows by held-out macro F1:
+
+| symbol | best run | model | threshold | class weights | eval acc | eval macro F1 | eval loss |
+|---|---|---|---:|---|---:|---:|---:|
+| AAPL | `piroth2_pretrainthr_real_AAPL_deeplob_t2p5e6_none_20260508_1day_thrcls` | DeepLOB | `2.5e-6` | none | 0.7768 | 0.6845 | 0.6193 |
+| GOOGL | `piroth2_pretrainthr_real_GOOGL_deeplob_t2p5e6_balanced_20260508_1day_thrcls` | DeepLOB | `2.5e-6` | balanced | 0.6183 | 0.6182 | 0.8528 |
+
+Top model/threshold observations:
+
+- DeepLOB is the strongest encoder on both real symbols in this one-day
+  full-event comparison. Attn-LOB is competitive but slightly behind the best
+  DeepLOB row on both symbols.
+- `2.5e-6` is the best threshold by macro F1 on both symbols. This matches the
+  label-balance scan: it keeps directional classes large enough to learn
+  without removing the stationary class.
+- The paper threshold `1e-5` is still useful as a control, but it is
+  stationary-heavy on real AAPL/GOOGL. It often gives higher accuracy or lower
+  loss while giving worse macro F1.
+- Balanced class weights are not uniformly helpful. They slightly improve the
+  best GOOGL DeepLOB row, but hurt the best AAPL DeepLOB row.
+- FC-LOB and Conv-LOB lag the temporal models on macro F1, especially on
+  GOOGL. Conv-LOB is small and trains cleanly, but it is not the best real-data
+  encoder here.
+
+Selected complete rows:
+
+| symbol | model | threshold | class weights | eval acc | eval macro F1 | eval loss |
+|---|---|---:|---|---:|---:|---:|
+| AAPL | DeepLOB | `2.5e-6` | none | 0.7768 | 0.6845 | 0.6193 |
+| AAPL | DeepLOB | `2.5e-6` | balanced | 0.7236 | 0.6653 | 0.7401 |
+| AAPL | DeepLOB | `5e-6` | none | 0.7834 | 0.6722 | 0.6090 |
+| AAPL | Attn-LOB | `5e-6` | none | 0.7716 | 0.6469 | 0.6384 |
+| AAPL | Attn-LOB | `2.5e-6` | none | 0.7531 | 0.6344 | 0.6701 |
+| AAPL | DeepLOB | `1e-5` | none | 0.8210 | 0.6285 | 0.5244 |
+| GOOGL | DeepLOB | `2.5e-6` | balanced | 0.6183 | 0.6182 | 0.8528 |
+| GOOGL | DeepLOB | `2.5e-6` | none | 0.6170 | 0.6172 | 0.8535 |
+| GOOGL | Attn-LOB | `2.5e-6` | balanced | 0.6122 | 0.6109 | 0.8671 |
+| GOOGL | Attn-LOB | `2.5e-6` | none | 0.6050 | 0.6051 | 0.8731 |
+| GOOGL | DeepLOB | `5e-6` | balanced | 0.6060 | 0.6035 | 0.8562 |
+| GOOGL | DeepLOB | `5e-6` | none | 0.6193 | 0.5989 | 0.8568 |
+
+This one-day comparison is the first corrected real-data pretraining comparison
+that is both full-event and tractable. The next reasonable step is a small
+day-count scaling check for the winning configurations, not a full grid:
+DeepLOB and Attn-LOB at `2.5e-6` on AAPL/GOOGL, with no class weights for AAPL
+and both none/balanced for GOOGL.
