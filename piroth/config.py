@@ -100,7 +100,6 @@ class SimulatorConfig:
     real_chunk_size: int = 250_000
     real_event_stride: int = 1
     real_build_depth_cube: bool = False
-    synthetic_build_depth_cube: bool = True
     symbol: str = "000001"
     seed: int = 7
     events_per_day_override: int | None = None
@@ -232,6 +231,16 @@ class SimulatorConfig:
     dqn_epsilon_end: float = 0.02
     dqn_epsilon_decay: float = 0.80
     dqn_discrete_offset_pairs: str = "0:0,0:1,1:0,1:1,0:2,2:0,2:2"
+    tabular_epochs: int = 40
+    tabular_alpha_start: float = 0.25
+    tabular_alpha_end: float = 0.03
+    tabular_epsilon_start: float = 0.35
+    tabular_epsilon_end: float = 0.03
+    tabular_time_bins: int = 12
+    tabular_lob_lookback: int = 50
+    tabular_mid_change_small_ticks: float = 1.0
+    tabular_mid_change_large_ticks: float = 3.0
+    tabular_pnl_threshold: float = 0.0
     discount: float = 0.99
 
     def apply_mode_defaults(self) -> None:
@@ -249,6 +258,7 @@ class SimulatorConfig:
             self.dqn_replay_size = min(self.dqn_replay_size, 2_000)
             self.dqn_min_replay = min(self.dqn_min_replay, 100)
             self.dqn_update_interval = max(self.dqn_update_interval, 8)
+            self.tabular_epochs = min(self.tabular_epochs, 4)
             self.as_fill_horizon_events = min(self.as_fill_horizon_events, 16)
             self.as_max_distance_ticks = min(self.as_max_distance_ticks, 4)
         elif self.mode == "medium":
@@ -264,6 +274,7 @@ class SimulatorConfig:
             self.ppo_rollouts_per_epoch = self.ppo_rollouts_per_epoch or 8
             self.dqn_replay_size = min(self.dqn_replay_size, 20_000)
             self.dqn_min_replay = min(self.dqn_min_replay, 500)
+            self.tabular_epochs = min(self.tabular_epochs, 12)
             self.as_fill_horizon_events = min(self.as_fill_horizon_events, 48)
         elif self.mode == "full":
             return

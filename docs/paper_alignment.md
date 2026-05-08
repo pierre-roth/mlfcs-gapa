@@ -48,6 +48,13 @@ inconsistent, so this branch treats it as intent rather than an executable spec.
   first (`ask1_price, ask1_volume, ..., ask10_volume`) followed by all bid
   levels. Earlier branch revisions interleaved ask/bid by level, which is not
   what the reference `ask.csv + bid.csv` concatenation produces.
+- Paper-prose price normalization is available as `lob_price_z_norm=True`.
+  This first applies the reference-code stationary price transform
+  (`price / contemporaneous mid - 1`) and then z-normalizes each price column
+  inside the 50-event LOB window. Volume columns remain per-window
+  max-normalized. The released code contains the z-normalization helpers but
+  comments out the active lines, so this option is for paper-description table
+  replication rather than executable-code ablations.
 
 The implementation lives in [piroth/models.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/models.py).
 
@@ -218,6 +225,35 @@ resource overrides. This branch mirrors that shape for the synthetic-paper
 pipeline in [cluster/submit_piroth2.sh](/Users/piroth/Documents/projects/mlfcs-gapa/cluster/submit_piroth2.sh).
 
 All substantive runs should happen on Euler under the `ls_math` account.
+
+## Table II Tabular Baselines
+
+The paper Table II includes two learned baselines that are absent from the
+released reference repository: Inventory-RL and LOB-RL. This branch implements
+paper-aligned tabular versions in
+[piroth/tabular_baselines.py](/Users/piroth/Documents/projects/mlfcs-gapa/piroth/tabular_baselines.py)
+so the real-data Table II can include the missing rows.
+
+Inventory-RL uses a tabular Q-table over `(inventory_bucket, remaining_time_bucket)`.
+Inventory buckets are flat plus small/medium/large long and short imbalance;
+the time axis is divided into 12 episode-progress buckets. The action space is
+the nine bid/ask quote-offset pairs from `{0, 1, 2}` ticks, using the same trade
+unit, inventory guard, matching, terminal liquidation, and metrics as the
+C-PPO/D-DQN environment.
+
+LOB-RL uses a tabular Q-table over the Zhong/Bergstrom/Ward-style aggregated
+state: bid-side pressure flag, ask-side pressure flag, mid-price-change bucket,
+inventory bucket, and cumulative-PnL bucket. Its actions are quote neither,
+ask only, bid only, or both at the touch. Strong long inventory restricts the
+admissible actions to selling or doing nothing, and strong short inventory
+restricts them to buying or doing nothing.
+
+Both baselines train with epsilon-greedy Q-learning and evaluate greedily.
+They intentionally reuse the same real-data split and paper-style hybrid reward
+settings as the current Table II run. The exact original paper implementation
+details for these baselines are not fully specified, so the output should be
+reported as transparent, paper-aligned tabular baselines rather than claimed as
+byte-for-byte reproductions of the authors' private experiment code.
 
 ## Real NASDAQ Data
 

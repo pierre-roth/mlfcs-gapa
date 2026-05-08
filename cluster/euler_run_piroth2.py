@@ -17,6 +17,7 @@ from piroth.diagnostics import run_diagnostics
 from piroth.paper_experiments import run_ablation_suite, run_full_paper_suite, run_latency_suite, run_paper_baseline_suite
 from piroth.real_data import load_market_days
 from piroth.synthetic_validation import run_synthetic_validation_suite
+from piroth.tabular_baselines import evaluate_inventory_rl, evaluate_lob_rl, train_inventory_rl, train_lob_rl
 from piroth.training import evaluate_trained_policy, train_dqn, train_ppo, train_pretrain_classifier
 from piroth.visualizer import build_synthetic_data_report, load_exported_days
 
@@ -39,8 +40,12 @@ def main() -> None:
             "pretrain",
             "train-ppo",
             "train-dqn",
+            "train-inventory-rl",
+            "train-lob-rl",
             "evaluate-ppo",
             "evaluate-dqn",
+            "evaluate-inventory-rl",
+            "evaluate-lob-rl",
         ],
     )
     parser.add_argument("--dry-run", action="store_true")
@@ -100,11 +105,25 @@ def main() -> None:
         days = load_market_days(config, "train")
         pretrain_path = Path(args.checkpoint) if args.checkpoint else output_dir / "models" / "attnlob_pretrain.pt"
         train_dqn(days, config, output_dir / "models", pretrain_path=pretrain_path, device=args.device)
+    elif args.kind == "train-inventory-rl":
+        days = load_market_days(config, "train")
+        train_inventory_rl(days, config, output_dir / "models")
+    elif args.kind == "train-lob-rl":
+        days = load_market_days(config, "train")
+        train_lob_rl(days, config, output_dir / "models")
     elif args.kind in {"evaluate-ppo", "evaluate-dqn"}:
         days = load_market_days(config, "test")
         kind = "ppo" if args.kind == "evaluate-ppo" else "dqn"
         default_checkpoint = output_dir / "models" / ("c_ppo.pt" if kind == "ppo" else "d_dqn.pt")
         evaluate_trained_policy(days, config, Path(args.checkpoint) if args.checkpoint else default_checkpoint, kind, output_dir, device=args.device)
+    elif args.kind == "evaluate-inventory-rl":
+        days = load_market_days(config, "test")
+        qtable_path = Path(args.checkpoint) if args.checkpoint else output_dir / "models" / "inventory_rl_qtable.npz"
+        evaluate_inventory_rl(days, config, qtable_path, output_dir)
+    elif args.kind == "evaluate-lob-rl":
+        days = load_market_days(config, "test")
+        qtable_path = Path(args.checkpoint) if args.checkpoint else output_dir / "models" / "lob_rl_qtable.npz"
+        evaluate_lob_rl(days, config, qtable_path, output_dir)
 
 
 def _field_default(field) -> Any:
