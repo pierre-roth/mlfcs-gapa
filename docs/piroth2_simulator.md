@@ -11,9 +11,11 @@ This branch is focused on generating synthetic limit-order-book data that is usa
   - liquidity providers
   - noise takers
   - informed takers
-- Keep generation on demand.
+- Keep generation reproducible.
   - Days are generated deterministically from `(seed, symbol, day)`.
-  - Nothing requires pre-generating the full dataset.
+  - Early experiments generated days on demand; longer comparisons now use a
+    frozen persistent synthetic month when exact reuse is more important than
+    generator iteration.
 - Keep the paper-facing export clean:
   - `ask.csv`, `bid.csv`, `price.csv`, `trades.csv`, `msg.csv`
   - `msg.csv` uses aggregate market/limit/withdraw buy/sell columns required by the paper's Order Strength Index.
@@ -160,6 +162,33 @@ The validation job writes:
 The quality gate requires no flags, score at least 90, plausible spread and
 trade-density ranges, non-flat 2000-event windows, persistent order flow, and a
 fill curve that decays with quote distance.
+
+## Persistent Synthetic Month
+
+A reusable synthetic month has been generated on Euler for fixed-split
+experiments:
+
+| dataset | path | symbols | days | seed | events | trades | size | generation job |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| `synthetic_month_flowvol_v1` | `/cluster/work/math/piroth/mlfcs-gapa/data/persistent_synthetic/synthetic_month_flowvol_v1` | `000001`, `000858`, `002415` | 22 per symbol | 7 | 6,050,000 | 6,778,782 | 6.5 GB | 65821372 |
+
+The dataset was generated with the current flow/volatility synthetic settings:
+`ORDER_FLOW_MEMORY=0.35`, `VOLATILITY_CLUSTER_STRENGTH=0.45`, and
+`VOLATILITY_CLUSTER_PERSISTENCE=0.992`. It was written sequentially, CPU-only,
+without `depth_cube` construction and without a checksum pass to limit memory
+and IO pressure. Job 65821372 completed in 36m40s with peak RSS about 2.5 GB.
+
+Quality scores from the metadata sample are high and flag-free:
+
+| symbol | quality score | flags |
+|---|---:|---|
+| `000001` | 99.663 | none |
+| `000858` | 99.568 | none |
+| `002415` | 99.097 | none |
+
+Use this dataset for presentation-grade synthetic comparisons where the train,
+validation, and test days must remain fixed across architectures or reward
+settings. Use on-demand generation only when testing new generator variants.
 
 ## Data Quality
 
