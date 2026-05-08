@@ -9,15 +9,14 @@ Implemented encoders:
 
 | model | status | notes |
 |---|---|---|
-| FC-LOB | implemented | Flattened `50 x 40` LOB window with `1024 -> 256 -> 64` dense stack. |
-| Conv-LOB | implemented | Dilated temporal convolution baseline with pooled 64-dimensional output. |
-| DeepLOB | implemented | CNN/inception feature extractor followed by LSTM temporal aggregation. |
-| Attn-LOB | implemented | Existing attention encoder matching the authors' `network.py` dimensions. |
+| FC-LOB | corrected 2026-05-09 | Effective released-code/table-count graph: flattened `4000 x 1` input into a 64-unit dense layer, `256,064` encoder parameters. The prose `1024 -> 256 -> 64` stack does not match Table I. |
+| Conv-LOB | corrected 2026-05-09 | Dilated fully convolutional long-context model using `1024 x 40` input and `172,320` encoder parameters. The paper gives only the WaveNet-style description, so this row is parameter/input matched but lower-confidence than Attn/Deep. |
+| DeepLOB | corrected 2026-05-09 | Authors' LOB convolution/inception front-end with a Keras-style one-bias LSTM, `100 x 40` input, `139,168` encoder parameters. |
+| Attn-LOB | corrected 2026-05-09 | Authors' `network.py` attention encoder, `50 x 40` input, `176,320` encoder parameters. |
 
-The downloaded reference repository only contains Attn-LOB and FC-LOB code. The
-Conv-LOB and DeepLOB implementations are therefore based on the paper
-description and the standard DeepLOB architecture family, not copied from a
-missing reference implementation.
+Rows produced before 2026-05-09 are retained as diagnostics only. They should
+not be cited as valid Table I architecture replication because FC-LOB, Conv-LOB,
+and DeepLOB did not yet match the paper's input shapes and parameter counts.
 
 ## Experiment Settings
 
@@ -31,7 +30,7 @@ Common settings:
 
 | setting | value |
 |---|---|
-| `LOOKBACK` | 50 |
+| `LOOKBACK` | model-specific: FC-LOB `100`, Conv-LOB `1024`, DeepLOB `100`, Attn-LOB `50` |
 | `PRETRAIN_HORIZON` | 10 |
 | `PRETRAIN_THRESHOLD` | `1e-5` |
 | `PRETRAIN_STABLE_WINDOWS_ONLY` | true |
@@ -44,7 +43,7 @@ Datasets:
 | dataset | symbols | split | notes |
 |---|---|---|---|
 | synthetic | `000001`, `000858`, `002415` | 10 train / 6 test days | flow/volatility synthetic generator variant. |
-| real NASDAQ | `AAPL`, `GOOGL` | 8 train / 4 test days | `REAL_EVENT_STRIDE=250`, 09:30-16:00 load window. |
+| real NASDAQ | `AAPL`, `GOOGL` | 8 train / 4 test days | exact-event `REAL_EVENT_STRIDE=1`, 09:30-16:00 load window; stable-window labels only for pretraining. |
 
 Metrics written per run:
 
@@ -58,6 +57,37 @@ Collector:
 ```bash
 python cluster/collect_piroth2_pretrain_comparison.py --stamp 20260505_143142
 ```
+
+## Exact Architecture Rerun, 2026-05-09
+
+After comparing the implementations against Table I, the pretraining encoders
+were corrected to enforce the paper's reported input shapes and encoder
+parameter counts:
+
+| model | input | encoder parameters | confidence |
+|---|---:|---:|---|
+| FC-LOB | `4000 x 1` | 256,064 | High for the released-code/table-count graph; the paper prose is internally inconsistent. |
+| Conv-LOB | `1024 x 40` | 172,320 | Medium; the paper gives a WaveNet-style description but no reference implementation. |
+| DeepLOB | `100 x 40` | 139,168 | High; matches the authors' convolution/inception front-end plus Keras-style LSTM count. |
+| Attn-LOB | `50 x 40` | 176,320 | High; matches the released authors' `network.py`. |
+
+Focused validation:
+
+| environment | command | result |
+|---|---|---|
+| local | `uv run pytest tests/test_piroth2_models.py -q` | 11 passed |
+| Euler | `python -m pytest tests/test_piroth2_models.py -q` after loading the cluster Python module | 11 passed |
+
+Active exact real-data rerun:
+
+| dataset | symbol | FC-LOB | Conv-LOB | DeepLOB | Attn-LOB |
+|---|---|---:|---:|---:|---:|
+| real | `AAPL` | 65889214 | 65889216 | 65889218 | 65889220 |
+| real | `GOOGL` | 65889222 | 65889223 | 65889224 | 65889227 |
+
+Submission stamp: `20260509_table1_exact_arch`. These are the first jobs in
+this branch that should be considered candidates for the real-data Table I
+architecture comparison.
 
 ## Submitted Runs
 

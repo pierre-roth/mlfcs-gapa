@@ -16,7 +16,16 @@ from tqdm import tqdm
 
 from .baselines import calibrate_avellaneda_stoikov
 from .config import DiagnosticsConfig
-from .models import AttnLOBEncoder, DuelingDQN, PPOActorCritic, PretrainClassifier, TradingBackbone, build_pretrain_classifier
+from .models import (
+    AttnLOBEncoder,
+    DuelingDQN,
+    PPOActorCritic,
+    PretrainClassifier,
+    TradingBackbone,
+    build_pretrain_classifier,
+    paper_pretrain_input,
+    paper_pretrain_model_slug,
+)
 from .paper_env import PaperAction, PaperTradingEnv, run_episode
 from .paper_features import LOB_COLUMNS, combine_orderbook, lob_tensor_from_values, midprice_direction_labels
 from .paper_policies import AvellanedaStoikovPaperPolicy, ContinuousActionPolicy, DiscreteActionPolicy
@@ -134,10 +143,14 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
     torch.save({"model": model.state_dict(), "config": asdict(config), "history": history}, path)
     history_path = output_dir / ("attnlob_pretrain_history.csv" if model_slug == "attnlob" else f"{model_slug}_pretrain_history.csv")
     pd.DataFrame(history).to_csv(history_path, index=False)
+    encoder_parameters = sum(parameter.numel() for parameter in model.encoder.parameters())
+    head_parameters = sum(parameter.numel() for parameter in model.head.parameters())
     summary = {
         "model_type": model_slug,
         "checkpoint": str(path),
         "history": str(history_path),
+        "input_shape": paper_pretrain_input(model_slug),
+        "lookback": config.lookback,
         "train_days": len(days),
         "eval_days": len(eval_days or []),
         "train_label_counts": dataset.label_counts,
@@ -145,7 +158,10 @@ def train_pretrain_classifier(days: list[SyntheticDay], config: DiagnosticsConfi
         "class_weight_mode": config.pretrain_class_weight_mode,
         "class_weights": class_weights.detach().cpu().tolist() if class_weights is not None else None,
         "final": history[-1],
-        "parameters": sum(parameter.numel() for parameter in model.parameters()),
+        "parameters": encoder_parameters,
+        "encoder_parameters": encoder_parameters,
+        "classifier_head_parameters": head_parameters,
+        "full_classifier_parameters": encoder_parameters + head_parameters,
     }
     with (output_dir / f"{model_slug}_pretrain_summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
@@ -246,9 +262,7 @@ def _classification_metrics(target: np.ndarray, prediction: np.ndarray, num_clas
 
 
 def _pretrain_model_slug(model_type: str) -> str:
-    normalized = model_type.strip().lower().replace("_", "").replace("-", "")
-    aliases = {"attn": "attnlob", "fc": "fclob", "conv": "convlob", "deep": "deeplob"}
-    return aliases.get(normalized, normalized)
+    return paper_pretrain_model_slug(model_type)
 
 
 def _pretrain_class_weights(label_counts: list[int], mode: str, device: str) -> torch.Tensor | None:

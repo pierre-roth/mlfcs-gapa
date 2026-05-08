@@ -18,6 +18,14 @@ submit_pretrain() {
 
     RUN_NAME="${RUN_NAME_PREFIX:-piroth2}_pretrainthr_real_${symbol}_${model_type}_${threshold_label}_${weight_mode}_${STAMP}"
     SYMBOL="${symbol}"
+    local lookback
+    case "${model_type}" in
+        fclob) lookback=100 ;;
+        convlob) lookback=1024 ;;
+        deeplob) lookback=100 ;;
+        attnlob) lookback=50 ;;
+        *) echo "Unknown pretrain model: ${model_type}" >&2; return 1 ;;
+    esac
 
     local -a env_args=(
         "ACCOUNT=${ACCOUNT:-ls_math}"
@@ -40,7 +48,7 @@ submit_pretrain() {
         "NUM_DAYS=${NUM_DAYS:-12}"
         "TRAIN_DAYS=${TRAIN_DAYS:-8}"
         "TEST_DAYS=${TEST_DAYS:-4}"
-        "LOOKBACK=${LOOKBACK:-50}"
+        "LOOKBACK=${LOOKBACK:-${lookback}}"
         "PRETRAIN_HORIZON=${PRETRAIN_HORIZON:-10}"
         "PRETRAIN_THRESHOLD=${threshold}"
         "PRETRAIN_CLASS_WEIGHT_MODE=${weight_mode}"

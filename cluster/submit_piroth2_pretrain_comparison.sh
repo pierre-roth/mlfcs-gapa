@@ -32,8 +32,17 @@ submit_pretrain() {
         "PRETRAIN_STABLE_WINDOWS_ONLY=true"
     )
 
+    local lookback
+    case "${model_type}" in
+        fclob) lookback=100 ;;
+        convlob) lookback=1024 ;;
+        deeplob) lookback=100 ;;
+        attnlob) lookback=50 ;;
+        *) echo "Unknown pretrain model: ${model_type}" >&2; return 1 ;;
+    esac
+
     local job_id
-    job_id="$(env "${env_args[@]}" "$@" "${REPO}/cluster/submit_piroth2.sh" pretrain | tail -n 1)"
+    job_id="$(env "${env_args[@]}" "$@" "LOOKBACK=${lookback}" "${REPO}/cluster/submit_piroth2.sh" pretrain | tail -n 1)"
     printf '%s,%s,%s,%s,%s\n' "${dataset}" "${symbol}" "${model_type}" "${RUN_NAME}" "${job_id}"
 }
 
@@ -41,7 +50,6 @@ REPO="$(repo_root)"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 
 COMMON_PRETRAIN=(
-    "LOOKBACK=50"
     "PRETRAIN_HORIZON=10"
     "PRETRAIN_THRESHOLD=0.00001"
     "TORCH_BATCH_SIZE=${TORCH_BATCH_SIZE:-2048}"

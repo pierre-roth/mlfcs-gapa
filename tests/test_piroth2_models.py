@@ -11,6 +11,7 @@ from piroth.models import (
     PPOActorCritic,
     TradingBackbone,
     build_pretrain_classifier,
+    paper_pretrain_lookback,
 )
 from piroth.config import DiagnosticsConfig
 from piroth.simulator import SyntheticMarketGenerator
@@ -28,20 +29,25 @@ def test_attnlob_encoder_matches_paper_output_shape() -> None:
 
 
 def test_pretraining_comparison_encoders_match_latent_shape() -> None:
-    lob = torch.zeros(2, 50, 40, 1)
+    cases = [
+        (FCLOBEncoder(), torch.zeros(2, 100, 40, 1), 256_064),
+        (ConvLOBEncoder(), torch.zeros(2, 1024, 40, 1), 172_320),
+        (DeepLOBEncoder(), torch.zeros(2, 100, 40, 1), 139_168),
+        (AttnLOBEncoder(), torch.zeros(2, 50, 40, 1), 176_320),
+    ]
 
-    for encoder in [FCLOBEncoder(), ConvLOBEncoder(), DeepLOBEncoder(), AttnLOBEncoder()]:
+    for encoder, lob, expected_parameters in cases:
         encoder.eval()
         with torch.no_grad():
             encoded = encoder(lob)
         assert encoded.shape == (2, 64)
+        assert sum(parameter.numel() for parameter in encoder.parameters()) == expected_parameters
 
 
 def test_pretraining_comparison_classifiers_match_label_shape() -> None:
-    lob = torch.zeros(2, 50, 40, 1)
-
     for model_type in ["fclob", "convlob", "deeplob", "attnlob"]:
-        classifier = build_pretrain_classifier(model_type)
+        lob = torch.zeros(2, paper_pretrain_lookback(model_type), 40, 1)
+        classifier = build_pretrain_classifier(model_type, lookback=paper_pretrain_lookback(model_type))
         classifier.eval()
         with torch.no_grad():
             logits = classifier(lob)

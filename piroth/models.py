@@ -1,22 +1,41 @@
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
 
 
-class FCLOBEncoder(nn.Module):
-    """Fully connected LOB encoder baseline from the paper's Table I."""
+PAPER_PRETRAIN_LOOKBACKS = {
+    "fclob": 100,
+    "convlob": 1024,
+    "deeplob": 100,
+    "attnlob": 50,
+}
 
-    def __init__(self, output_dim: int = 64, lookback: int = 50, features: int = 40) -> None:
+PAPER_PRETRAIN_INPUTS = {
+    "fclob": "4000 x 1",
+    "convlob": "1024 x 40",
+    "deeplob": "100 x 40",
+    "attnlob": "50 x 40",
+}
+
+
+class FCLOBEncoder(nn.Module):
+    """FC-LOB encoder matching the paper Table I parameter count.
+
+    The authors' released ``get_fclob_model`` creates three Dense layers but
+    wires each one directly to the flattened LOB input. The returned encoder is
+    therefore effectively ``Flatten -> Dense(64)``, which is also the only FC
+    interpretation that matches Table I: ``4000 * 64 + 64 = 256,064``.
+    """
+
+    def __init__(self, output_dim: int = 64, lookback: int = 100, features: int = 40) -> None:
         super().__init__()
         self.output_dim = output_dim
         self.net = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(lookback * features, 1024),
-            nn.LeakyReLU(0.01),
-            nn.Linear(1024, 256),
-            nn.LeakyReLU(0.01),
-            nn.Linear(256, output_dim),
+            nn.Linear(lookback * features, output_dim),
             nn.LeakyReLU(0.01),
         )
 
@@ -27,50 +46,87 @@ class FCLOBEncoder(nn.Module):
 
 
 class ConvLOBEncoder(nn.Module):
-    """Dilated convolutional LOB encoder baseline.
+    """Dilated fully convolutional LOB encoder matching Table I dimensions.
 
-    The paper describes Conv-LOB as a fully convolutional network using dilated
-    convolutions to accept longer temporal context. This implementation keeps
-    the same 50x40 input used by the replication and emits the standard
-    64-dimensional latent vector.
+    The paper only states that Conv-LOB is a fully convolutional model with
+    dilated convolutions, similar to WaveNet, and reports a 1024x40 input with
+    172,320 parameters. This implementation keeps that long temporal input and
+    exact parameter count while using a small dilated temporal Conv1d stack.
     """
 
     def __init__(self, output_dim: int = 64) -> None:
+        if output_dim != 64:
+            raise ValueError("Paper Conv-LOB uses a fixed 64-dimensional latent output.")
         super().__init__()
         self.output_dim = output_dim
         self.net = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=(1, 2), stride=(1, 2)),
+            nn.Conv1d(40, 56, kernel_size=4, padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, kernel_size=(3, 1), padding=(1, 0), dilation=(1, 1)),
+            nn.Conv1d(56, 56, kernel_size=12, dilation=1, padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 32, kernel_size=(3, 1), padding=(2, 0), dilation=(2, 1)),
+            nn.Conv1d(56, 56, kernel_size=12, dilation=2, padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(32, 64, kernel_size=(3, 1), padding=(4, 0), dilation=(4, 1)),
+            nn.Conv1d(56, 56, kernel_size=12, dilation=4, padding="same"),
             nn.LeakyReLU(0.01),
-            nn.Conv2d(64, 64, kernel_size=(3, 1), padding=(8, 0), dilation=(8, 1)),
+            nn.Conv1d(56, 64, kernel_size=14, padding="same"),
             nn.LeakyReLU(0.01),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
-            nn.Linear(64, output_dim),
-            nn.LeakyReLU(0.01),
         )
 
     def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
         if lob_state.ndim != 4:
             raise ValueError(f"Expected LOB tensor with 4 dims, got {tuple(lob_state.shape)}")
-        x = lob_state.permute(0, 3, 1, 2).contiguous()
+        if lob_state.shape[2] != 40:
+            raise ValueError(f"Expected 40 LOB features, got {lob_state.shape[2]}")
+        x = lob_state.squeeze(-1).permute(0, 2, 1).contiguous()
         return self.net(x)
 
 
-class DeepLOBEncoder(nn.Module):
-    """DeepLOB-style CNN plus recurrent encoder baseline.
+class _KerasStyleLSTM(nn.Module):
+    """Single-layer LSTM with one bias vector, matching Keras parameter counts."""
 
-    DeepLOB uses convolutional spatial feature extraction followed by recurrent
-    temporal aggregation. The spatial/inception front-end mirrors the LOB CNN
-    used by Attn-LOB; the temporal aggregator is an LSTM rather than attention.
+    def __init__(self, input_size: int, hidden_size: int) -> None:
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.weight_ih = nn.Parameter(torch.empty(4 * hidden_size, input_size))
+        self.weight_hh = nn.Parameter(torch.empty(4 * hidden_size, hidden_size))
+        self.bias = nn.Parameter(torch.empty(4 * hidden_size))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        bound = 1.0 / math.sqrt(self.hidden_size)
+        for parameter in self.parameters():
+            nn.init.uniform_(parameter, -bound, bound)
+
+    def forward(self, sequence: torch.Tensor) -> torch.Tensor:
+        batch = sequence.shape[0]
+        hidden = sequence.new_zeros(batch, self.hidden_size)
+        cell = sequence.new_zeros(batch, self.hidden_size)
+        for step in range(sequence.shape[1]):
+            gates = (
+                torch.matmul(sequence[:, step, :], self.weight_ih.t())
+                + torch.matmul(hidden, self.weight_hh.t())
+                + self.bias
+            )
+            input_gate, forget_gate, cell_gate, output_gate = gates.chunk(4, dim=1)
+            cell = torch.sigmoid(forget_gate) * cell + torch.sigmoid(input_gate) * torch.tanh(cell_gate)
+            hidden = torch.sigmoid(output_gate) * torch.tanh(cell)
+        return hidden
+
+
+class DeepLOBEncoder(nn.Module):
+    """DeepLOB-style CNN plus LSTM encoder matching Table I.
+
+    The 139,168 Table I count is reproduced by the authors' LOB
+    convolution/inception front-end followed by a Keras-style LSTM with one bias
+    vector and no extra projection layer.
     """
 
     def __init__(self, output_dim: int = 64, hidden_dim: int = 64) -> None:
+        if output_dim != 64 or hidden_dim != 64:
+            raise ValueError("Paper DeepLOB uses fixed output_dim=64 and hidden_dim=64.")
         super().__init__()
         self.output_dim = output_dim
         self.spatial = nn.Sequential(
@@ -88,12 +144,15 @@ class DeepLOBEncoder(nn.Module):
             nn.LeakyReLU(0.01),
             nn.Conv2d(32, 32, kernel_size=(1, 4)),
             nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
+            nn.Conv2d(32, 32, kernel_size=(4, 1), padding="same"),
+            nn.LeakyReLU(0.01),
         )
         self.inception_3 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, kernel_size=(3, 1), padding="same"), nn.LeakyReLU(0.01))
         self.inception_5 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01), nn.Conv2d(64, 64, kernel_size=(5, 1), padding="same"), nn.LeakyReLU(0.01))
         self.inception_pool = nn.Sequential(nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1), padding=(1, 0)), nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"), nn.LeakyReLU(0.01))
-        self.lstm = nn.LSTM(input_size=192, hidden_size=hidden_dim, batch_first=True)
-        self.projection = nn.Linear(hidden_dim, output_dim)
+        self.lstm = _KerasStyleLSTM(input_size=192, hidden_size=hidden_dim)
 
     def forward(self, lob_state: torch.Tensor) -> torch.Tensor:
         if lob_state.ndim != 4:
@@ -102,8 +161,7 @@ class DeepLOBEncoder(nn.Module):
         x = self.spatial(x)
         x = torch.cat([self.inception_3(x), self.inception_5(x), self.inception_pool(x)], dim=1)
         x = x.squeeze(-1).permute(0, 2, 1).contiguous()
-        _, (hidden, _) = self.lstm(x)
-        return self.projection(hidden[-1])
+        return self.lstm(x)
 
 
 class AttnLOBEncoder(nn.Module):
@@ -177,20 +235,36 @@ class PretrainClassifier(nn.Module):
         return self.head(self.encoder(lob_state))
 
 
-def build_lob_encoder(model_type: str, output_dim: int = 64, lookback: int = 50) -> nn.Module:
+def paper_pretrain_model_slug(model_type: str) -> str:
     normalized = model_type.strip().lower().replace("_", "").replace("-", "")
+    aliases = {"attn": "attnlob", "fc": "fclob", "conv": "convlob", "deep": "deeplob"}
+    return aliases.get(normalized, normalized)
+
+
+def paper_pretrain_lookback(model_type: str) -> int:
+    model_slug = paper_pretrain_model_slug(model_type)
+    return PAPER_PRETRAIN_LOOKBACKS[model_slug]
+
+
+def paper_pretrain_input(model_type: str) -> str:
+    model_slug = paper_pretrain_model_slug(model_type)
+    return PAPER_PRETRAIN_INPUTS[model_slug]
+
+
+def build_lob_encoder(model_type: str, output_dim: int = 64, lookback: int | None = None) -> nn.Module:
+    normalized = paper_pretrain_model_slug(model_type)
     if normalized in {"attnlob", "attn"}:
         return AttnLOBEncoder(output_dim=output_dim)
-    if normalized in {"fclob", "fc"}:
-        return FCLOBEncoder(output_dim=output_dim, lookback=lookback)
-    if normalized in {"convlob", "conv"}:
+    if normalized == "fclob":
+        return FCLOBEncoder(output_dim=output_dim, lookback=lookback or paper_pretrain_lookback(normalized))
+    if normalized == "convlob":
         return ConvLOBEncoder(output_dim=output_dim)
-    if normalized in {"deeplob", "deep"}:
+    if normalized == "deeplob":
         return DeepLOBEncoder(output_dim=output_dim)
     raise ValueError(f"Unknown pretrain_model_type: {model_type!r}")
 
 
-def build_pretrain_classifier(model_type: str = "attnlob", output_dim: int = 64, lookback: int = 50) -> PretrainClassifier:
+def build_pretrain_classifier(model_type: str = "attnlob", output_dim: int = 64, lookback: int | None = None) -> PretrainClassifier:
     return PretrainClassifier(build_lob_encoder(model_type, output_dim=output_dim, lookback=lookback), output_dim=output_dim)
 
 
