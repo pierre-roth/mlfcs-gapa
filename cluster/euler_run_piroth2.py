@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from piroth.config import DiagnosticsConfig
+from piroth.as_sweep import run_as_validation_sweep
 from piroth.diagnostics import run_diagnostics
 from piroth.paper_experiments import run_ablation_suite, run_full_paper_suite, run_latency_suite, run_paper_baseline_suite
 from piroth.real_data import load_market_days
@@ -33,6 +34,7 @@ def main() -> None:
             "diagnostics",
             "visualize",
             "paper-baselines",
+            "as-sweep",
             "synthetic-validation",
             "latency-suite",
             "ablation-suite",
@@ -64,6 +66,11 @@ def main() -> None:
         return
     if args.kind == "paper-baselines":
         run_paper_baseline_suite(config)
+        return
+    if args.kind == "as-sweep":
+        output_dir = config.output_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        run_as_validation_sweep(config, output_dir / "as_validation_sweep")
         return
     if args.kind == "synthetic-validation":
         run_synthetic_validation_suite(
