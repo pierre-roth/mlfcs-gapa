@@ -59,6 +59,22 @@ def run_as_validation_sweep(
                 for day in val_days:
                     metrics.extend(_fast_replay_policy("AS", day, candidate, calibration))
                 summary = summarize_metrics(pd.DataFrame([asdict(metric) for metric in metrics])) if metrics else {}
+                if not summary:
+                    summary = {
+                        "episodes": 0.0,
+                        "pnl_mean": float("nan"),
+                        "pnl_std": float("nan"),
+                        "nd_pnl_mean": float("nan"),
+                        "pnl_map_mean": float("nan"),
+                        "profit_ratio_mean": float("nan"),
+                        "avg_abs_position_mean": float("nan"),
+                        "avg_spread_mean": float("nan"),
+                        "turnover_mean": float("nan"),
+                        "trades_mean": float("nan"),
+                        "fill_rate_mean": float("nan"),
+                        "reward_mean": float("nan"),
+                        "sharpe": float("nan"),
+                    }
                 rows.append(
                     {
                         "symbol": config.symbol,
@@ -73,9 +89,10 @@ def run_as_validation_sweep(
 
     frame = pd.DataFrame(rows)
     frame.to_csv(output_dir / "as_validation_sweep.csv", index=False)
-    if frame.empty:
+    valid_frame = frame[frame["episodes"] > 0].copy() if "episodes" in frame else pd.DataFrame()
+    if valid_frame.empty:
         raise ValueError("AS validation sweep produced no metrics.")
-    best_row = frame.sort_values(
+    best_row = valid_frame.sort_values(
         ["pnl_mean", "sharpe", "profit_ratio_mean"],
         ascending=[False, False, False],
     ).iloc[0].to_dict()
