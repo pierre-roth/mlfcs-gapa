@@ -89,6 +89,24 @@ Submission stamp: `20260509_table1_exact_arch`. These are the first jobs in
 this branch that should be considered candidates for the real-data Table I
 architecture comparison.
 
+Those initial jobs were cancelled after about 12 hours because they never
+reached epoch output: the generic real-data loader was reading full `msg.csv`
+and `trades.csv` files even though supervised pretraining only uses ask, bid,
+and price data. This was an implementation efficiency bug, not an experiment
+setting change. The pretrain dispatcher now uses a lightweight real loader path
+that preserves the same ask/bid/price event stream, `REAL_EVENT_STRIDE=1`, stable
+windows, horizon, threshold, and model input shapes, but skips unused execution
+logs.
+
+Replacement exact real-data rerun:
+
+| dataset | symbol | FC-LOB | Conv-LOB | DeepLOB | Attn-LOB |
+|---|---|---:|---:|---:|---:|
+| real | `AAPL` | 65925667 | 65925668 | 65925670 | 65925671 |
+| real | `GOOGL` | 65925672 | 65925673 | 65925674 | 65925675 |
+
+Replacement stamp: `20260509_table1_exact_arch_fastio`.
+
 ## Submitted Runs
 
 Submitted on Euler at `20260505_143142`.

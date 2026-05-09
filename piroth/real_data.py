@@ -41,13 +41,13 @@ class RealMarketDataLoader:
         start = self.config.train_days
         return days[start : start + self.config.test_days]
 
-    def train_days(self) -> list[SyntheticDay]:
-        return [self.load_day(day) for day in self.train_day_names()]
+    def train_days(self, *, lightweight: bool = False) -> list[SyntheticDay]:
+        return [self.load_day(day, lightweight=lightweight) for day in self.train_day_names()]
 
-    def test_days(self) -> list[SyntheticDay]:
-        return [self.load_day(day) for day in self.test_day_names()]
+    def test_days(self, *, lightweight: bool = False) -> list[SyntheticDay]:
+        return [self.load_day(day, lightweight=lightweight) for day in self.test_day_names()]
 
-    def load_day(self, day: str) -> SyntheticDay:
+    def load_day(self, day: str, *, lightweight: bool = False) -> SyntheticDay:
         day_root = self.symbol_root / day
         max_rows = self.config.events_per_day_override
         windows = [(self.config.real_start_time, self.config.real_end_time)]
@@ -57,10 +57,14 @@ class RealMarketDataLoader:
         timestamps = pd.Index(price["timestamp"])
         ask = _read_event_frame(day_root / "ask.csv", self.config, max_rows=max_rows, windows=windows)
         bid = _read_event_frame(day_root / "bid.csv", self.config, max_rows=max_rows, windows=windows)
-        msg = _read_event_frame(day_root / "msg.csv", self.config, max_rows=max_rows, windows=windows)
-        ask, bid, msg = [_align_to_timestamps(frame, timestamps, label, day_root) for frame, label in ((ask, "ask"), (bid, "bid"), (msg, "msg"))]
+        ask, bid = [_align_to_timestamps(frame, timestamps, label, day_root) for frame, label in ((ask, "ask"), (bid, "bid"))]
+        if lightweight:
+            msg = pd.DataFrame({"timestamp": price["timestamp"]})
+        else:
+            msg = _read_event_frame(day_root / "msg.csv", self.config, max_rows=max_rows, windows=windows)
+            msg = _align_to_timestamps(msg, timestamps, "msg", day_root)
         price = _normalize_price(price, ask, bid, self.config.symbol_spec.tick_size)
-        trades = _read_trades(day_root / "trades.csv", self.config, price["timestamp"].min(), price["timestamp"].max())
+        trades = _empty_trades() if lightweight else _read_trades(day_root / "trades.csv", self.config, price["timestamp"].min(), price["timestamp"].max())
         event_log = pd.DataFrame(columns=["timestamp", "event_type", "agent_type", "agent_id", "side", "price", "size", "fair_value", "maker_order_id"])
         latent = pd.DataFrame(
             {
@@ -94,7 +98,7 @@ class RealMarketDataLoader:
         )
 
 
-def load_market_days(config: DiagnosticsConfig, split: str) -> list[SyntheticDay]:
+def load_market_days(config: DiagnosticsConfig, split: str, *, lightweight: bool = False) -> list[SyntheticDay]:
     if config.data_source == "synthetic":
         from .simulator import SyntheticMarketGenerator
 
@@ -103,7 +107,7 @@ def load_market_days(config: DiagnosticsConfig, split: str) -> list[SyntheticDay
         return [generator.generate_day(day) for day in names]
     if config.data_source == "real":
         loader = RealMarketDataLoader(config)
-        return loader.train_days() if split == "train" else loader.test_days()
+        return loader.train_days(lightweight=lightweight) if split == "train" else loader.test_days(lightweight=lightweight)
     raise ValueError(f"Unknown data_source: {config.data_source}")
 
 

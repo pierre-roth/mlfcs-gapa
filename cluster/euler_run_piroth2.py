@@ -94,8 +94,13 @@ def main() -> None:
             days = load_market_days(config, "test")[: min(config.export_day_count, config.test_days)]
         build_synthetic_data_report(days, config, output_dir / "visual_report")
     elif args.kind == "pretrain":
-        days = load_market_days(config, "train")
-        eval_days = load_market_days(config, "test")
+        days = load_market_days(config, "train", lightweight=True)
+        eval_days = load_market_days(config, "test", lightweight=True)
+        print(
+            f"Loaded lightweight pretrain data: train_days={len(days)}, eval_days={len(eval_days)}, "
+            f"train_events={sum(len(day.price) for day in days)}, eval_events={sum(len(day.price) for day in eval_days)}",
+            flush=True,
+        )
         train_pretrain_classifier(days, config, output_dir / "models", device=args.device, eval_days=eval_days)
     elif args.kind == "train-ppo":
         days = load_market_days(config, "train")
