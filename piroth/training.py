@@ -14,7 +14,7 @@ from torch.distributions import Normal
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from .baselines import calibrate_avellaneda_stoikov
+from .baselines import AvellanedaStoikovCalibration, calibrate_avellaneda_stoikov
 from .config import DiagnosticsConfig
 from .models import (
     AttnLOBEncoder,
@@ -292,19 +292,35 @@ def _stable_window_mask(timestamps: pd.Series, windows: list[str]) -> np.ndarray
 class PPOModelPolicy:
     name = "C-PPO"
 
-    def __init__(self, model: PPOActorCritic, device: str = "cpu", deterministic: bool = False) -> None:
+    def __init__(
+        self,
+        model: PPOActorCritic,
+        device: str = "cpu",
+        deterministic: bool = False,
+        as_teacher: AvellanedaStoikovPaperPolicy | None = None,
+        as_trust_radius: float | None = None,
+    ) -> None:
         self.model = model
         self.device = device
         self.deterministic = deterministic
+        self.as_teacher = as_teacher
+        self.as_trust_radius = as_trust_radius
         self.last_log_prob: torch.Tensor | None = None
         self.last_value: torch.Tensor | None = None
         self.last_action_tensor: torch.Tensor | None = None
+        self.last_as_action_tensor: torch.Tensor | None = None
 
     def act(self, state, env: PaperTradingEnv) -> PaperAction:
         lob, market, agent = _state_tensors(state, self.device)
         mean, log_std, value = self.model(lob, market, agent)
         dist = Normal(mean, log_std.exp())
         action = mean if self.deterministic else torch.clamp(dist.sample(), -1.0, 1.0)
+        self.last_as_action_tensor = None
+        if self.as_teacher is not None:
+            as_action = _as_action_target_tensor(state, env, self.as_teacher, self.device)
+            self.last_as_action_tensor = as_action.squeeze(0).detach()
+            if self.as_trust_radius is not None:
+                action = _apply_as_trust_region(action, as_action, self.as_trust_radius)
         self.last_log_prob = dist.log_prob(action).sum(dim=1)
         self.last_value = value
         self.last_action_tensor = action.squeeze(0)
@@ -332,6 +348,8 @@ class DQNModelPolicy:
 def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_dir: Path, pretrain_path: Path | None = None, device: str = "cpu") -> Path:
     _configure_torch(device)
     output_dir.mkdir(parents=True, exist_ok=True)
+    as_calibration = calibrate_avellaneda_stoikov(train_days, config) if _uses_as_constraint(config) else None
+    as_teacher = AvellanedaStoikovPaperPolicy(as_calibration) if as_calibration is not None else None
     model = PPOActorCritic(
         _trading_backbone(config, pretrain_path, device),
         initial_log_std=config.ppo_initial_log_std,
@@ -360,7 +378,10 @@ def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
         batch_log_prob: list[torch.Tensor] = []
         batch_return: list[torch.Tensor] = []
         batch_advantage: list[torch.Tensor] = []
-        policy = PPOModelPolicy(model, device=device)
+        as_lambda = _linear_schedule(config.as_soft_lambda, config.as_soft_lambda_final, epoch, config.ppo_epochs) if config.as_soft_constraint else 0.0
+        as_trust_radius = _linear_schedule(config.as_trust_region_radius, config.as_trust_region_radius_final, epoch, config.ppo_epochs) if config.as_trust_region else None
+        policy = PPOModelPolicy(model, device=device, as_teacher=as_teacher, as_trust_radius=as_trust_radius)
+        as_penalty_values: list[float] = []
         for day, episode_index, start, stop in episode_specs:
             env = PaperTradingEnv(day, config, start, stop, episode_index=episode_index, rng_seed=config.seed)
             state = env.reset()
@@ -378,7 +399,12 @@ def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
                     log_probs.append(policy.last_log_prob.detach().cpu().squeeze(0))
                     values.append(policy.last_value.detach().cpu().squeeze(0))
                 result = env.step(action)
-                rewards.append(result.reward)
+                reward = result.reward
+                if as_lambda > 0.0 and policy.last_action_tensor is not None and policy.last_as_action_tensor is not None:
+                    penalty = _as_constraint_value(policy.last_action_tensor, policy.last_as_action_tensor, as_lambda)
+                    as_penalty_values.append(penalty)
+                    reward -= penalty
+                rewards.append(reward)
                 terminal = result.terminal
                 if result.state is not None:
                     state = result.state
@@ -444,6 +470,9 @@ def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
             "pnl_mean": float(np.mean([row["pnl"] for row in metrics_rows])),
             "loss": loss_value,
             "entropy_coef": _linear_schedule(config.ppo_entropy_coef, config.ppo_entropy_coef_final, epoch, config.ppo_epochs),
+            "as_soft_lambda": as_lambda,
+            "as_trust_radius": as_trust_radius if as_trust_radius is not None else float("nan"),
+            "as_penalty_mean": float(np.mean(as_penalty_values)) if as_penalty_values else 0.0,
         }
         history.append(epoch_row)
         pd.DataFrame(history).to_csv(output_dir / "c_ppo_history.csv", index=False)
@@ -453,7 +482,15 @@ def train_ppo(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
             flush=True,
         )
     path = output_dir / "c_ppo.pt"
-    torch.save({"model": model.state_dict(), "config": asdict(config), "history": history}, path)
+    torch.save(
+        {
+            "model": model.state_dict(),
+            "config": asdict(config),
+            "history": history,
+            "as_constraint_calibration": asdict(as_calibration) if as_calibration is not None else None,
+        },
+        path,
+    )
     pd.DataFrame(history).to_csv(output_dir / "c_ppo_history.csv", index=False)
     return path
 
@@ -556,13 +593,20 @@ def train_dqn(train_days: list[SyntheticDay], config: DiagnosticsConfig, output_
 def evaluate_trained_policy(days: list[SyntheticDay], config: DiagnosticsConfig, checkpoint: Path, kind: str, output_dir: Path, device: str = "cpu") -> pd.DataFrame:
     _configure_torch(device)
     if kind == "ppo":
+        checkpoint_payload = torch.load(checkpoint, map_location=device)
+        as_teacher = _as_teacher_from_payload(checkpoint_payload, days, config) if _uses_as_constraint(config) else None
+        as_trust_radius = (
+            config.as_trust_region_radius_final
+            if config.as_trust_region_radius_final is not None
+            else config.as_trust_region_radius
+        ) if config.as_trust_region else None
         model = PPOActorCritic(
             _trading_backbone(config, None, device),
             initial_log_std=config.ppo_initial_log_std,
             initial_spread_bias=config.ppo_initial_spread_bias,
         ).to(device)
-        model.load_state_dict(torch.load(checkpoint, map_location=device)["model"])
-        policy = PPOModelPolicy(model, device=device, deterministic=True)
+        model.load_state_dict(checkpoint_payload["model"])
+        policy = PPOModelPolicy(model, device=device, deterministic=True, as_teacher=as_teacher, as_trust_radius=as_trust_radius)
     elif kind == "dqn":
         model = DuelingDQN(_trading_backbone(config, None, device)).to(device)
         model.load_state_dict(torch.load(checkpoint, map_location=device)["model"])
@@ -630,6 +674,44 @@ def _behavior_clone_dqn_from_as(train_days: list[SyntheticDay], config: Diagnost
         history.append({"epoch": epoch + 1, "loss": float(np.mean(losses)), "accuracy": correct / max(dataset_size, 1), "samples": int(dataset_size)})
     _set_model_trainable(model, True)
     pd.DataFrame(history).to_csv(output_dir / "as_bc_dqn_history.csv", index=False)
+
+
+def _uses_as_constraint(config: DiagnosticsConfig) -> bool:
+    return bool(config.as_soft_constraint or config.as_trust_region)
+
+
+def _as_teacher(train_days: list[SyntheticDay], config: DiagnosticsConfig) -> AvellanedaStoikovPaperPolicy:
+    return AvellanedaStoikovPaperPolicy(calibrate_avellaneda_stoikov(train_days, config))
+
+
+def _as_teacher_from_payload(payload: dict[str, object], days: list[SyntheticDay], config: DiagnosticsConfig) -> AvellanedaStoikovPaperPolicy:
+    raw = payload.get("as_constraint_calibration")
+    if isinstance(raw, dict):
+        calibration = AvellanedaStoikovCalibration(
+            sigma_event=float(raw["sigma_event"]),
+            sigma2_event=float(raw["sigma2_event"]),
+            kappa=float(raw["kappa"]),
+            fill_profile={int(distance): float(probability) for distance, probability in raw["fill_profile"].items()},
+        )
+        return AvellanedaStoikovPaperPolicy(calibration)
+    return _as_teacher(days, config)
+
+
+def _as_action_target_tensor(state, env: PaperTradingEnv, teacher: AvellanedaStoikovPaperPolicy, device: str) -> torch.Tensor:
+    target = _continuous_action_target(state, env, teacher.act(state, env))
+    return torch.from_numpy(target[None]).to(device=device, dtype=torch.float32)
+
+
+def _apply_as_trust_region(action: torch.Tensor, as_action: torch.Tensor, radius: float) -> torch.Tensor:
+    radius = max(float(radius), 0.0)
+    projected = torch.maximum(torch.minimum(action, as_action + radius), as_action - radius)
+    return torch.clamp(projected, -1.0, 1.0)
+
+
+def _as_constraint_value(action: torch.Tensor, as_action: torch.Tensor, weight: float) -> float:
+    if weight <= 0.0:
+        return 0.0
+    return float(weight * torch.sum((action.detach() - as_action.detach()) ** 2).cpu())
 
 
 def _as_supervision_samples(train_days: list[SyntheticDay], config: DiagnosticsConfig, *, for_discrete: bool) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | int]]:

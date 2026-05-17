@@ -223,6 +223,12 @@ class SimulatorConfig:
     bc_as_freeze_encoder_only: bool = True
     bc_as_max_samples_per_day: int | None = 10_000
     bc_as_loss_weight: float = 1.0
+    as_soft_constraint: bool = False
+    as_soft_lambda: float = 0.0
+    as_soft_lambda_final: float | None = None
+    as_trust_region: bool = False
+    as_trust_region_radius: float = 0.25
+    as_trust_region_radius_final: float | None = None
     dqn_replay_size: int = 200_000
     dqn_min_replay: int = 2_000
     dqn_update_interval: int = 4

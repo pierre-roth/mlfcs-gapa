@@ -1,4 +1,4 @@
-# AS Behavioral Cloning Warm Starts
+# AS Behavioral Cloning and Constraints
 
 This log tracks experiments that initialize PPO/DQN from an Avellaneda-Stoikov
 teacher before RL fine-tuning. The goal is to test whether a good market-making
@@ -19,6 +19,17 @@ prior prevents PPO/DQN from learning high-turnover or high-inventory behavior.
   full model is unfrozen again for RL fine-tuning.
 - `BC_AS_EPOCHS`, `BC_AS_MAX_SAMPLES_PER_DAY`, and `BC_AS_LOSS_WEIGHT` control
   cloning cost and strength.
+- `AS_SOFT_CONSTRAINT=true` enables the PPO soft-constraint variant. During
+  rollout collection the reward used for PPO returns is reduced by
+  `AS_SOFT_LAMBDA * ||a_t - a_t^AS||_2^2`, optionally annealed to
+  `AS_SOFT_LAMBDA_FINAL`.
+- `AS_TRUST_REGION=true` enables the PPO hard-constraint variant. Sampled and
+  deterministic continuous actions are projected into an L-infinity box around
+  the AS continuous action target with radius `AS_TRUST_REGION_RADIUS`,
+  optionally annealed to `AS_TRUST_REGION_RADIUS_FINAL`.
+- PPO checkpoints produced with either constraint save the AS calibration used
+  during training so deterministic evaluation reuses the same teacher rather
+  than recalibrating on the evaluation split.
 
 ## Initial Cases
 

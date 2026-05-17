@@ -163,6 +163,16 @@ BC_AS=(
     "BC_AS_FREEZE_BACKBONE=true"
     "BC_AS_MAX_SAMPLES_PER_DAY=12000"
 )
+SOFT_AS=(
+    "AS_SOFT_CONSTRAINT=true"
+    "AS_SOFT_LAMBDA=0.50"
+    "AS_SOFT_LAMBDA_FINAL=0.05"
+)
+HARD_AS=(
+    "AS_TRUST_REGION=true"
+    "AS_TRUST_REGION_RADIUS=0.35"
+    "AS_TRUST_REGION_RADIUS_FINAL=0.75"
+)
 
 for reward_name in pnl_lot1 inv_lot1 trdinv_lot1; do
     reward_var="REWARD_${reward_name^^}"
@@ -186,3 +196,10 @@ submit_pipeline "bc_as_inv_lot1" dqn synth 000858 "${SYNTH_000858[@]}" "${COMMON
 submit_pipeline "bc_as_inv_lot1" ppo real AAPL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_INV_LOT1[@]}" "${BC_AS[@]}"
 submit_pipeline "bc_as_inv_lot1" ppo real GOOGL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_INV_LOT1[@]}" "${BC_AS[@]}"
 submit_pipeline "bc_as_inv_lot1" dqn real AAPL "${REAL_COMMON[@]}" "${COMMON_DQN[@]}" "${REWARD_INV_LOT1[@]}" "${BC_AS[@]}"
+
+submit_pipeline "soft_as_pnl_lot1" ppo synth 000858 "${SYNTH_000858[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${SOFT_AS[@]}"
+submit_pipeline "hard_as_pnl_lot1" ppo synth 000858 "${SYNTH_000858[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${HARD_AS[@]}"
+submit_pipeline "soft_as_pnl_lot1" ppo real AAPL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${SOFT_AS[@]}"
+submit_pipeline "hard_as_pnl_lot1" ppo real AAPL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${HARD_AS[@]}"
+submit_pipeline "soft_as_pnl_lot1" ppo real GOOGL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${SOFT_AS[@]}"
+submit_pipeline "hard_as_pnl_lot1" ppo real GOOGL "${REAL_COMMON[@]}" "${COMMON_PPO[@]}" "${REWARD_PNL_LOT1[@]}" "${HARD_AS[@]}"

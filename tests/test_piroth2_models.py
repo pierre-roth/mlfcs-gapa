@@ -15,7 +15,7 @@ from piroth.models import (
 )
 from piroth.config import DiagnosticsConfig
 from piroth.simulator import SyntheticMarketGenerator
-from piroth.training import PretrainDataset, _linear_schedule, _optimizer_for_model
+from piroth.training import PretrainDataset, _apply_as_trust_region, _as_constraint_value, _linear_schedule, _optimizer_for_model
 
 
 def test_attnlob_encoder_matches_paper_output_shape() -> None:
@@ -132,6 +132,24 @@ def test_ppo_actor_accepts_initial_policy_overrides() -> None:
 def test_entropy_schedule_decays_linearly() -> None:
     assert _linear_schedule(0.01, 0.001, 0, 5) == 0.01
     assert torch.isclose(torch.tensor(_linear_schedule(0.01, 0.001, 4, 5)), torch.tensor(0.001))
+
+
+def test_as_trust_region_projects_continuous_action_near_teacher() -> None:
+    action = torch.tensor([[0.90, -0.90]])
+    teacher = torch.tensor([[0.20, -0.10]])
+
+    projected = _apply_as_trust_region(action, teacher, radius=0.25)
+
+    assert torch.allclose(projected, torch.tensor([[0.45, -0.35]]))
+
+
+def test_as_soft_constraint_penalty_uses_squared_action_distance() -> None:
+    action = torch.tensor([0.40, -0.10])
+    teacher = torch.tensor([0.10, -0.10])
+
+    penalty = _as_constraint_value(action, teacher, weight=2.0)
+
+    assert torch.isclose(torch.tensor(penalty), torch.tensor(0.18))
 
 
 def test_optimizer_can_scale_encoder_and_backbone_learning_rates() -> None:
