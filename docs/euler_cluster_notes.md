@@ -594,3 +594,8 @@ Operational notes:
 - A direct `sbatch --wrap` latency-baseline attempt failed as job `35624` because `/bin/sh` does not support `source`. Use a Bash script or `bash -lc`, and prefer `scripts/euler/latency_baselines_cpu.sh`.
 - The next GPU run should be a C-PPO calibration job using explicit PPO hyperparameters and one GPU. Do not launch a full multi-seed sweep until C-PPO no longer collapses to max-spread/no-trade on synthetic data.
 - C-PPO direct `[0, 1]` action calibration jobs `37107`, `37111`, `37114`, and `37118` all completed but still produced no fills. The next run should use the normalized PPO action mapping now available through `NORMALIZE_ACTIONS=true`, which maps external `[-1, 1]` PPO actions to internal paper `[0, 1]` actions.
+- Normalized-action C-PPO jobs `38766` and `38797` also no-traded with default PPO exploration scale.
+- Narrow-exploration C-PPO jobs:
+  - `40846`, `PPO_LOG_STD_INIT=-1`: completed, 8 fills, PnL about `-1.0`.
+  - `40849`, `PPO_LOG_STD_INIT=-2`: completed, 28 fills, PnL about `8.0`.
+- Current best next C-PPO setting is `NORMALIZE_ACTIONS=true` with `PPO_LOG_STD_INIT=-2`. Launch longer or multi-seed C-PPO runs only after checking unrelated account jobs with `squeue -u "$USER"`; three non-MLFCS GPU jobs were active after `40849`.

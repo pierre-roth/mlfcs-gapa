@@ -989,3 +989,9 @@ Follow-up calibration result:
 - The likely issue is action parameterization for PPO, not only data: SB3's Gaussian policy starts naturally around zero, which is an edge of the paper `[0, 1]` action range. The official Tensorforce metadata also exposes `[-1, 1]` actions even though the paper equations are written for `[0, 1]`.
 - The implementation now supports normalized PPO actions: external PPO actions are in `[-1, 1]`, then mapped internally to the paper action `A = (a + 1) / 2` before applying the paper quote equations. This keeps the paper action equations intact while making initial PPO actions correspond to the center of the paper action range.
 - A local 512-timestep normalized-action smoke run produced non-zero fills, confirming that the no-trade pathology is addressed mechanically before launching the next Euler calibration.
+- Euler normalized-action jobs `38766` and `38797` still converged to max-spread/no-fill with SB3's default Gaussian exploration scale.
+- Euler narrow-exploration jobs:
+  - `40846`, `policy_log_std_init=-1`: 8 fills, PnL about `-1.0`.
+  - `40849`, `policy_log_std_init=-2`: 28 fills, PnL about `8.0`, mean absolute inventory about `5.33`, mean quoted spread about `0.055`.
+- This confirms the immediate C-PPO blocker is PPO exploration/action parameterization. `policy_log_std_init=-2` is the current best synthetic C-PPO calibration point, but it is still a calibration result, not a final paper table run.
+- Before launching more C-PPO jobs, check `squeue -u "$USER"` because unrelated Euler GPU jobs may already be running under the account. On 2026-05-19 after `40849`, three non-MLFCS GPU jobs were active, so no further MLFCS GPU jobs were launched.
