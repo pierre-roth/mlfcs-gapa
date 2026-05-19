@@ -981,3 +981,11 @@ Next calibration work before scaling seeds:
    - reduce excessive adverse selection in synthetic market-order/trade-extrema generation;
    - preserve LOB schema and keep synthetic logic separate from the paper simulator.
 5. Only after C-PPO trades plausibly should we run multi-seed tables and polish the paper figures.
+
+Follow-up calibration result:
+
+- Four 60,000-timestep C-PPO calibration jobs (`37107`, `37111`, `37114`, `37118`) varied learning rate and entropy coefficient while keeping the direct `[0, 1]` action space. All completed successfully, and all still converged to the identical max-spread/no-fill policy.
+- A local policy-surface check showed the synthetic environment does contain positive-reward fixed continuous policies, for example paper action approximately `[bias=0.5, spread=0.3]`.
+- The likely issue is action parameterization for PPO, not only data: SB3's Gaussian policy starts naturally around zero, which is an edge of the paper `[0, 1]` action range. The official Tensorforce metadata also exposes `[-1, 1]` actions even though the paper equations are written for `[0, 1]`.
+- The implementation now supports normalized PPO actions: external PPO actions are in `[-1, 1]`, then mapped internally to the paper action `A = (a + 1) / 2` before applying the paper quote equations. This keeps the paper action equations intact while making initial PPO actions correspond to the center of the paper action range.
+- A local 512-timestep normalized-action smoke run produced non-zero fills, confirming that the no-trade pathology is addressed mechanically before launching the next Euler calibration.

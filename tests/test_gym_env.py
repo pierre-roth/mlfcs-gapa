@@ -36,3 +36,21 @@ def test_paper_market_making_env_steps_to_metrics() -> None:
     assert "metrics" in info
     assert "pnl" in info["metrics"]
     assert env.account.inventory == 0
+
+
+def test_paper_market_making_env_can_normalize_ppo_actions() -> None:
+    dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=180, seed=63))
+    env = PaperMarketMakingEnv(
+        dataset,
+        episode_events=70,
+        latency_events=1,
+        normalize_actions=True,
+    )
+    env.reset()
+
+    _, _, _, _, info = env.step(np.array([0.0, 0.0], dtype=np.float32))
+
+    assert np.allclose(env.action_space.low, np.array([-1.0, -1.0], dtype=np.float32))
+    assert info["paper_action"] == [0.5, 0.5]
+    assert env.trade_log[-1]["action_bias"] == 0.5
+    assert env.trade_log[-1]["action_spread"] == 0.5

@@ -27,20 +27,25 @@ ENCODER_CHECKPOINT="${ENCODER_CHECKPOINT:-}"
 LOB_MODE="${LOB_MODE:-attn}"
 USE_DYNAMIC_STATE="${USE_DYNAMIC_STATE:-true}"
 USE_AGENT_STATE="${USE_AGENT_STATE:-true}"
+NORMALIZE_ACTIONS="${NORMALIZE_ACTIONS:-true}"
 
 dynamic_flag="--use-dynamic-state"
 agent_flag="--use-agent-state"
+normalize_actions_flag="--normalize-actions"
 if [[ "${USE_DYNAMIC_STATE}" == "false" ]]; then
   dynamic_flag="--no-use-dynamic-state"
 fi
 if [[ "${USE_AGENT_STATE}" == "false" ]]; then
   agent_flag="--no-use-agent-state"
 fi
+if [[ "${NORMALIZE_ACTIONS}" == "false" ]]; then
+  normalize_actions_flag="--no-normalize-actions"
+fi
 
 echo "method=${METHOD}"
 echo "gpu_concurrency_cap=4"
 echo "events=${EVENTS} episode_events=${EPISODE_EVENTS} timesteps=${TOTAL_TIMESTEPS} seed=${SEED}"
-echo "lob_mode=${LOB_MODE} use_dynamic_state=${USE_DYNAMIC_STATE} use_agent_state=${USE_AGENT_STATE}"
+echo "lob_mode=${LOB_MODE} use_dynamic_state=${USE_DYNAMIC_STATE} use_agent_state=${USE_AGENT_STATE} normalize_actions=${NORMALIZE_ACTIONS}"
 
 if [[ "${METHOD}" == "C-PPO" ]]; then
   cmd=(
@@ -62,6 +67,7 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     --lob-mode "${LOB_MODE}"
     "${dynamic_flag}"
     "${agent_flag}"
+    "${normalize_actions_flag}"
     --device cuda
     --seed "${SEED}"
   )

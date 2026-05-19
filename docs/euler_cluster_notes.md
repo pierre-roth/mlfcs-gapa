@@ -593,3 +593,4 @@ Operational notes:
 - The four-GPU cap was respected throughout with Slurm array caps of `%4`.
 - A direct `sbatch --wrap` latency-baseline attempt failed as job `35624` because `/bin/sh` does not support `source`. Use a Bash script or `bash -lc`, and prefer `scripts/euler/latency_baselines_cpu.sh`.
 - The next GPU run should be a C-PPO calibration job using explicit PPO hyperparameters and one GPU. Do not launch a full multi-seed sweep until C-PPO no longer collapses to max-spread/no-trade on synthetic data.
+- C-PPO direct `[0, 1]` action calibration jobs `37107`, `37111`, `37114`, and `37118` all completed but still produced no fills. The next run should use the normalized PPO action mapping now available through `NORMALIZE_ACTIONS=true`, which maps external `[-1, 1]` PPO actions to internal paper `[0, 1]` actions.

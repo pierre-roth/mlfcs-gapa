@@ -33,6 +33,7 @@ ENCODER_CHECKPOINT="${ENCODER_CHECKPOINT:-}"
 LOB_MODE="attn"
 USE_DYNAMIC_STATE="true"
 USE_AGENT_STATE="true"
+NORMALIZE_ACTIONS="${NORMALIZE_ACTIONS:-true}"
 case "${VARIANT}" in
   full)
     ;;
@@ -52,14 +53,18 @@ case "${VARIANT}" in
 esac
 
 dynamic_flag="--use-dynamic-state"
+normalize_actions_flag="--normalize-actions"
 if [[ "${USE_DYNAMIC_STATE}" == "false" ]]; then
   dynamic_flag="--no-use-dynamic-state"
+fi
+if [[ "${NORMALIZE_ACTIONS}" == "false" ]]; then
+  normalize_actions_flag="--no-normalize-actions"
 fi
 
 echo "method=${METHOD}"
 echo "variant=${VARIANT}"
 echo "gpu_concurrency_cap=4"
-echo "lob_mode=${LOB_MODE} use_dynamic_state=${USE_DYNAMIC_STATE}"
+echo "lob_mode=${LOB_MODE} use_dynamic_state=${USE_DYNAMIC_STATE} normalize_actions=${NORMALIZE_ACTIONS}"
 echo "events=${EVENTS} episode_events=${EPISODE_EVENTS} timesteps=${TOTAL_TIMESTEPS} seed=${SEED}"
 
 if [[ "${METHOD}" == "C-PPO" ]]; then
@@ -82,6 +87,7 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     --lob-mode "${LOB_MODE}"
     "${dynamic_flag}"
     --use-agent-state
+    "${normalize_actions_flag}"
     --device cuda
     --seed "${SEED}"
   )

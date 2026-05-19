@@ -29,11 +29,18 @@ TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-20000}"
 SEED="${SEED:-101}"
 RUN_ROOT="${RUN_ROOT:-${SCRATCH}/mlfcs-gapa/runs/latency-agents-gpu/${SLURM_ARRAY_JOB_ID}}"
 ENCODER_CHECKPOINT="${ENCODER_CHECKPOINT:-}"
+NORMALIZE_ACTIONS="${NORMALIZE_ACTIONS:-true}"
+
+normalize_actions_flag="--normalize-actions"
+if [[ "${NORMALIZE_ACTIONS}" == "false" ]]; then
+  normalize_actions_flag="--no-normalize-actions"
+fi
 
 echo "method=${METHOD}"
 echo "latency=${LATENCY}"
 echo "gpu_concurrency_cap=4"
 echo "events=${EVENTS} episode_events=${EPISODE_EVENTS} timesteps=${TOTAL_TIMESTEPS} seed=${SEED}"
+echo "normalize_actions=${NORMALIZE_ACTIONS}"
 
 if [[ "${METHOD}" == "C-PPO" ]]; then
   cmd=(
@@ -53,6 +60,7 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     --ent-coef "${PPO_ENT_COEF:-0.0}"
     --vf-coef "${PPO_VF_COEF:-0.5}"
     --max-grad-norm "${PPO_MAX_GRAD_NORM:-0.5}"
+    "${normalize_actions_flag}"
     --device cuda
     --seed "${SEED}"
   )

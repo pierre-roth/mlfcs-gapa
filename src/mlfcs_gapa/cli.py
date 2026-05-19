@@ -362,6 +362,9 @@ def train_synthetic_ppo(
     lob_mode: str = typer.Option("attn", help="LOB feature mode: attn, mlp, or none."),
     use_dynamic_state: bool = typer.Option(True, help="Include the 24-dimensional dynamic state."),
     use_agent_state: bool = typer.Option(True, help="Include inventory/time agent state."),
+    normalize_actions: bool = typer.Option(
+        True, help="Expose [-1, 1] PPO actions and map them to paper [0, 1] actions."
+    ),
     device: str = typer.Option(
         "auto", help="Torch device for Stable-Baselines3, e.g. auto/cpu/cuda."
     ),
@@ -380,6 +383,7 @@ def train_synthetic_ppo(
         dataset,
         episode_events=min(episode_events, events - 1),
         latency_events=latency_events,
+        normalize_actions=normalize_actions,
         seed=seed,
     )
     policy_kwargs = {
@@ -433,6 +437,7 @@ def train_synthetic_ppo(
             "lob_mode": lob_mode,
             "use_dynamic_state": use_dynamic_state,
             "use_agent_state": use_agent_state,
+            "normalize_actions": normalize_actions,
         }
     )
     metrics_path = output_dir / "c_ppo_metrics.csv"

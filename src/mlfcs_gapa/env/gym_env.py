@@ -29,6 +29,7 @@ class PaperMarketMakingEnv(gym.Env):
         episode_start: int = 0,
         episode_events: int = PAPER.episode_events,
         latency_events: int = 1,
+        normalize_actions: bool = False,
         seed: int = 1,
     ) -> None:
         super().__init__()
@@ -36,10 +37,14 @@ class PaperMarketMakingEnv(gym.Env):
         self.episode_start = episode_start
         self.episode_events = episode_events
         self.latency_events = latency_events
+        self.normalize_actions = normalize_actions
         self.rng = np.random.default_rng(seed)
         self.replay = HistoricalReplay(dataset, rng=self.rng)
 
-        self.action_space = spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=np.float32)
+        action_low = -1.0 if normalize_actions else 0.0
+        self.action_space = spaces.Box(
+            low=action_low, high=1.0, shape=(2,), dtype=np.float32
+        )
         self.observation_space = spaces.Dict(
             {
                 "lob_state": spaces.Box(
@@ -97,7 +102,8 @@ class PaperMarketMakingEnv(gym.Env):
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, object]]:
         decision_index = self._decision_index()
         decision_mid = self.replay.mid_price(decision_index)
-        quote = continuous_action_to_quote(action, decision_mid, self.account.inventory)
+        paper_action = self._paper_action(action)
+        quote = continuous_action_to_quote(paper_action, decision_mid, self.account.inventory)
         quote = self._apply_inventory_cap(quote)
 
         current_mid = self.replay.mid_price(self.current_index)
@@ -128,6 +134,8 @@ class PaperMarketMakingEnv(gym.Env):
                 "cash": self.account.cash,
                 "inventory": self.account.inventory,
                 "value": self.account.value,
+                "action_bias": float(paper_action[0]),
+                "action_spread": float(paper_action[1]),
                 "reservation_price": quote.reservation_price,
                 "spread": quote.spread,
             }
@@ -137,6 +145,7 @@ class PaperMarketMakingEnv(gym.Env):
         info: dict[str, object] = {
             "fill": asdict(fill),
             "quote": asdict(quote),
+            "paper_action": paper_action.tolist(),
             "reward": asdict(reward_breakdown),
         }
         if terminated:
@@ -176,6 +185,13 @@ class PaperMarketMakingEnv(gym.Env):
 
     def _decision_index(self) -> int:
         return max(PAPER.window_length - 1, self.current_index - self.latency_events)
+
+    def _paper_action(self, action: np.ndarray) -> np.ndarray:
+        action = np.asarray(action, dtype=np.float64)
+        if self.normalize_actions:
+            action = np.clip(action, -1.0, 1.0)
+            return (action + 1.0) / 2.0
+        return action
 
     def _apply_inventory_cap(self, quote: Quote) -> Quote:
         if self.account.inventory <= -PAPER.max_inventory:
