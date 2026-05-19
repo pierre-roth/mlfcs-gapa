@@ -567,3 +567,29 @@ runs/<method>/<dataset>/<timestamp-or-jobid>/
 - The current local PyTorch lockfile may choose CPU wheels on macOS. On Euler GPU nodes we need to ensure CUDA-enabled PyTorch is installed.
 - Scratch is purged; important trained models and metrics must be copied to durable storage.
 - Earlier sync attempts on 2026-05-19 failed before job submission because SSH to `euler.ethz.ch:22` timed out. Connectivity later recovered and job `25494` passed.
+
+## Latest MLFCS-GAPA Euler State, 2026-05-19
+
+Successful jobs:
+
+- `28271` CPU smoke: 51 tests passed plus synthetic smoke commands.
+- `28596` GPU pretraining array: FC-LOB, Conv-LOB, DeepLOB, and Attn-LOB synthetic checkpoints/metrics.
+- `30992` CPU runtime benchmark.
+- `30994` GPU main agent array: C-PPO and D-DQN.
+- `30996` GPU latency agent array: C-PPO and D-DQN across `[1, 5, 10, 20, 50, 100]`.
+- `30999` GPU ablation array: all eight C-PPO/D-DQN variants completed.
+- `35862` CPU latency baseline sweep: Fixed, Random, AS, Inv-RL, LOB-RL across the same latency grid.
+
+Generated result artifacts under `${SCRATCH}/mlfcs-gapa/runs`:
+
+- `combined_metrics_30994_30996_30999_35862.csv`
+- `latency_metrics_30996_35862.csv`
+- `ablation_summary_30999.csv`
+- `summary_metrics_30994_30996_30999_35862.csv`
+- `latency_figure_30996_35862.png`
+
+Operational notes:
+
+- The four-GPU cap was respected throughout with Slurm array caps of `%4`.
+- A direct `sbatch --wrap` latency-baseline attempt failed as job `35624` because `/bin/sh` does not support `source`. Use a Bash script or `bash -lc`, and prefer `scripts/euler/latency_baselines_cpu.sh`.
+- The next GPU run should be a C-PPO calibration job using explicit PPO hyperparameters and one GPU. Do not launch a full multi-seed sweep until C-PPO no longer collapses to max-spread/no-trade on synthetic data.

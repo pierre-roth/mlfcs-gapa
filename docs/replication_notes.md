@@ -929,3 +929,55 @@ The replication is successful if it demonstrates the paper's methodological clai
 - Removing LOB state or Attn-LOB significantly hurts C-PPO.
 - Latency hurts fixed/nonadaptive baselines more than trained RL agents.
 - Attention and decision plots show plausible behavior: recent event focus, inventory-skewed quoting, and wider quotes in adverse/trending regimes.
+
+## Euler Synthetic Run Log, 2026-05-19
+
+Completed cluster validation:
+
+- CPU smoke job `28271`: passed all 51 tests and all smoke commands.
+- Pretraining array `28596`: completed FC-LOB, Conv-LOB, DeepLOB, and Attn-LOB synthetic pretraining. The synthetic directional labels are weak; these numbers validate the pipeline, not the paper's Table I.
+- Runtime job `30992`: completed and wrote `runs/runtime-cpu/30992/runtime_metrics.csv`.
+- Main agent array `30994`: completed C-PPO and D-DQN with 20,000 training timesteps.
+- Latency agent array `30996`: completed C-PPO and D-DQN for latencies `[1, 5, 10, 20, 50, 100]` under the four-GPU array cap.
+- Ablation array `30999`: completed all eight Table IV-style variants under the four-GPU array cap.
+- CPU latency baseline job `35862`: completed Fixed, Random, AS, Inv-RL, and LOB-RL for the same latency grid.
+
+Current consolidated Euler artifacts:
+
+- `runs/combined_metrics_30994_30996_30999_35862.csv`
+- `runs/latency_metrics_30996_35862.csv`
+- `runs/ablation_summary_30999.csv`
+- `runs/summary_metrics_30994_30996_30999_35862.csv`
+- `runs/latency_figure_30996_35862.png`
+
+Important diagnostic outcome:
+
+- C-PPO collapsed to a no-trade/max-spread policy in the main latency-1 run:
+  - 1,951 replay rows
+  - 0 fills
+  - mean raw action-implied spread about `0.10`, the paper `max_spread`
+  - terminal PnL, ND-PnL, PnLMAP, inventory, and profit ratio all equal to 0
+- The C-PPO Table IV ablations also produced no-trade rows, so the current synthetic C-PPO result is not a valid reproduction of the paper's qualitative claim.
+- D-DQN traded and produced non-zero metrics, but the ablation ordering is not paper-like on the current synthetic run:
+  - full D-DQN: positive PnL in ablation run
+  - w/o dynamic state: also positive and larger in this seed
+  - w/o LOB state: negative
+- The synthetic full-latency plot renders structurally, but the current curves are diagnostic outputs, not paper-faithful final results.
+
+Next calibration work before scaling seeds:
+
+1. Keep the paper equations and fill/accounting path unchanged.
+2. Re-run C-PPO with explicit paper-aligned PPO learning rate `1e-4`; earlier Euler scripts relied on the SB3 default `3e-4`.
+3. Use the newly exposed PPO knobs only as hyperparameters, not methodology changes:
+   - `PPO_LEARNING_RATE`
+   - `PPO_GAMMA`
+   - `PPO_GAE_LAMBDA`
+   - `PPO_CLIP_RANGE`
+   - `PPO_ENT_COEF`
+   - `PPO_VF_COEF`
+   - `PPO_MAX_GRAD_NORM`
+4. If C-PPO still converges to no-trade, tune the synthetic generator rather than the paper reward:
+   - ensure passive quotes have a realistic positive spread-capture edge under low latency;
+   - reduce excessive adverse selection in synthetic market-order/trade-extrema generation;
+   - preserve LOB schema and keep synthetic logic separate from the paper simulator.
+5. Only after C-PPO trades plausibly should we run multi-seed tables and polish the paper figures.

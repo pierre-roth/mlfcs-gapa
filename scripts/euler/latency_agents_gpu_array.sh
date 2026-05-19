@@ -46,6 +46,13 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     --n-steps "${PPO_N_STEPS:-512}"
     --batch-size "${PPO_BATCH_SIZE:-128}"
     --n-epochs "${PPO_N_EPOCHS:-4}"
+    --learning-rate "${PPO_LEARNING_RATE:-1e-4}"
+    --gamma "${PPO_GAMMA:-0.99}"
+    --gae-lambda "${PPO_GAE_LAMBDA:-0.95}"
+    --clip-range "${PPO_CLIP_RANGE:-0.2}"
+    --ent-coef "${PPO_ENT_COEF:-0.0}"
+    --vf-coef "${PPO_VF_COEF:-0.5}"
+    --max-grad-norm "${PPO_MAX_GRAD_NORM:-0.5}"
     --device cuda
     --seed "${SEED}"
   )
