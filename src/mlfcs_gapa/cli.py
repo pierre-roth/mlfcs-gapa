@@ -357,6 +357,9 @@ def train_synthetic_ppo(
     ent_coef: float = typer.Option(0.0, min=0.0, help="PPO entropy coefficient."),
     vf_coef: float = typer.Option(0.5, min=0.0, help="PPO value-function loss coefficient."),
     max_grad_norm: float = typer.Option(0.5, min=0.0, help="PPO gradient clipping norm."),
+    policy_log_std_init: float = typer.Option(
+        0.0, help="Initial log standard deviation for the PPO Gaussian policy."
+    ),
     encoder_checkpoint: Path | None = typer.Option(None, help="Optional Attn-LOB checkpoint."),
     freeze_encoder: bool = typer.Option(False, help="Freeze loaded Attn-LOB encoder weights."),
     lob_mode: str = typer.Option("attn", help="LOB feature mode: attn, mlp, or none."),
@@ -395,6 +398,7 @@ def train_synthetic_ppo(
             "use_dynamic_state": use_dynamic_state,
             "use_agent_state": use_agent_state,
         },
+        "log_std_init": policy_log_std_init,
     }
     model = PPO(
         "MultiInputPolicy",
@@ -431,6 +435,7 @@ def train_synthetic_ppo(
             "ent_coef": ent_coef,
             "vf_coef": vf_coef,
             "max_grad_norm": max_grad_norm,
+            "policy_log_std_init": policy_log_std_init,
             "events": events,
             "episode_events": min(episode_events, events - 1),
             "latency_events": latency_events,

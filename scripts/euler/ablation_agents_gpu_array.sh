@@ -84,6 +84,7 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     --ent-coef "${PPO_ENT_COEF:-0.0}"
     --vf-coef "${PPO_VF_COEF:-0.5}"
     --max-grad-norm "${PPO_MAX_GRAD_NORM:-0.5}"
+    --policy-log-std-init "${PPO_LOG_STD_INIT:-0.0}"
     --lob-mode "${LOB_MODE}"
     "${dynamic_flag}"
     --use-agent-state
