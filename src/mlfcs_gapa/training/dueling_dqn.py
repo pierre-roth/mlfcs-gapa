@@ -57,12 +57,10 @@ class DuelingDQN(nn.Module):
         freeze_encoder: bool = False,
         lob_mode: str = "attn",
         use_dynamic_state: bool = True,
-        use_agent_state: bool = True,
     ) -> None:
         super().__init__()
         self.lob_mode = _validate_lob_mode(lob_mode)
         self.use_dynamic_state = use_dynamic_state
-        self.use_agent_state = use_agent_state
 
         lob_dim = 0
         if self.lob_mode == "attn":
@@ -88,9 +86,7 @@ class DuelingDQN(nn.Module):
             self.lob_encoder = nn.Identity()
 
         dynamic_dim = int(observation_space["dynamic_state"].shape[0]) if use_dynamic_state else 0
-        agent_dim = int(observation_space["agent_state"].shape[0]) if use_agent_state else 0
-        if lob_dim + dynamic_dim + agent_dim == 0:
-            raise ValueError("at least one observation component must be enabled")
+        agent_dim = int(observation_space["agent_state"].shape[0])
         self.trunk = nn.Sequential(
             nn.Linear(lob_dim + dynamic_dim + agent_dim, features_dim),
             nn.LeakyReLU(0.01),
@@ -112,8 +108,7 @@ class DuelingDQN(nn.Module):
             observation_features.append(self.lob_encoder(observations["lob_state"].float()))
         if self.use_dynamic_state:
             observation_features.append(observations["dynamic_state"].float())
-        if self.use_agent_state:
-            observation_features.append(observations["agent_state"].float())
+        observation_features.append(observations["agent_state"].float())
         features = self.trunk(torch.cat(observation_features, dim=1))
         value = self.value(features)
         advantage = self.advantage(features)
@@ -183,7 +178,6 @@ def train_dueling_dqn(
     freeze_encoder: bool = False,
     lob_mode: str = "attn",
     use_dynamic_state: bool = True,
-    use_agent_state: bool = True,
     device: str = "cpu",
 ) -> tuple[DuelingDQN, DuelingDQNTrainResult]:
     torch.manual_seed(config.seed)
@@ -197,7 +191,6 @@ def train_dueling_dqn(
         freeze_encoder=freeze_encoder,
         lob_mode=lob_mode,
         use_dynamic_state=use_dynamic_state,
-        use_agent_state=use_agent_state,
     ).to(torch_device)
     target = DuelingDQN(
         env.observation_space,
@@ -207,7 +200,6 @@ def train_dueling_dqn(
         freeze_encoder=freeze_encoder,
         lob_mode=lob_mode,
         use_dynamic_state=use_dynamic_state,
-        use_agent_state=use_agent_state,
     ).to(torch_device)
     target.load_state_dict(policy.state_dict())
     target.eval()
@@ -257,8 +249,9 @@ def evaluate_dueling_dqn(
     *,
     seed: int,
     device: str = "cpu",
+    episode_start: int = 0,
 ) -> tuple[dict[str, float], list[dict[str, float | int]]]:
-    observation, _ = env.reset(seed=seed)
+    observation, _ = env.reset(seed=seed, options={"episode_start": episode_start})
     done = False
     info: dict[str, object] = {}
     torch_device = torch.device(device)

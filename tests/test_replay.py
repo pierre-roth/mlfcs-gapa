@@ -71,3 +71,16 @@ def test_episode_metrics_match_paper_definitions() -> None:
     assert metrics.nd_pnl == pytest.approx(100.0, rel=1e-5)
     assert metrics.pnl_map == pytest.approx(2.0 / 100.0)
     assert metrics.profit_ratio == pytest.approx(0.002)
+
+
+def test_episode_metrics_compute_event_sharpe() -> None:
+    metrics = compute_episode_metrics(
+        values=[0.0, 1.0, 0.0, 2.0],
+        inventories=[0, 0, 0, 0],
+        quoted_spreads=[0.01, 0.01, 0.01],
+        buy_notional=1_000.0,
+    )
+    increments = np.array([1.0, -1.0, 2.0])
+    expected = np.sqrt(3) * increments.mean() / increments.std(ddof=1)
+
+    assert metrics.sharpe == pytest.approx(expected)

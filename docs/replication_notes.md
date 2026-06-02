@@ -1,6 +1,6 @@
 # Replication Notes: Market Making with Deep Reinforcement Learning from Limit Order Books
 
-This note summarizes what must be replicated from Guo, Lin, and Huang, "Market Making with Deep Reinforcement Learning from Limit Order Books", and what must be adapted because the original Shenzhen Stock Exchange order and trade data is unavailable.
+This note summarizes what must be replicated from Guo, Lin, and Huang, "Market Making with Deep Reinforcement Learning from Limit Order Books", and what is necessarily substituted with synthetic replay data because the paper's proprietary exchange data is unavailable.
 
 ## Primary Sources
 
@@ -11,9 +11,6 @@ This note summarizes what must be replicated from Guo, Lin, and Huang, "Market M
 - Spooner et al. RL reward baseline: https://arxiv.org/abs/1804.04216
 - Zhong et al. LOB-RL baseline: https://www.ijcai.org/proceedings/2020/0615.pdf
 - Lim and Gorse inventory RL baseline: https://discovery.ucl.ac.uk/10116730/1/RLforHFMM.pdf
-- FI-2010 benchmark data reference: https://arxiv.org/abs/1705.03233
-- LOBSTER data structure reference: https://data.lobsterdata.com/info/DataStructure.php
-- LOBSTER sample-style data reference: https://huggingface.co/datasets/totalorganfailure/lobster-data
 
 ## Exact Paper Target
 
@@ -376,11 +373,11 @@ Use three tiers when reporting results:
 
 The final project should never present figure-estimated numbers as paper-exact.
 
-## Missing Information Needed for a Truly Exact Replication
+## Missing Information and Known Limits
 
-The paper and official demo repository do not provide all details required for a byte-for-byte exact replication. Missing or ambiguous items:
+The paper and official demo repository do not provide all details required for a byte-for-byte exact replication. The original proprietary data is not planned as an input to this project, so absolute paper table values are out of scope; the goal is methodological replication on synthetic replay data. Remaining missing or ambiguous items:
 
-- Original Shenzhen order/trade data.
+- Original proprietary order/trade data, which is not planned for this project.
 - Exact train/validation split details for the stated 10 training days.
 - Exact random seeds and number of independent runs behind `mean +/- std`.
 - Exact PPO hyperparameters if the paper used values different from the official factory defaults.
@@ -388,10 +385,7 @@ The paper and official demo repository do not provide all details required for a
 - Exact AS calibration method for `gamma`, `sigma`, and `kappa`.
 - Exact random quoting distribution.
 - Exact Fixed_1/2/3 fill and inventory-block behavior.
-- Exact Sharpe definition:
-  - per episode
-  - per day
-  - annualized or not
+- Exact Sharpe definition. The implementation fixes this as event-to-event marked-value Sharpe without annualization so all produced tables are reproducible.
 - Numeric data behind Figure 2 latency curves.
 - Whether paper tables used the hybrid reward as written or the official demo code's raw-PnL reward.
 
@@ -632,7 +626,7 @@ Per episode:
 - `MAP = mean(abs(inventory))`
 - `PnLMAP = PnL / (MAP + eps)`
 - `profit_ratio = PnL / total_buy_notional_or_total_traded_volume`
-- `Sharpe = mean(episode_or_daily_returns) / std(episode_or_daily_returns)`
+- `Sharpe = sqrt(N) * mean(event_value_change) / sample_std(event_value_change)`, without annualization
 
 The official code counts volume as buy notional only:
 
@@ -642,9 +636,7 @@ We should decide whether to reproduce this exactly or use total absolute traded 
 
 ## Data Substitution Plan
 
-Because we do not have the proprietary Shenzhen event/order/trade data, we need a staged data plan.
-
-Stage 1: synthetic replay data
+Because the proprietary paper data is unavailable, this replication uses synthetic replay data as the only planned substitute.
 
 - Goal: validate simulator, fill logic, accounting, reward, metrics, and training loops.
 - Generate realistic enough event streams:
@@ -654,20 +646,6 @@ Stage 1: synthetic replay data
   - market buy/sell events
   - limit/cancel events for OSI
   - matched trade extrema per event for fill logic
-
-Stage 2: public LOBSTER-style sample data
-
-- Use message and orderbook splits where available.
-- This is closer to the paper than FI-2010 because it has both orderbook snapshots and event messages.
-- Current adapter expects standard LOBSTER columns:
-  - message: seconds, event type, order ID, size, price, direction.
-  - orderbook: ask price, ask size, bid price, bid size by level.
-- LOBSTER prices are fixed-point by default and are converted with `price_scale=10000`.
-
-Stage 3: optional FI-2010 pretraining
-
-- Useful for benchmarking Attn-LOB mid-price classification.
-- Less suitable for market-making replay because it is primarily a normalized mid-price forecasting benchmark.
 
 ## Implementation Order
 
@@ -682,7 +660,6 @@ Stage 3: optional FI-2010 pretraining
    - canonical orderbook snapshot dataframe.
    - canonical event/message dataframe.
    - loader for synthetic data.
-   - loader adapter for LOBSTER-style data.
 
 3. Simulator:
    - cash/inventory accounting.
@@ -750,12 +727,6 @@ Completed first slice:
   - intentionally isolated in `mlfcs_gapa.data.synthetic`
   - emits canonical data only
   - includes intraday timestamps, 10-level depth, market/limit/withdraw aggregates, and trade extrema
-- LOBSTER adapter:
-  - `mlfcs-gapa convert-lobster`
-  - converts standard LOBSTER message/orderbook CSV files to the canonical schema
-  - maps event type 1 to limit orders, 2/3 to withdrawals, and 4/5 to executions
-  - converts execution direction from resting limit-order side to aggressive market buy/sell volume
-  - converts fixed-point prices with default scale `10000`
 - LOB preprocessing:
   - relative-to-mid stationary price transform
   - z-normalized transformed price columns
@@ -828,13 +799,21 @@ Completed first slice:
   - ablation switches:
     - `--lob-mode attn|mlp|none`
     - `--no-use-dynamic-state`
-    - `--no-use-agent-state`
 - D-DQN training command:
   - `mlfcs-gapa train-synthetic-ddqn`
   - custom PyTorch dueling Double DQN with Attn-LOB encoder
   - writes model checkpoint, metrics CSV, losses CSV, and trade log parquet
-  - supports the same LOB/dynamic/agent state ablation switches
+  - supports the same LOB and dynamic-state ablation switches
 - Reporting and figure commands:
+  - `mlfcs-gapa run-full-synthetic-replication` is the authoritative synthetic workflow:
+    - creates synthetic data for multiple stock codes;
+    - runs Table I pretraining models;
+    - runs Table II overall methods;
+    - runs Figure 2 latency methods;
+    - runs Table III runtime benchmark;
+    - runs Table IV ablations;
+    - writes Figure 3 attention and Figure 4 decision traces;
+    - writes a `README.md` and `replication_config.md` inside one output directory.
   - `mlfcs-gapa run-synthetic-latency-baselines`
   - writes `latency_metrics.csv`, `latency_trades.parquet`, and `latency_figure.png`
   - `mlfcs-gapa summarize-metrics` writes paper-scaled mean/std table columns
@@ -894,7 +873,6 @@ Current test coverage:
 - paper-scaled report aggregation
 - latency, decision-trace, and attention-heatmap figure generation
 - runtime benchmark command and metrics collection
-- LOBSTER CSV adapter schema mapping
 
 Paper-faithful interpretation choices made so far:
 
@@ -908,7 +886,7 @@ Paper-faithful interpretation choices made so far:
 - Discrete D-DQN actions: the paper states 8 discrete actions, while the official demo metadata incorrectly reports 5 action values but implements action IDs 0-7. The replication implements the 8-action mapping: seven quote actions plus inventory-closing action 7.
 - C-PPO/D-DQN pretraining: RL commands can load a saved Attn-LOB classifier checkpoint and extract encoder weights. Whether to freeze the encoder is configurable so the ablation plan can test both frozen and trainable transfer.
 - Latency figure scaling: report helpers can display ND-PnL divided by `1e5` and Profit Ratio multiplied by `1e4`, matching the table scale annotations in the paper. Raw synthetic metrics are still preserved in CSV outputs.
-- Ablation implementation: `w/o LOB state` maps to `lob_mode=none`; `w/o Attn-LOB` maps to `lob_mode=mlp`; `w/o Dynamic state` maps to `--no-use-dynamic-state`. The paper does not ablate agent state in Table IV, but the switch exists for sanity checks.
+- Ablation implementation: `w/o LOB state` maps to `lob_mode=none`; `w/o Attn-LOB` maps to `lob_mode=mlp`; `w/o Dynamic state` maps to `--no-use-dynamic-state`. Agent state is always included because the paper includes inventory and remaining-time factors.
 
 ## Important Replication Risks
 
@@ -925,7 +903,7 @@ Paper-faithful interpretation choices made so far:
 The replication is successful if it demonstrates the paper's methodological claims under substituted data:
 
 - Attn-LOB pretraining reaches sensible directional classification performance.
-- C-PPO outperforms Fixed, Random, AS, Inv-RL, and LOB-RL on inventory-adjusted metrics in at least synthetic and one public-data setting.
+- C-PPO outperforms Fixed, Random, AS, Inv-RL, and LOB-RL on inventory-adjusted metrics in synthetic replay experiments.
 - Removing LOB state or Attn-LOB significantly hurts C-PPO.
 - Latency hurts fixed/nonadaptive baselines more than trained RL agents.
 - Attention and decision plots show plausible behavior: recent event focus, inventory-skewed quoting, and wider quotes in adverse/trending regimes.
@@ -995,3 +973,58 @@ Follow-up calibration result:
   - `40849`, `policy_log_std_init=-2`: 28 fills, PnL about `8.0`, mean absolute inventory about `5.33`, mean quoted spread about `0.055`.
 - This confirms the immediate C-PPO blocker is PPO exploration/action parameterization. `policy_log_std_init=-2` is the current best synthetic C-PPO calibration point, but it is still a calibration result, not a final paper table run.
 - Before launching more C-PPO jobs, check `squeue -u "$USER"` because unrelated Euler GPU jobs may already be running under the account. On 2026-05-19 after `40849`, three non-MLFCS GPU jobs were active, so no further MLFCS GPU jobs were launched.
+
+### Parameter count audit
+
+The Table I `Param` column is treated as the encoder/LOB-state-extractor count, not the full 3-class pretraining-classifier count. The full classifier is always `+195` parameters because the pretraining head is `Dense/Linear(64, 3)`.
+
+Primary source reconciliation:
+
+- Market-making paper source: `paper/paper.tex` in this repo, plus the public demo repository `https://github.com/imTurkey/Market-Making-with-Deep-Reinforcement-Learning-from-Limit-Order-Books/blob/master/network/network.py`.
+- DeepLOB reference implementation: `https://github.com/zcakhaa/DeepLOB-Deep-Convolutional-Neural-Networks-for-Limit-Order-Books/blob/master/jupyter_tensorflow/run_train_tensorflow-version2.ipynb`.
+- The paper text says FC-LOB has hidden layers `(1024, 256, 64, 3)`, but the released demonstration `get_fclob_model` overwrites those intermediate layers and returns `Flatten -> Dense(latent_dim)`. With `latent_dim=64` and input `100 x 40`, that is exactly `4000 * 64 + 64 = 256,064`.
+- The released Attn-LOB `get_lob_model` uses the width-reduction kernels `(1,2)`, `(1,5)`, `(1,4)`, the standard DeepLOB-style CNN/Inception front-end, and Keras `MultiHeadAttention(num_heads=10, key_dim=16, output_shape=64)`. Counting that encoder gives exactly `176,320`.
+- The canonical DeepLOB TensorFlow notebook uses width-reduction kernels `(1,2)`, `(1,2)`, `(1,10)` and its own summary reports `142,435` full parameters, i.e. `142,240` before the 3-class head. This does **not** match Table I's `139,168`.
+- DeepLOB matches Table I exactly only when it uses the market-making paper's own Attn-LOB CNN/Inception front-end, then replaces attention with a Keras-count LSTM(64): `34,144` convolution stack + `39,232` inception + `65,792` LSTM = `139,168`. This is now the implemented DeepLOB baseline.
+- Conv-LOB has no located public implementation beyond the paper statement that it is fully convolutional, dilated, and similar to WaveNet. Under the standard WaveNet residual-block formula with an input projection, gated filter/gate convolutions, residual and skip 1x1 projections, and a two-layer 1x1 post projection, an integer search over conventional channel sizes found a single exact solution: residual channels `80`, skip channels `16`, `5` dilated kernel-2 blocks, output dim `64`. That gives exactly `172,320`, but remains an inferred exact-count reconstruction rather than a sourced layer listing.
+
+Implementation note: the Keras-count LSTM is implemented as fused `nn.LSTM(input_size + 1, hidden_size, bias=False)` with an appended constant-one feature. This is mathematically equivalent to a Keras LSTM with one bias vector, preserves the exact `65,792` parameter count, and avoids a Python loop over timesteps.
+
+| Model | Paper-reported params | Current encoder params | Current full classifier params |
+|---|---:|---:|---:|
+| FC-LOB | 256,064 | 256,064 | 256,259 |
+| Conv-LOB | 172,320 | 172,320 | 172,515 |
+| DeepLOB | 139,168 | 139,168 | 139,363 |
+| Attn-LOB | 176,320 | 176,320 | 176,515 |
+
+Future pretraining metric files include `implementation_param`, `implementation_encoder_param`, `paper_reported_param`, `param_matches_paper_report`, `encoder_param_matches_paper_report`, and `full_param_matches_paper_report` so the table counts remain auditable.
+
+### Architecture provenance audit, 2026-05-20
+
+Goal: determine whether FC-LOB, Conv-LOB, DeepLOB, and Attn-LOB layer definitions used in Table I can be recovered exactly from public sources.
+
+Sources checked:
+
+- arXiv source bundle for `2305.15821`, including `sections/experiment.tex` and `sections/method.tex`.
+- Official paper repository: `https://github.com/imTurkey/Market-Making-with-Deep-Reinforcement-Learning-from-Limit-Order-Books`.
+- All public forks returned by the GitHub API on 2026-05-20.
+- GitHub code search for `Conv-LOB`, `ConvLOB`, `172,320`, `139,168`, and relevant phrase searches.
+- Official DeepLOB repository: `https://github.com/zcakhaa/DeepLOB-Deep-Convolutional-Neural-Networks-for-Limit-Order-Books`.
+- DeepLOB paper source bundle for `1808.03668`.
+- Multi-horizon DeepLOB repository and paper source: `https://github.com/zcakhaa/Multi-Horizon-Forecasting-for-Limit-Order-Books`, `2105.10430`.
+- Historical branch `origin/piroth2`, especially `piroth/models.py` and `docs/pretraining_comparison.md`.
+
+Findings:
+
+- Attn-LOB is recoverable from public code. The official paper repository contains `get_lob_model`, which matches Figure 1 and gives the Table I encoder count when Keras `MultiHeadAttention(num_heads=10, key_dim=16, output_shape=64)` is counted before the pretraining head.
+- FC-LOB is only recoverable in the sense of the released demonstration code. The paper prose says `(1024, 256, 64, 3)`, but `get_fclob_model` overwrites the first two dense outputs and returns `Flatten -> Dense(latent_dim)`. The released-code path gives Table I's `256,064`; the prose architecture does not.
+- DeepLOB is not publicly recoverable as a single unambiguous Table I architecture. The market-making paper says "DeepLOB is the network proposed by [23]"; the official DeepLOB TensorFlow notebook reports `142,435` full parameters for the canonical Keras model, and the DeepLOB paper describes an architecture with the original width-reduction schedule `(1,2)`, `(1,2)`, `(1,10)`. These do not match Table I's `139,168`. The only architecture found that matches Table I exactly uses the market-making paper's own Attn-LOB convolutional front-end `(1,2)`, `(1,5)`, `(1,4)` plus a Keras-count LSTM(64). That is a count-exact reconstruction, not a verified public source.
+- Conv-LOB is not recoverable from public sources. The arXiv source contains only: "Conv-LOB is a fully convolutional network that uses dilated convolution to accept longer sequences. The architecture is similar to [WaveNet]." The official repository and all checked public forks contain no Conv-LOB implementation. GitHub code search did not locate a public Conv-LOB definition or a meaningful `172,320` parameter reference. The current implementation is therefore a WaveNet-style, count-exact reconstruction under stated assumptions, not verified author code.
+- The historical `piroth2` branch does not resolve the missing-architecture issue. It contains another Table-I-count implementation of Conv-LOB, but it is a different architecture from the current WaveNet-style reconstruction: `Conv1d(40,56,k=4)`, three `Conv1d(56,56,k=12,dilation=1/2/4)`, then `Conv1d(56,64,k=14)`, followed by adaptive average pooling. Its own notes state that Conv-LOB/DeepLOB are "reimplemented from descriptions rather than copied from reference code." This reinforces that matching the parameter count is underdetermined.
+
+Conclusion:
+
+- Verified exact public architecture: Attn-LOB.
+- Released-code/Table-I-compatible but text-inconsistent: FC-LOB.
+- Not verified from public sources: DeepLOB Table I variant and Conv-LOB.
+- To obtain the actual Table I Conv-LOB and DeepLOB architectures, the next necessary step is author clarification or access to the authors' private pretraining/baseline code/checkpoints. The arXiv source and public repository are insufficient to prove these two architectures exactly.

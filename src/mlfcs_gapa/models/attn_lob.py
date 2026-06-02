@@ -2,10 +2,54 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
 
 from mlfcs_gapa.paper.constants import PAPER
+
+
+class KerasStyleMultiHeadAttention(nn.Module):
+    """Keras-compatible MHA used by the paper's reference Attn-LOB code."""
+
+    def __init__(
+        self,
+        *,
+        input_dim: int = 192,
+        num_heads: int = 10,
+        key_dim: int = 16,
+        output_dim: int = 64,
+    ) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.output_dim = output_dim
+        projection_dim = num_heads * key_dim
+        self.query_projection = nn.Linear(input_dim, projection_dim)
+        self.key_projection = nn.Linear(input_dim, projection_dim)
+        self.value_projection = nn.Linear(input_dim, projection_dim)
+        self.output_projection = nn.Linear(projection_dim, output_dim)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = query.shape[0]
+        query = self._project_heads(self.query_projection(query), batch_size)
+        key = self._project_heads(self.key_projection(key), batch_size)
+        value = self._project_heads(self.value_projection(value), batch_size)
+
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.key_dim)
+        weights = torch.softmax(scores, dim=-1)
+        attended = torch.matmul(weights, value)
+        attended = attended.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.key_dim)
+        return self.output_projection(attended), weights
+
+    def _project_heads(self, tensor: torch.Tensor, batch_size: int) -> torch.Tensor:
+        return tensor.reshape(batch_size, -1, self.num_heads, self.key_dim).transpose(1, 2)
 
 
 class AttnLOBEncoder(nn.Module):
@@ -55,14 +99,12 @@ class AttnLOBEncoder(nn.Module):
             nn.Conv2d(32, 64, kernel_size=(1, 1), padding="same"),
             nn.LeakyReLU(0.01),
         )
-        attention_dim = attention_heads * attention_key_dim
-        self.attention_input_projection = nn.Linear(192, attention_dim)
-        self.attention = nn.MultiheadAttention(
-            embed_dim=attention_dim,
+        self.attention = KerasStyleMultiHeadAttention(
+            input_dim=192,
             num_heads=attention_heads,
-            batch_first=True,
+            key_dim=attention_key_dim,
+            output_dim=64,
         )
-        self.attention_projection = nn.Linear(attention_dim, 64)
         self.attention_key_dim = attention_key_dim
 
     def forward(
@@ -87,16 +129,10 @@ class AttnLOBEncoder(nn.Module):
         if tuple(x.shape[1:]) != (192, PAPER.window_length, 1):
             raise RuntimeError(f"unexpected inception shape {tuple(x.shape)}")
 
-        sequence = self.attention_input_projection(x.squeeze(-1).transpose(1, 2))
+        sequence = x.squeeze(-1).transpose(1, 2)
         query = sequence[:, -1:, :]
-        attended, weights = self.attention(
-            query=query,
-            key=sequence,
-            value=sequence,
-            need_weights=True,
-            average_attn_weights=False,
-        )
-        embedding = self.attention_projection(attended.squeeze(1))
+        attended, weights = self.attention(query=query, key=sequence, value=sequence)
+        embedding = attended.squeeze(1)
         if return_attention_weights:
             return embedding, weights.squeeze(2)
         return embedding

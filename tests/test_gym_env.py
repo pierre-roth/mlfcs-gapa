@@ -54,3 +54,19 @@ def test_paper_market_making_env_can_normalize_ppo_actions() -> None:
     assert info["paper_action"] == [0.5, 0.5]
     assert env.trade_log[-1]["action_bias"] == 0.5
     assert env.trade_log[-1]["action_spread"] == 0.5
+
+
+def test_paper_market_making_env_can_sample_random_episode_starts() -> None:
+    dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=400, seed=64))
+    env = PaperMarketMakingEnv(dataset, episode_events=100, random_episode_starts=True)
+
+    starts = []
+    for seed in range(5):
+        env.reset(seed=seed)
+        starts.append(env.episode_start)
+
+    assert len(set(starts)) > 1
+    assert all(0 <= start <= 299 for start in starts)
+
+    env.reset(seed=1, options={"episode_start": 10})
+    assert env.episode_start == 10

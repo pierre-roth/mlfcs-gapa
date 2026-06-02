@@ -8,7 +8,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from mlfcs_gapa.data.dynamic import dynamic_market_state
+from mlfcs_gapa.data.dynamic import DynamicStateCache
 from mlfcs_gapa.data.features import normalize_lob_window
 from mlfcs_gapa.data.schema import LobDataset, lob_columns
 from mlfcs_gapa.env.actions import Quote, continuous_action_to_quote
@@ -30,6 +30,9 @@ class PaperMarketMakingEnv(gym.Env):
         episode_events: int = PAPER.episode_events,
         latency_events: int = 1,
         normalize_actions: bool = False,
+        random_episode_starts: bool = False,
+        eta: float = PAPER.eta_dampened_pnl,
+        zeta: float = PAPER.zeta_inventory_penalty,
         seed: int = 1,
     ) -> None:
         super().__init__()
@@ -38,8 +41,13 @@ class PaperMarketMakingEnv(gym.Env):
         self.episode_events = episode_events
         self.latency_events = latency_events
         self.normalize_actions = normalize_actions
+        self.random_episode_starts = random_episode_starts
+        self.eta = eta
+        self.zeta = zeta
         self.rng = np.random.default_rng(seed)
         self.replay = HistoricalReplay(dataset, rng=self.rng)
+        self.dynamic_state_cache = DynamicStateCache.from_dataset(dataset)
+        self.lob_values = dataset.orderbook.select(lob_columns()).to_numpy()
 
         action_low = -1.0 if normalize_actions else 0.0
         self.action_space = spaces.Box(
@@ -79,9 +87,14 @@ class PaperMarketMakingEnv(gym.Env):
             self.replay.rng = self.rng
 
         options = options or {}
-        self.episode_start = int(options.get("episode_start", self.episode_start))
+        episode_events = int(options.get("episode_events", self.episode_events))
+        if "episode_start" in options:
+            self.episode_start = int(options["episode_start"])
+        elif self.random_episode_starts:
+            max_start = max(0, self.dataset.orderbook.height - episode_events - 1)
+            self.episode_start = int(self.rng.integers(0, max_start + 1)) if max_start else 0
         self.episode_end = min(
-            self.episode_start + int(options.get("episode_events", self.episode_events)),
+            self.episode_start + episode_events,
             self.dataset.orderbook.height - 1,
         )
         self.current_index = self.episode_start + PAPER.window_length + self.latency_events - 1
@@ -116,6 +129,8 @@ class PaperMarketMakingEnv(gym.Env):
             trade_price=fill.trade_price,
             trade_volume=fill.trade_volume,
             inventory=self.account.inventory,
+            eta=self.eta,
+            zeta=self.zeta,
         )
         reward = reward_breakdown.reward
 
@@ -168,8 +183,7 @@ class PaperMarketMakingEnv(gym.Env):
     def _observation(self) -> dict[str, np.ndarray]:
         index = self._decision_index()
         start = index - PAPER.window_length + 1
-        lob_values = self.dataset.orderbook.select(lob_columns()).slice(start, PAPER.window_length)
-        lob_state = normalize_lob_window(lob_values.to_numpy()).astype(np.float32)
+        lob_state = normalize_lob_window(self.lob_values[start : index + 1]).astype(np.float32)
         progress = (self.current_index - self.episode_start) / max(
             1, self.episode_end - self.episode_start
         )
@@ -179,7 +193,7 @@ class PaperMarketMakingEnv(gym.Env):
         )
         return {
             "lob_state": lob_state,
-            "dynamic_state": dynamic_market_state(self.dataset, index),
+            "dynamic_state": self.dynamic_state_cache.state(index),
             "agent_state": agent_state,
         }
 
@@ -210,6 +224,8 @@ class PaperMarketMakingEnv(gym.Env):
             trade_price=fill.trade_price,
             trade_volume=fill.trade_volume,
             inventory=self.account.inventory,
+            eta=self.eta,
+            zeta=self.zeta,
         ).reward
         self.values.append(self.account.value)
         self.inventories.append(self.account.inventory)

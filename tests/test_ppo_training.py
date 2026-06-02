@@ -47,14 +47,12 @@ def test_feature_extractor_supports_paper_ablation_modes() -> None:
         features_dim=16,
         lob_mode="mlp",
         use_dynamic_state=False,
-        use_agent_state=True,
     )
     no_lob_extractor = AttnLOBFeatureExtractor(
         env.observation_space,
         features_dim=16,
         lob_mode="none",
         use_dynamic_state=True,
-        use_agent_state=True,
     )
 
     assert tuple(mlp_extractor(batch).shape) == (1, 16)

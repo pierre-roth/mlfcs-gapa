@@ -55,6 +55,7 @@ def test_decision_trace_is_written(tmp_path) -> None:
             "ask_price": [10.1, 0.0, 10.3],
             "bid_price": [9.9, 10.0, 0.0],
             "inventory": [0, 100, 0],
+            "value": [0.0, 1.0, 0.5],
         }
     )
     output = tmp_path / "decision.png"
@@ -69,6 +70,16 @@ def test_attention_heatmap_is_written(tmp_path) -> None:
     output = tmp_path / "attention.png"
 
     plot_attention_heatmap(np.ones((10, 50)) / 50.0, output)
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+
+
+def test_attention_heatmap_with_lob_state_is_written(tmp_path) -> None:
+    output = tmp_path / "attention_lob_state.png"
+    lob_window = np.arange(50 * 40, dtype=np.float32).reshape(50, 40)
+
+    plot_attention_heatmap(np.ones((10, 50)) / 50.0, output, lob_window=lob_window)
 
     assert output.exists()
     assert output.stat().st_size > 0

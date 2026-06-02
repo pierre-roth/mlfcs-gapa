@@ -1,7 +1,8 @@
 """Synthetic event-level LOB data.
 
 This module is intentionally separate from the paper implementation. It exists
-to create paper-shaped data when the Shenzhen exchange data is unavailable.
+to create paper-shaped data when the paper's proprietary exchange data is
+unavailable.
 The generated data must pass through the same schema as any real-data adapter.
 """
 

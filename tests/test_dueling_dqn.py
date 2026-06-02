@@ -49,7 +49,6 @@ def test_dueling_dqn_supports_paper_ablation_modes() -> None:
         features_dim=16,
         lob_mode="mlp",
         use_dynamic_state=False,
-        use_agent_state=True,
     )
     no_lob_model = DuelingDQN(
         env.observation_space,
@@ -57,7 +56,6 @@ def test_dueling_dqn_supports_paper_ablation_modes() -> None:
         features_dim=16,
         lob_mode="none",
         use_dynamic_state=True,
-        use_agent_state=True,
     )
 
     assert tuple(mlp_model(batch).shape) == (1, 8)

@@ -29,6 +29,9 @@ class PaperDiscreteMarketMakingEnv(PaperMarketMakingEnv):
         episode_start: int = 0,
         episode_events: int = PAPER.episode_events,
         latency_events: int = 1,
+        random_episode_starts: bool = False,
+        eta: float = PAPER.eta_dampened_pnl,
+        zeta: float = PAPER.zeta_inventory_penalty,
         seed: int = 1,
         tick_size: float = 0.01,
     ) -> None:
@@ -37,6 +40,9 @@ class PaperDiscreteMarketMakingEnv(PaperMarketMakingEnv):
             episode_start=episode_start,
             episode_events=episode_events,
             latency_events=latency_events,
+            random_episode_starts=random_episode_starts,
+            eta=eta,
+            zeta=zeta,
             seed=seed,
         )
         self.tick_size = tick_size
@@ -68,6 +74,8 @@ class PaperDiscreteMarketMakingEnv(PaperMarketMakingEnv):
             trade_price=fill.trade_price,
             trade_volume=fill.trade_volume,
             inventory=self.account.inventory,
+            eta=self.eta,
+            zeta=self.zeta,
         )
         reward = reward_breakdown.reward
 

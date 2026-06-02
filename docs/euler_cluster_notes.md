@@ -325,7 +325,7 @@ Use:
 ```text
 $HOME/src/mlfcs-gapa              small clone or bare config only
 $SCRATCH/mlfcs-gapa               active working clone, venv, data, outputs
-$SCRATCH/mlfcs-gapa/data          synthetic/public LOB data
+$SCRATCH/mlfcs-gapa/data          synthetic LOB data
 $SCRATCH/mlfcs-gapa/runs          checkpoints, tensorboard, metrics
 $SCRATCH/mlfcs-gapa/logs          Slurm stdout/stderr
 $SCRATCH/mlfcs-gapa/tmp           temporary processing
@@ -520,7 +520,7 @@ Use a staged compute plan:
    - shape checks for Attn-LOB
 
 2. Euler CPU jobs:
-   - build synthetic/public LOB datasets
+   - build synthetic LOB datasets
    - run fixed/random/AS/Inv-RL/LOB-RL baselines
    - run short RL smoke tests
    - current smoke script also runs tiny C-PPO and D-DQN train/eval checks
@@ -538,7 +538,6 @@ Use a staged compute plan:
    - `train_agents_gpu_array.sh` accepts ablation environment variables:
      - `LOB_MODE=attn|mlp|none`
      - `USE_DYNAMIC_STATE=true|false`
-     - `USE_AGENT_STATE=true|false`
 
 4. Euler CPU/GPU mixed:
    - latency sweeps

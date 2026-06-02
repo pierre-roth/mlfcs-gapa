@@ -32,6 +32,15 @@ def test_normalize_lob_window_preserves_paper_shape() -> None:
     assert np.all(window[:, volume_cols] <= 1.000001)
 
 
+def test_normalize_lob_window_supports_longer_pretrain_windows() -> None:
+    dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=130, seed=24))
+    values = dataset.orderbook.select(lob_columns()).to_numpy()
+    window = normalize_lob_window(values[:100])
+
+    assert window.shape == (100, PAPER.lob_width)
+    assert np.isfinite(window).all()
+
+
 def test_build_lob_windows_shape() -> None:
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=75, seed=23))
     values = dataset.orderbook.select(lob_columns()).to_numpy()

@@ -25,12 +25,10 @@ class AttnLOBFeatureExtractor(BaseFeaturesExtractor):
         freeze_encoder: bool = False,
         lob_mode: str = "attn",
         use_dynamic_state: bool = True,
-        use_agent_state: bool = True,
     ) -> None:
         super().__init__(observation_space, features_dim)
         self.lob_mode = _validate_lob_mode(lob_mode)
         self.use_dynamic_state = use_dynamic_state
-        self.use_agent_state = use_agent_state
 
         lob_dim = 0
         if self.lob_mode == "attn":
@@ -56,9 +54,7 @@ class AttnLOBFeatureExtractor(BaseFeaturesExtractor):
             self.lob_encoder = nn.Identity()
 
         dynamic_dim = int(observation_space["dynamic_state"].shape[0]) if use_dynamic_state else 0
-        agent_dim = int(observation_space["agent_state"].shape[0]) if use_agent_state else 0
-        if lob_dim + dynamic_dim + agent_dim == 0:
-            raise ValueError("at least one observation component must be enabled")
+        agent_dim = int(observation_space["agent_state"].shape[0])
         self.projection = nn.Sequential(
             nn.Linear(lob_dim + dynamic_dim + agent_dim, features_dim),
             nn.LeakyReLU(0.01),
@@ -70,8 +66,7 @@ class AttnLOBFeatureExtractor(BaseFeaturesExtractor):
             features.append(self.lob_encoder(observations["lob_state"].float()))
         if self.use_dynamic_state:
             features.append(observations["dynamic_state"].float())
-        if self.use_agent_state:
-            features.append(observations["agent_state"].float())
+        features.append(observations["agent_state"].float())
         return self.projection(torch.cat(features, dim=1))
 
 

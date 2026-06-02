@@ -17,8 +17,12 @@ class PretrainArrays:
     y: np.ndarray
 
 
-def build_pretrain_arrays(dataset: LobDataset) -> PretrainArrays:
-    """Build `(N, 50, 40)` windows and aligned direction labels.
+def build_pretrain_arrays(
+    dataset: LobDataset,
+    *,
+    window_length: int = PAPER.window_length,
+) -> PretrainArrays:
+    """Build `(N, window_length, 40)` windows and aligned direction labels.
 
     A window ending at event `t` receives the mid-price direction label for
     event `t`, matching the paper's "past T timestamps predict future direction"
@@ -26,13 +30,13 @@ def build_pretrain_arrays(dataset: LobDataset) -> PretrainArrays:
     """
 
     lob_values = dataset.orderbook.select(lob_columns()).to_numpy()
-    windows = build_lob_windows(lob_values, window_length=PAPER.window_length)
+    windows = build_lob_windows(lob_values, window_length=window_length)
 
     ask1 = dataset.orderbook["ask1_price"].to_numpy()
     bid1 = dataset.orderbook["bid1_price"].to_numpy()
     midprices = (ask1 + bid1) / 2.0
     labels = midprice_direction_labels(midprices)
-    aligned_labels = labels[PAPER.window_length - 1 :]
+    aligned_labels = labels[window_length - 1 :]
 
     valid = aligned_labels >= 0
     return PretrainArrays(

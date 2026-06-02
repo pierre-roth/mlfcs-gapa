@@ -48,7 +48,7 @@ def midprice_direction_labels(
 
 
 def normalize_lob_window(lob_window: np.ndarray) -> np.ndarray:
-    """Normalize one `(50, 40)` LOB window for Attn-LOB.
+    """Normalize one `(T, 40)` LOB window.
 
     Paper-faithful interpretation:
 
@@ -61,8 +61,8 @@ def normalize_lob_window(lob_window: np.ndarray) -> np.ndarray:
     """
 
     window = np.asarray(lob_window, dtype=np.float32)
-    if window.shape != PAPER.lob_window_shape:
-        raise ValueError(f"expected LOB window shape {PAPER.lob_window_shape}, got {window.shape}")
+    if window.ndim != 2 or window.shape[1] != PAPER.lob_width:
+        raise ValueError(f"expected LOB window shape (T, {PAPER.lob_width}), got {window.shape}")
 
     output = window.copy()
     ask1 = output[:, 0]

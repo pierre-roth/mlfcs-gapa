@@ -49,6 +49,7 @@ class EpisodeMetrics:
     nd_pnl: float
     pnl_map: float
     profit_ratio: float
+    sharpe: float
     mean_inventory: float
     mean_abs_inventory: float
     mean_quoted_spread: float
@@ -69,14 +70,44 @@ class HistoricalReplay:
         self.rng = rng or np.random.default_rng(1)
         self.orderbook = dataset.orderbook
         self.trades = dataset.trades
+        self.ask_prices = np.column_stack(
+            [
+                self.orderbook[f"ask{level}_price"].to_numpy().astype(np.float64)
+                for level in range(1, PAPER.lob_levels + 1)
+            ]
+        )
+        self.bid_prices = np.column_stack(
+            [
+                self.orderbook[f"bid{level}_price"].to_numpy().astype(np.float64)
+                for level in range(1, PAPER.lob_levels + 1)
+            ]
+        )
+        self.ask_volumes = np.column_stack(
+            [
+                self.orderbook[f"ask{level}_volume"].to_numpy().astype(np.int64)
+                for level in range(1, PAPER.lob_levels + 1)
+            ]
+        )
+        self.bid_volumes = np.column_stack(
+            [
+                self.orderbook[f"bid{level}_volume"].to_numpy().astype(np.int64)
+                for level in range(1, PAPER.lob_levels + 1)
+            ]
+        )
+        self.trade_price_min = self.trades["trade_price_min"].to_numpy().astype(np.float64)
+        self.trade_price_min_volume = (
+            self.trades["trade_price_min_volume"].to_numpy().astype(np.int64)
+        )
+        self.trade_price_max = self.trades["trade_price_max"].to_numpy().astype(np.float64)
+        self.trade_price_max_volume = (
+            self.trades["trade_price_max_volume"].to_numpy().astype(np.int64)
+        )
 
     def mid_price(self, index: int) -> float:
-        row = self.orderbook.row(index, named=True)
-        return (float(row["ask1_price"]) + float(row["bid1_price"])) / 2.0
+        return float((self.ask_prices[index, 0] + self.bid_prices[index, 0]) / 2.0)
 
     def best_bid_ask(self, index: int) -> tuple[float, float]:
-        row = self.orderbook.row(index, named=True)
-        return float(row["bid1_price"]), float(row["ask1_price"])
+        return float(self.bid_prices[index, 0]), float(self.ask_prices[index, 0])
 
     def match(self, index: int, quote: Quote) -> Fill:
         """Match one bid/ask quote pair against historical event `index`.
@@ -92,10 +123,8 @@ class HistoricalReplay:
         """
 
         bid1, ask1 = self.best_bid_ask(max(0, index - 1))
-        trade = self.trades.row(index, named=True)
-
-        sell_fill = self._match_sell(index, quote, bid1, trade)
-        buy_fill = self._match_buy(index, quote, ask1, trade)
+        sell_fill = self._match_sell(index, quote, bid1)
+        buy_fill = self._match_buy(index, quote, ask1)
 
         if sell_fill.occurred and buy_fill.occurred:
             # One historical event may touch both sides in synthetic data. The
@@ -118,16 +147,14 @@ class HistoricalReplay:
             return Fill(trade_price=bid1, trade_volume=-account.inventory)
         return Fill(trade_price=0.0, trade_volume=0)
 
-    def _match_sell(
-        self, index: int, quote: Quote, best_bid: float, trade: dict[str, object]
-    ) -> Fill:
+    def _match_sell(self, index: int, quote: Quote, best_bid: float) -> Fill:
         if quote.ask_price <= 0 or quote.ask_volume >= 0:
             return Fill(0.0, 0)
         if quote.ask_price <= best_bid:
             return Fill(best_bid, quote.ask_volume)
 
-        trade_max = float(trade["trade_price_max"])
-        trade_max_volume = int(trade["trade_price_max_volume"])
+        trade_max = self.trade_price_max[index]
+        trade_max_volume = self.trade_price_max_volume[index]
         if trade_max_volume <= 0:
             return Fill(0.0, 0)
         if trade_max > quote.ask_price:
@@ -138,16 +165,14 @@ class HistoricalReplay:
                 return Fill(quote.ask_price, quote.ask_volume)
         return Fill(0.0, 0)
 
-    def _match_buy(
-        self, index: int, quote: Quote, best_ask: float, trade: dict[str, object]
-    ) -> Fill:
+    def _match_buy(self, index: int, quote: Quote, best_ask: float) -> Fill:
         if quote.bid_price <= 0 or quote.bid_volume <= 0:
             return Fill(0.0, 0)
         if quote.bid_price >= best_ask:
             return Fill(best_ask, quote.bid_volume)
 
-        trade_min = float(trade["trade_price_min"])
-        trade_min_volume = int(trade["trade_price_min_volume"])
+        trade_min = self.trade_price_min[index]
+        trade_min_volume = self.trade_price_min_volume[index]
         if trade_min_volume <= 0:
             return Fill(0.0, 0)
         if trade_min < quote.bid_price:
@@ -159,11 +184,19 @@ class HistoricalReplay:
         return Fill(0.0, 0)
 
     def _displayed_depth(self, index: int, *, side: str, price: float) -> int:
-        row = self.orderbook.row(index, named=True)
-        for level in range(1, PAPER.lob_levels + 1):
-            if np.isclose(float(row[f"{side}{level}_price"]), price):
-                return int(row[f"{side}{level}_volume"])
-        return int(row[f"{side}1_volume"])
+        if side == "ask":
+            prices = self.ask_prices[index]
+            volumes = self.ask_volumes[index]
+        elif side == "bid":
+            prices = self.bid_prices[index]
+            volumes = self.bid_volumes[index]
+        else:
+            raise ValueError("side must be 'ask' or 'bid'")
+
+        for level in range(PAPER.lob_levels):
+            if np.isclose(prices[level], price):
+                return int(volumes[level])
+        return int(volumes[0])
 
     def _queue_fill(self, traded_volume: int, displayed_depth: int) -> bool:
         probability = traded_volume / (traded_volume + displayed_depth + 1e-7)
@@ -183,12 +216,26 @@ def compute_episode_metrics(
     mean_spread = float(np.mean(quoted_spreads)) if quoted_spreads else 0.0
     mean_inventory = float(np.mean(inventories)) if inventories else 0.0
     mean_abs_inventory = float(np.mean(np.abs(inventories))) if inventories else 0.0
+    sharpe = _event_sharpe(values)
     return EpisodeMetrics(
         pnl=pnl,
         nd_pnl=pnl / (mean_spread + 1e-7),
         pnl_map=pnl / (mean_abs_inventory + 1e-7),
         profit_ratio=pnl / (buy_notional + 1e-7),
+        sharpe=sharpe,
         mean_inventory=mean_inventory,
         mean_abs_inventory=mean_abs_inventory,
         mean_quoted_spread=mean_spread,
     )
+
+
+def _event_sharpe(values: list[float]) -> float:
+    """Annualization-free Sharpe over event-to-event marked-value changes."""
+
+    if len(values) < 3:
+        return 0.0
+    increments = np.diff(np.asarray(values, dtype=np.float64))
+    std = float(np.std(increments, ddof=1))
+    if std <= 1e-12:
+        return 0.0
+    return float(np.sqrt(len(increments)) * np.mean(increments) / std)
