@@ -3,7 +3,9 @@ set -euo pipefail
 
 module load stack/2024-06 python/3.12.8
 
-cd "${SCRATCH:?}/mlfcs-gapa"
+PROJECT_CODE_DIR="${PROJECT_CODE_DIR:-${HOME}/projects/mlfcs-gapa}"
+cd "${PROJECT_CODE_DIR}"
+mkdir -p logs
 
 python -m venv .venv
 source .venv/bin/activate

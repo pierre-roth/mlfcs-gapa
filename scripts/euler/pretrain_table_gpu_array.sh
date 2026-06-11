@@ -13,8 +13,10 @@
 set -euo pipefail
 
 module load stack/2024-06 python/3.12.8
-cd "${SCRATCH:?}/mlfcs-gapa"
+PROJECT_CODE_DIR="${PROJECT_CODE_DIR:-${HOME}/projects/mlfcs-gapa}"
+cd "${PROJECT_CODE_DIR}"
 source .venv/bin/activate
+source scripts/euler/wandb_env.sh
 
 MODELS=("FC-LOB" "Conv-LOB" "DeepLOB" "Attn-LOB")
 MODEL_NAME="${MODELS[$SLURM_ARRAY_TASK_ID]}"
@@ -22,7 +24,7 @@ EVENTS="${EVENTS:-6000}"
 EPOCHS="${EPOCHS:-5}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 SEED="${SEED:-101}"
-RUN_ROOT="${RUN_ROOT:-${SCRATCH}/mlfcs-gapa/runs/pretrain-table-gpu/${SLURM_ARRAY_JOB_ID}}"
+RUN_ROOT="${RUN_ROOT:-/cluster/work/math/piroth/mlfcs-gapa/runs/pretrain-table-gpu/${SLURM_ARRAY_JOB_ID}}"
 
 echo "model=${MODEL_NAME}"
 echo "gpu_concurrency_cap=4"
@@ -35,4 +37,5 @@ mlfcs-gapa pretrain-synthetic \
   --epochs "${EPOCHS}" \
   --batch-size "${BATCH_SIZE}" \
   --device cuda \
-  --seed "${SEED}"
+  --seed "${SEED}" \
+  "${WANDB_ARGS[@]}"

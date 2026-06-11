@@ -5,5 +5,7 @@ __pycache__/
 /data/
 /runs/
 /logs/
+/wandb/
 .ruff_cache/
 .pytest_cache/
+/paper/*.pdf

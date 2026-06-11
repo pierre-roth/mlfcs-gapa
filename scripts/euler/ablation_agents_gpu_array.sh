@@ -13,8 +13,10 @@
 set -euo pipefail
 
 module load stack/2024-06 python/3.12.8
-cd "${SCRATCH:?}/mlfcs-gapa"
+PROJECT_CODE_DIR="${PROJECT_CODE_DIR:-${HOME}/projects/mlfcs-gapa}"
+cd "${PROJECT_CODE_DIR}"
 source .venv/bin/activate
+source scripts/euler/wandb_env.sh
 
 METHODS=("C-PPO" "D-DQN")
 VARIANTS=("full" "without_lob" "without_attn_lob" "without_dynamic")
@@ -27,7 +29,7 @@ EVENTS="${EVENTS:-6000}"
 EPISODE_EVENTS="${EPISODE_EVENTS:-2000}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-20000}"
 SEED="${SEED:-101}"
-RUN_ROOT="${RUN_ROOT:-${SCRATCH}/mlfcs-gapa/runs/ablation-agents-gpu/${SLURM_ARRAY_JOB_ID}}"
+RUN_ROOT="${RUN_ROOT:-/cluster/work/math/piroth/mlfcs-gapa/runs/ablation-agents-gpu/${SLURM_ARRAY_JOB_ID}}"
 ENCODER_CHECKPOINT="${ENCODER_CHECKPOINT:-}"
 
 LOB_MODE="attn"
@@ -89,6 +91,7 @@ if [[ "${METHOD}" == "C-PPO" ]]; then
     "${normalize_actions_flag}"
     --device cuda
     --seed "${SEED}"
+    "${WANDB_ARGS[@]}"
   )
   if [[ -n "${ENCODER_CHECKPOINT}" && "${LOB_MODE}" == "attn" ]]; then
     cmd+=(--encoder-checkpoint "${ENCODER_CHECKPOINT}")
@@ -109,6 +112,7 @@ else
     "${dynamic_flag}"
     --device cuda
     --seed "${SEED}"
+    "${WANDB_ARGS[@]}"
   )
   if [[ -n "${ENCODER_CHECKPOINT}" && "${LOB_MODE}" == "attn" ]]; then
     cmd+=(--encoder-checkpoint "${ENCODER_CHECKPOINT}")

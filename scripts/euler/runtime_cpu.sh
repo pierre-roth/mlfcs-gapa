@@ -11,10 +11,12 @@
 set -euo pipefail
 
 module load stack/2024-06 python/3.12.8
-cd "${SCRATCH:?}/mlfcs-gapa"
+PROJECT_CODE_DIR="${PROJECT_CODE_DIR:-${HOME}/projects/mlfcs-gapa}"
+cd "${PROJECT_CODE_DIR}"
 source .venv/bin/activate
+source scripts/euler/wandb_env.sh
 
-RUN_ROOT="${RUN_ROOT:-${SCRATCH}/mlfcs-gapa/runs/runtime-cpu/${SLURM_JOB_ID}}"
+RUN_ROOT="${RUN_ROOT:-/cluster/work/math/piroth/mlfcs-gapa/runs/runtime-cpu/${SLURM_JOB_ID}}"
 EVENTS="${EVENTS:-1000}"
 EPISODE_EVENTS="${EPISODE_EVENTS:-500}"
 TRAIN_TIMESTEPS="${TRAIN_TIMESTEPS:-256}"
@@ -26,4 +28,5 @@ mlfcs-gapa benchmark-runtime-synthetic \
   --episode-events "${EPISODE_EVENTS}" \
   --train-timesteps "${TRAIN_TIMESTEPS}" \
   --device cpu \
-  --seed "${SEED}"
+  --seed "${SEED}" \
+  "${WANDB_ARGS[@]}"

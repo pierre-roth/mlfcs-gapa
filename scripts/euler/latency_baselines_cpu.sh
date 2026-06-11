@@ -11,10 +11,12 @@
 set -euo pipefail
 
 module load stack/2024-06 python/3.12.8
-cd "${SCRATCH:?}/mlfcs-gapa"
+PROJECT_CODE_DIR="${PROJECT_CODE_DIR:-${HOME}/projects/mlfcs-gapa}"
+cd "${PROJECT_CODE_DIR}"
 source .venv/bin/activate
+source scripts/euler/wandb_env.sh
 
-RUN_ROOT="${RUN_ROOT:-${SCRATCH}/mlfcs-gapa/runs/synthetic-latency-full/${SLURM_JOB_ID}}"
+RUN_ROOT="${RUN_ROOT:-/cluster/work/math/piroth/mlfcs-gapa/runs/synthetic-latency-full/${SLURM_JOB_ID}}"
 EVENTS="${EVENTS:-6000}"
 EPISODE_EVENTS="${EPISODE_EVENTS:-2000}"
 DAYS="${DAYS:-1}"
@@ -35,4 +37,5 @@ mlfcs-gapa run-synthetic-latency-baselines \
   --events-per-day "${EVENTS}" \
   --episode-events "${EPISODE_EVENTS}" \
   --tabular-episodes "${TABULAR_EPISODES}" \
-  --seed "${SEED}"
+  --seed "${SEED}" \
+  "${WANDB_ARGS[@]}"

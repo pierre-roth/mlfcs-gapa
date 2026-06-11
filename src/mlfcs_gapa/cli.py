@@ -40,6 +40,13 @@ from mlfcs_gapa.experiments.figures import (
     plot_latency_figure,
 )
 from mlfcs_gapa.experiments.reports import summarize_paper_table
+from mlfcs_gapa.experiments.tracking import (
+    DEFAULT_WANDB_ENTITY,
+    DEFAULT_WANDB_PROJECT,
+    WandbTracker,
+    init_wandb_run,
+    wandb_run,
+)
 from mlfcs_gapa.models.attn_lob import AttnLOBClassifier
 from mlfcs_gapa.models.pretrain_models import (
     count_encoder_parameters,
@@ -135,9 +142,33 @@ def run_synthetic_baselines(
     episode_events: int = typer.Option(2_000, min=100, help="Events evaluated per episode."),
     tabular_episodes: int = typer.Option(20, min=1, help="Q-learning episodes for Inv-RL/LOB-RL."),
     seed: int = typer.Option(1, help="Base random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Run paper baseline strategies on synthetic data."""
 
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="synthetic-baselines",
+        config={
+            "output_dir": output_dir,
+            "days": days,
+            "events_per_day": events_per_day,
+            "episode_events": episode_events,
+            "tabular_episodes": tabular_episodes,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "baselines"),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_rows: list[dict[str, float | str | int]] = []
     trade_rows: list[dict[str, float | int | str]] = []
@@ -200,6 +231,16 @@ def run_synthetic_baselines(
     trades_path = output_dir / "baseline_trades.parquet"
     pl.DataFrame(metrics_rows).write_csv(metrics_path)
     pl.DataFrame(trade_rows).write_parquet(trades_path)
+    tracker.log_metrics(
+        {"metrics_rows": len(metrics_rows), "trade_rows": len(trade_rows)},
+        prefix="baselines",
+    )
+    tracker.log_artifact(
+        [metrics_path, trades_path],
+        name=f"synthetic-baselines-seed-{seed}",
+        artifact_type="baselines",
+    )
+    tracker.finish()
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {trades_path}")
 
@@ -220,9 +261,37 @@ def run_synthetic_latency_baselines(
     ),
     paper_scale: bool = typer.Option(True, help="Use paper table scales in the latency figure."),
     seed: int = typer.Option(1, help="Base random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Run a Figure-2-style latency sweep for synthetic baselines."""
 
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="synthetic-latency-baselines",
+        config={
+            "output_dir": output_dir,
+            "latencies": latencies,
+            "days": days,
+            "events_per_day": events_per_day,
+            "episode_events": episode_events,
+            "fixed_level": fixed_level,
+            "include_tabular": include_tabular,
+            "tabular_episodes": tabular_episodes,
+            "paper_scale": paper_scale,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "latency", "baselines"),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     latency_values = _parse_int_list(latencies)
     metrics_rows: list[dict[str, float | str | int]] = []
@@ -297,6 +366,16 @@ def run_synthetic_latency_baselines(
     metrics.write_csv(metrics_path)
     pl.DataFrame(trade_rows).write_parquet(trades_path)
     plot_latency_figure(metrics, figure_path, paper_scale=paper_scale)
+    tracker.log_metrics(
+        {"metrics_rows": metrics.height, "trade_rows": len(trade_rows)},
+        prefix="latency",
+    )
+    tracker.log_artifact(
+        [metrics_path, trades_path, figure_path],
+        name=f"synthetic-latency-baselines-seed-{seed}",
+        artifact_type="latency",
+    )
+    tracker.finish()
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {trades_path}")
     console.print(f"[green]wrote[/green] {figure_path}")
@@ -310,18 +389,44 @@ def pretrain_synthetic_attn_lob(
     batch_size: int = typer.Option(64, min=1, help="Batch size."),
     device: str = typer.Option("cpu", help="Torch device, e.g. cpu or cuda."),
     seed: int = typer.Option(1, help="Random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Run a small Attn-LOB pretraining experiment on synthetic data."""
 
-    _run_synthetic_pretrain(
-        model_name="Attn-LOB",
-        output_dir=output_dir,
-        events=events,
-        epochs=epochs,
-        batch_size=batch_size,
-        device=device,
-        seed=seed,
-    )
+    with wandb_run(
+        enabled=wandb,
+        job_type="pretrain",
+        config={
+            "model_name": "Attn-LOB",
+            "output_dir": output_dir,
+            "events": events,
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "device": device,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "pretrain", "attn-lob"),
+    ) as tracker:
+        _run_synthetic_pretrain(
+            model_name="Attn-LOB",
+            output_dir=output_dir,
+            events=events,
+            epochs=epochs,
+            batch_size=batch_size,
+            device=device,
+            seed=seed,
+            tracker=tracker,
+        )
 
 
 @app.command("pretrain-synthetic")
@@ -333,18 +438,44 @@ def pretrain_synthetic(
     batch_size: int = typer.Option(64, min=1, help="Batch size."),
     device: str = typer.Option("cpu", help="Torch device, e.g. cpu or cuda."),
     seed: int = typer.Option(1, help="Random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Run one Table I pretraining model on synthetic data."""
 
-    _run_synthetic_pretrain(
-        model_name=model_name,
-        output_dir=output_dir,
-        events=events,
-        epochs=epochs,
-        batch_size=batch_size,
-        device=device,
-        seed=seed,
-    )
+    with wandb_run(
+        enabled=wandb,
+        job_type="pretrain",
+        config={
+            "model_name": model_name,
+            "output_dir": output_dir,
+            "events": events,
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "device": device,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "pretrain", model_name.lower()),
+    ) as tracker:
+        _run_synthetic_pretrain(
+            model_name=model_name,
+            output_dir=output_dir,
+            events=events,
+            epochs=epochs,
+            batch_size=batch_size,
+            device=device,
+            seed=seed,
+            tracker=tracker,
+        )
 
 
 @app.command("train-synthetic-ppo")
@@ -385,6 +516,12 @@ def train_synthetic_ppo(
         "auto", help="Torch device for Stable-Baselines3, e.g. auto/cpu/cuda."
     ),
     seed: int = typer.Option(1, help="Random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Train a paper C-PPO smoke/experiment run on synthetic data."""
 
@@ -393,6 +530,44 @@ def train_synthetic_ppo(
 
     from stable_baselines3 import PPO
 
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="train-c-ppo",
+        config={
+            "output_dir": output_dir,
+            "events": events,
+            "episode_events": episode_events,
+            "latency_events": latency_events,
+            "total_timesteps": total_timesteps,
+            "n_steps": n_steps,
+            "batch_size": batch_size,
+            "n_epochs": n_epochs,
+            "learning_rate": learning_rate,
+            "gamma": gamma,
+            "gae_lambda": gae_lambda,
+            "clip_range": clip_range,
+            "ent_coef": ent_coef,
+            "vf_coef": vf_coef,
+            "max_grad_norm": max_grad_norm,
+            "policy_log_std_init": policy_log_std_init,
+            "encoder_checkpoint": encoder_checkpoint,
+            "freeze_encoder": freeze_encoder,
+            "lob_mode": lob_mode,
+            "use_dynamic_state": use_dynamic_state,
+            "normalize_actions": normalize_actions,
+            "random_episode_starts": random_episode_starts,
+            "eta": eta,
+            "zeta": zeta,
+            "device": device,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "rl", "c-ppo"),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=events, seed=seed))
     env = PaperMarketMakingEnv(
@@ -466,6 +641,14 @@ def train_synthetic_ppo(
     trades_path = output_dir / "c_ppo_trades.parquet"
     pl.DataFrame([metrics]).write_csv(metrics_path)
     pl.DataFrame(trade_log).write_parquet(trades_path)
+    tracker.log_metrics(metrics, prefix="eval")
+    tracker.update_summary(metrics, prefix="eval")
+    tracker.log_artifact(
+        [model_path.with_suffix(".zip"), metrics_path, trades_path],
+        name=f"c-ppo-seed-{seed}",
+        artifact_type="model",
+    )
+    tracker.finish()
     console.print(f"[green]wrote[/green] {model_path}.zip")
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {trades_path}")
@@ -494,9 +677,46 @@ def train_synthetic_ddqn(
     zeta: float = typer.Option(PAPER.zeta_inventory_penalty, help="Paper inventory penalty weight."),
     device: str = typer.Option("cpu", help="Torch device, e.g. cpu or cuda."),
     seed: int = typer.Option(1, help="Random seed."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Train the paper's discrete dueling Double DQN agent on synthetic data."""
 
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="train-d-dqn",
+        config={
+            "output_dir": output_dir,
+            "events": events,
+            "episode_events": episode_events,
+            "latency_events": latency_events,
+            "total_timesteps": total_timesteps,
+            "learning_starts": learning_starts,
+            "buffer_size": buffer_size,
+            "batch_size": batch_size,
+            "target_update_interval": target_update_interval,
+            "learning_rate": learning_rate,
+            "encoder_checkpoint": encoder_checkpoint,
+            "freeze_encoder": freeze_encoder,
+            "lob_mode": lob_mode,
+            "use_dynamic_state": use_dynamic_state,
+            "random_episode_starts": random_episode_starts,
+            "eta": eta,
+            "zeta": zeta,
+            "device": device,
+            "seed": seed,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "rl", "d-dqn"),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=events, seed=seed))
     env = PaperDiscreteMarketMakingEnv(
@@ -552,6 +772,20 @@ def train_synthetic_ddqn(
     pl.DataFrame([metrics]).write_csv(metrics_path)
     pl.DataFrame(trade_log).write_parquet(trades_path)
     pl.DataFrame({"loss": train_result.losses}).write_csv(losses_path)
+    for step, loss in enumerate(train_result.losses):
+        tracker.log({"train/loss": loss}, step=step)
+    tracker.log_metrics(metrics, prefix="eval")
+    tracker.update_summary(metrics, prefix="eval")
+    tracker.log_metrics(
+        {"updates": train_result.updates, "final_epsilon": train_result.final_epsilon},
+        prefix="train",
+    )
+    tracker.log_artifact(
+        [model_path, metrics_path, trades_path, losses_path],
+        name=f"d-dqn-seed-{seed}",
+        artifact_type="model",
+    )
+    tracker.finish()
     console.print(f"[green]wrote[/green] {model_path}")
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {trades_path}")
@@ -566,11 +800,35 @@ def benchmark_runtime_synthetic(
     train_timesteps: int = typer.Option(32, min=1, help="Tiny train timesteps for train timing."),
     seed: int = typer.Option(1, help="Random seed."),
     device: str = typer.Option("cpu", help="Torch device for RL timing."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Measure Table-III-style runtime on a synthetic smoke workload."""
 
     from stable_baselines3 import PPO
 
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="runtime-benchmark",
+        config={
+            "output_path": output_path,
+            "events": events,
+            "episode_events": episode_events,
+            "train_timesteps": train_timesteps,
+            "seed": seed,
+            "device": device,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "runtime"),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=events, seed=seed))
     evaluation_events = min(episode_events, events - 1)
@@ -668,6 +926,12 @@ def benchmark_runtime_synthetic(
     )
 
     pl.DataFrame(rows).write_csv(output_path)
+    for row in rows:
+        method = str(row["method"]).lower().replace("-", "_")
+        phase = str(row["phase"])
+        tracker.log_metrics(row, prefix=f"runtime/{method}/{phase}")
+    tracker.log_artifact(output_path, name=f"runtime-seed-{seed}", artifact_type="runtime")
+    tracker.finish()
     console.print(f"[green]wrote[/green] {output_path}")
 
 
@@ -719,6 +983,12 @@ def run_full_synthetic_replication(
     runtime_train_timesteps: int = typer.Option(32, min=1, help="Tiny train timing steps."),
     seed: int = typer.Option(1, help="Base random seed."),
     device: str = typer.Option("cpu", help="Torch/SB3 device."),
+    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
+    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
+    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
+    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
+    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
+    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
 ) -> None:
     """Run the authoritative synthetic version of all paper tables and figures.
 
@@ -735,6 +1005,34 @@ def run_full_synthetic_replication(
         raise typer.BadParameter("--train-days + --test-days cannot exceed 21 trading days")
     stock_specs = _parse_synthetic_stock_specs(stocks, base_prices)
     latencies = _parse_int_list(latency_values)
+    tracker = init_wandb_run(
+        enabled=wandb,
+        job_type="full-synthetic-replication",
+        config={
+            "output_dir": output_dir,
+            "stocks": [stock for stock, _ in stock_specs],
+            "base_prices": [price for _, price in stock_specs],
+            "train_days": train_days,
+            "test_days": test_days,
+            "events_per_day": events_per_day,
+            "episode_events": episode_events,
+            "pretrain_events": pretrain_events,
+            "pretrain_epochs": pretrain_epochs,
+            "pretrain_batch_size": pretrain_batch_size,
+            "agent_timesteps": agent_timesteps,
+            "tabular_episodes": tabular_episodes,
+            "latencies": latencies,
+            "runtime_train_timesteps": runtime_train_timesteps,
+            "seed": seed,
+            "device": device,
+        },
+        entity=wandb_entity,
+        project=wandb_project,
+        mode=wandb_mode,
+        group=wandb_group,
+        name=wandb_run_name,
+        tags=("synthetic", "replication", "paper"),
+    )
     train_day_indices = list(range(train_days))
     test_day_indices = list(range(train_days, train_days + test_days))
     train_datasets = _build_synthetic_panel(
@@ -772,6 +1070,7 @@ def run_full_synthetic_replication(
     )
 
     table_i_rows = []
+    pretrain_model_paths: list[Path] = []
     table_i_dir = output_dir / "table_i_pretraining"
     pretrain_dataset = _stock_dataset_from_panel(
         train_datasets,
@@ -799,6 +1098,7 @@ def run_full_synthetic_replication(
         )
         if model_name == "Attn-LOB":
             attn_lob_checkpoint = model_path
+        pretrain_model_paths.append(model_path)
         table_i_rows.append(row)
     if attn_lob_checkpoint is None:
         raise RuntimeError("Attn-LOB pretraining did not produce a checkpoint")
@@ -910,6 +1210,42 @@ def run_full_synthetic_replication(
             figure_4_path,
         ],
     )
+    for row in table_i_rows:
+        model_prefix = str(row["model"]).lower().replace("-", "_")
+        tracker.log_metrics(row, prefix=f"table_i/{model_prefix}")
+        tracker.update_summary(row, prefix=f"table_i/{model_prefix}")
+    tracker.log_metrics(
+        {
+            "table_i_rows": len(table_i_rows),
+            "overall_rows": len(overall_metrics),
+            "overall_trade_rows": len(overall_trades),
+            "latency_rows": len(latency_metrics),
+            "latency_trade_rows": len(latency_trades),
+            "ablation_rows": len(ablation_metrics),
+            "ablation_trade_rows": len(ablation_trades),
+        },
+        prefix="replication",
+    )
+    tracker.log_artifact(
+        [
+            output_dir / "README.md",
+            config_path,
+            table_i_path,
+            overall_metrics_path,
+            overall_summary_path,
+            latency_metrics_path,
+            latency_figure_path,
+            runtime_path,
+            ablation_metrics_path,
+            ablation_summary_path,
+            figure_3_path,
+            figure_4_path,
+            *pretrain_model_paths,
+        ],
+        name=f"full-synthetic-replication-seed-{seed}",
+        artifact_type="replication",
+    )
+    tracker.finish()
     console.print(f"[green]wrote full synthetic replication[/green] {output_dir}")
 
 
@@ -2029,6 +2365,7 @@ def _run_synthetic_pretrain(
     batch_size: int,
     device: str,
     seed: int,
+    tracker: WandbTracker | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=events, seed=seed))
@@ -2063,6 +2400,14 @@ def _run_synthetic_pretrain(
     pl.DataFrame([row]).write_csv(metrics_path)
     state_dict = {key: value.detach().cpu() for key, value in model.state_dict().items()}
     torch.save({"model": model_name, "state_dict": state_dict}, model_path)
+    if tracker is not None:
+        tracker.log_metrics(row, prefix="pretrain")
+        tracker.update_summary(row, prefix="pretrain")
+        tracker.log_artifact(
+            [metrics_path, model_path],
+            name=f"{safe_model_name}-pretrain-seed-{seed}",
+            artifact_type="pretrain",
+        )
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {model_path}")
 
