@@ -33,3 +33,22 @@ def test_train_lob_classifier_returns_table_metrics() -> None:
     assert 0.0 <= metrics.accuracy <= 1.0
     assert metrics.n_train > 0
     assert metrics.n_val > 0
+
+
+def test_train_lob_classifier_can_report_held_out_metrics() -> None:
+    train_dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=180, seed=82))
+    eval_dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=180, seed=83))
+    train_arrays = build_pretrain_arrays(train_dataset)
+    eval_arrays = build_pretrain_arrays(eval_dataset)
+
+    metrics = train_lob_classifier(
+        TinyLobClassifier(),
+        train_arrays,
+        evaluation_arrays=eval_arrays,
+        epochs=1,
+        batch_size=32,
+        seed=1,
+    )
+
+    assert metrics.n_train > 0
+    assert metrics.n_val == len(eval_arrays.y)

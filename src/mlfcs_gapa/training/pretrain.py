@@ -28,6 +28,7 @@ def train_lob_classifier(
     model: nn.Module,
     arrays: PretrainArrays,
     *,
+    evaluation_arrays: PretrainArrays | None = None,
     epochs: int = 3,
     batch_size: int = 128,
     learning_rate: float = 1e-3,
@@ -54,8 +55,16 @@ def train_lob_classifier(
 
     x_train = torch.from_numpy(arrays.x[train_idx]).float()
     y_train = torch.from_numpy(arrays.y[train_idx]).long()
-    x_val = torch.from_numpy(arrays.x[val_idx]).float()
-    y_val = torch.from_numpy(arrays.y[val_idx]).long()
+    if evaluation_arrays is None:
+        x_eval = torch.from_numpy(arrays.x[val_idx]).float()
+        y_eval = torch.from_numpy(arrays.y[val_idx]).long()
+    else:
+        if len(evaluation_arrays.x) != len(evaluation_arrays.y):
+            raise ValueError("evaluation x and y must have the same length")
+        if len(evaluation_arrays.x) == 0:
+            raise ValueError("evaluation arrays must not be empty")
+        x_eval = torch.from_numpy(evaluation_arrays.x).float()
+        y_eval = torch.from_numpy(evaluation_arrays.y).long()
 
     train_loader = DataLoader(
         TensorDataset(x_train, y_train),
@@ -84,10 +93,10 @@ def train_lob_classifier(
 
     model.eval()
     with torch.no_grad():
-        logits = model(x_val.to(device))
+        logits = model(x_eval.to(device))
         predictions = logits.argmax(dim=1).cpu().numpy()
 
-    labels = y_val.numpy()
+    labels = y_eval.numpy()
     precision, recall, f1, _ = precision_recall_fscore_support(
         labels,
         predictions,
@@ -104,5 +113,5 @@ def train_lob_classifier(
         accuracy=accuracy,
         train_loss=last_loss,
         n_train=int(len(train_idx)),
-        n_val=int(len(val_idx)),
+        n_val=int(len(labels)),
     )

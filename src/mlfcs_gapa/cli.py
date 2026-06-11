@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import time
 from pathlib import Path
 from time import perf_counter
 
@@ -13,7 +14,7 @@ from rich.console import Console
 from mlfcs_gapa.data.features import normalize_lob_window
 from mlfcs_gapa.data.io import write_lob_dataset
 from mlfcs_gapa.data.pretraining import build_pretrain_arrays
-from mlfcs_gapa.data.schema import lob_columns
+from mlfcs_gapa.data.schema import LobDataset, lob_columns
 from mlfcs_gapa.data.synthetic import SyntheticLobConfig, generate_synthetic_lob_day
 from mlfcs_gapa.env.baselines import (
     AvellanedaStoikovStrategy,
@@ -30,6 +31,7 @@ from mlfcs_gapa.env.tabular_rl import (
     OffsetActionSpace,
     QLearningConfig,
     train_and_evaluate_tabular_baseline,
+    train_tabular_q_strategy,
 )
 from mlfcs_gapa.env.gym_env import PaperMarketMakingEnv
 from mlfcs_gapa.experiments.figures import (
@@ -46,7 +48,7 @@ from mlfcs_gapa.models.pretrain_models import (
     paper_reported_parameter_count,
     pretrain_input_shape,
 )
-from mlfcs_gapa.paper.constants import PAPER, PAPER_TRADING_DAYS_201911
+from mlfcs_gapa.paper.constants import PAPER, PAPER_PRETRAIN_WINDOWS, PAPER_TRADING_DAYS_201911
 from mlfcs_gapa.training.dueling_dqn import (
     DuelingDQNConfig,
     evaluate_dueling_dqn,
@@ -76,6 +78,11 @@ PAPER_METHOD_ORDER: tuple[str, ...] = (
     "Fixed_2",
     "Fixed_3",
 )
+PAPER_TRAIN_DAYS = 10
+PAPER_TEST_DAYS = len(PAPER_TRADING_DAYS_201911) - PAPER_TRAIN_DAYS
+FULL_REPLICATION_EVENTS_PER_DAY = PAPER.episode_events * 3
+FULL_REPLICATION_AGENT_TIMESTEPS = PAPER.episode_events * PAPER_TRAIN_DAYS * 5
+FULL_REPLICATION_PPO_LOG_STD_INIT = -2.0
 
 
 @app.callback()
@@ -675,14 +682,39 @@ def run_full_synthetic_replication(
     base_prices: str | None = typer.Option(
         None, help="Comma-separated base prices matching --stocks."
     ),
-    days: int = typer.Option(1, min=1, max=len(PAPER_TRADING_DAYS_201911), help="Synthetic days."),
-    events_per_day: int = typer.Option(1_000, min=300, help="Events per synthetic stock/day."),
-    episode_events: int = typer.Option(500, min=100, help="Events evaluated per episode."),
-    pretrain_events: int = typer.Option(1_200, min=300, help="Synthetic events for Table I."),
+    train_days: int = typer.Option(
+        PAPER_TRAIN_DAYS,
+        min=1,
+        max=len(PAPER_TRADING_DAYS_201911) - 1,
+        help="Synthetic train days from the first half of November 2019.",
+    ),
+    test_days: int = typer.Option(
+        PAPER_TEST_DAYS,
+        min=1,
+        max=len(PAPER_TRADING_DAYS_201911) - 1,
+        help="Synthetic test days after the train split.",
+    ),
+    events_per_day: int = typer.Option(
+        FULL_REPLICATION_EVENTS_PER_DAY,
+        min=300,
+        help="Events generated per synthetic stock/day before stable-window filtering.",
+    ),
+    episode_events: int = typer.Option(
+        PAPER.episode_events, min=100, help="Events evaluated per episode."
+    ),
+    pretrain_events: int = typer.Option(
+        0, min=0, help="Maximum first-stock train events for Table I; 0 uses all train events."
+    ),
     pretrain_epochs: int = typer.Option(1, min=1, help="Pretraining epochs per Table I model."),
     pretrain_batch_size: int = typer.Option(64, min=1, help="Pretraining batch size."),
-    agent_timesteps: int = typer.Option(1_024, min=1, help="C-PPO and D-DQN train timesteps."),
-    tabular_episodes: int = typer.Option(10, min=1, help="Inv-RL/LOB-RL Q-learning episodes."),
+    agent_timesteps: int = typer.Option(
+        FULL_REPLICATION_AGENT_TIMESTEPS,
+        min=1,
+        help="C-PPO and D-DQN train timesteps.",
+    ),
+    tabular_episodes: int = typer.Option(
+        PAPER_TRAIN_DAYS * 5, min=1, help="Inv-RL/LOB-RL Q-learning episodes."
+    ),
     latency_values: str = typer.Option("1,5,10,20,50,100", help="Latency grid."),
     runtime_train_timesteps: int = typer.Option(32, min=1, help="Tiny train timing steps."),
     seed: int = typer.Option(1, help="Base random seed."),
@@ -699,22 +731,36 @@ def run_full_synthetic_replication(
     from stable_baselines3 import PPO
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    if train_days + test_days > len(PAPER_TRADING_DAYS_201911):
+        raise typer.BadParameter("--train-days + --test-days cannot exceed 21 trading days")
     stock_specs = _parse_synthetic_stock_specs(stocks, base_prices)
     latencies = _parse_int_list(latency_values)
-    datasets = _build_synthetic_panel(
-        output_dir=output_dir / "data",
+    train_day_indices = list(range(train_days))
+    test_day_indices = list(range(train_days, train_days + test_days))
+    train_datasets = _build_synthetic_panel(
+        output_dir=output_dir / "data" / "train",
         stock_specs=stock_specs,
-        days=days,
+        day_indices=train_day_indices,
         events_per_day=events_per_day,
         seed=seed,
+        stable_windows_only=True,
     )
-    first_dataset = datasets[0][2]
+    test_datasets = _build_synthetic_panel(
+        output_dir=output_dir / "data" / "test",
+        stock_specs=stock_specs,
+        day_indices=test_day_indices,
+        events_per_day=events_per_day,
+        seed=seed,
+        stable_windows_only=True,
+    )
+    first_test_dataset = test_datasets[0][2]
 
     config_path = output_dir / "replication_config.md"
     _write_full_replication_config(
         config_path,
         stock_specs=stock_specs,
-        days=days,
+        train_days=train_days,
+        test_days=test_days,
         events_per_day=events_per_day,
         episode_events=episode_events,
         pretrain_events=pretrain_events,
@@ -727,16 +773,23 @@ def run_full_synthetic_replication(
 
     table_i_rows = []
     table_i_dir = output_dir / "table_i_pretraining"
-    pretrain_dataset = _generate_configured_synthetic_day(
+    pretrain_dataset = _stock_dataset_from_panel(
+        train_datasets,
         stock=stock_specs[0][0],
-        day=PAPER_TRADING_DAYS_201911[0],
-        events=pretrain_events,
-        base_price=stock_specs[0][1],
-        seed=seed,
+        max_events=pretrain_events,
+        day="train",
     )
+    pretrain_evaluation_dataset = _stock_dataset_from_panel(
+        test_datasets,
+        stock=stock_specs[0][0],
+        max_events=pretrain_events,
+        day="test",
+    )
+    attn_lob_checkpoint: Path | None = None
     for model_index, model_name in enumerate(PRETRAIN_MODEL_NAMES):
-        row, _ = _run_pretrain_on_dataset(
+        row, model_path = _run_pretrain_on_dataset(
             dataset=pretrain_dataset,
+            evaluation_dataset=pretrain_evaluation_dataset,
             model_name=model_name,
             output_dir=table_i_dir,
             epochs=pretrain_epochs,
@@ -744,19 +797,27 @@ def run_full_synthetic_replication(
             device=device,
             seed=seed + model_index,
         )
+        if model_name == "Attn-LOB":
+            attn_lob_checkpoint = model_path
         table_i_rows.append(row)
+    if attn_lob_checkpoint is None:
+        raise RuntimeError("Attn-LOB pretraining did not produce a checkpoint")
     table_i_path = table_i_dir / "table_i_pretrain_metrics.csv"
     pl.DataFrame(table_i_rows).write_csv(table_i_path)
 
-    overall_metrics, overall_trades, first_ppo_trade_log = _run_overall_synthetic_table(
-        datasets=datasets,
-        output_dir=output_dir / "table_ii_overall",
-        episode_events=episode_events,
-        tabular_episodes=tabular_episodes,
-        agent_timesteps=agent_timesteps,
-        seed=seed,
-        device=device,
-        ppo_class=PPO,
+    overall_metrics, overall_trades, first_ppo_trade_log, first_ppo_model = (
+        _run_overall_synthetic_table(
+            train_datasets=train_datasets,
+            test_datasets=test_datasets,
+            output_dir=output_dir / "table_ii_overall",
+            episode_events=episode_events,
+            tabular_episodes=tabular_episodes,
+            agent_timesteps=agent_timesteps,
+            encoder_checkpoint=attn_lob_checkpoint,
+            seed=seed,
+            device=device,
+            ppo_class=PPO,
+        )
     )
     overall_metrics_path = output_dir / "table_ii_overall" / "overall_metrics.csv"
     overall_trades_path = output_dir / "table_ii_overall" / "overall_trades.parquet"
@@ -766,12 +827,18 @@ def run_full_synthetic_replication(
     summarize_paper_table(pl.DataFrame(overall_metrics)).write_csv(overall_summary_path)
 
     latency_metrics, latency_trades = _run_latency_synthetic_table(
-        dataset=first_dataset,
+        train_dataset=_first_stock_train_dataset(
+            train_datasets,
+            stock=stock_specs[0][0],
+            max_events=0,
+        ),
+        test_dataset=first_test_dataset,
         output_dir=output_dir / "figure_2_latency",
         latencies=latencies,
         episode_events=episode_events,
         tabular_episodes=tabular_episodes,
         agent_timesteps=agent_timesteps,
+        encoder_checkpoint=attn_lob_checkpoint,
         seed=seed,
         device=device,
         ppo_class=PPO,
@@ -795,10 +862,16 @@ def run_full_synthetic_replication(
     )
 
     ablation_metrics, ablation_trades = _run_ablation_synthetic_table(
-        dataset=first_dataset,
+        train_dataset=_first_stock_train_dataset(
+            train_datasets,
+            stock=stock_specs[0][0],
+            max_events=0,
+        ),
+        test_dataset=first_test_dataset,
         output_dir=output_dir / "table_iv_ablation",
         episode_events=episode_events,
         agent_timesteps=agent_timesteps,
+        encoder_checkpoint=attn_lob_checkpoint,
         seed=seed,
         device=device,
         ppo_class=PPO,
@@ -814,8 +887,10 @@ def run_full_synthetic_replication(
         group_columns=("method", "variant", "stock"),
     ).write_csv(ablation_summary_path)
 
+    if not first_ppo_trade_log:
+        raise RuntimeError("no held-out C-PPO episode was available for Figure 4")
     figure_3_path = output_dir / "figure_3_attention" / "figure_3_attention.png"
-    _plot_attention_from_dataset(first_dataset, figure_3_path)
+    _plot_attention_from_ppo_encoder(first_ppo_model, first_test_dataset, figure_3_path)
     figure_4_path = output_dir / "figure_4_decision_trace" / "figure_4_decision_trace.png"
     plot_decision_trace(pl.DataFrame(first_ppo_trade_log), figure_4_path)
 
@@ -972,13 +1047,15 @@ def _build_synthetic_panel(
     *,
     output_dir: Path,
     stock_specs: list[tuple[str, float]],
-    days: int,
+    day_indices: list[int],
     events_per_day: int,
     seed: int,
-):
-    panel = []
+    stable_windows_only: bool = False,
+) -> list[tuple[str, str, LobDataset]]:
+    panel: list[tuple[str, str, LobDataset]] = []
     for stock_index, (stock, base_price) in enumerate(stock_specs):
-        for day_index, day in enumerate(PAPER_TRADING_DAYS_201911[:days]):
+        for day_index in day_indices:
+            day = PAPER_TRADING_DAYS_201911[day_index]
             dataset = _generate_configured_synthetic_day(
                 stock=stock,
                 day=day,
@@ -986,14 +1063,122 @@ def _build_synthetic_panel(
                 base_price=base_price,
                 seed=seed + 1_000 * stock_index + day_index,
             )
+            if stable_windows_only:
+                dataset = _filter_stable_windows(dataset)
             write_lob_dataset(dataset, output_dir)
             panel.append((stock, day, dataset))
     return panel
 
 
+def _filter_stable_windows(dataset: LobDataset) -> LobDataset:
+    starts_and_ends = [
+        (time.fromisoformat(start), time.fromisoformat(end))
+        for start, end in PAPER_PRETRAIN_WINDOWS
+    ]
+    mask = [
+        any(start <= timestamp.time() <= end for start, end in starts_and_ends)
+        for timestamp in dataset.orderbook["timestamp"].to_list()
+    ]
+    return LobDataset(
+        stock=dataset.stock,
+        day=dataset.day,
+        orderbook=dataset.orderbook.filter(mask),
+        messages=dataset.messages.filter(mask),
+        trades=dataset.trades.filter(mask),
+    )
+
+
+def _first_stock_train_dataset(
+    panel: list[tuple[str, str, LobDataset]],
+    *,
+    stock: str,
+    max_events: int,
+) -> LobDataset:
+    return _stock_dataset_from_panel(panel, stock=stock, max_events=max_events, day="train")
+
+
+def _stock_dataset_from_panel(
+    panel: list[tuple[str, str, LobDataset]],
+    *,
+    stock: str,
+    max_events: int,
+    day: str,
+) -> LobDataset:
+    datasets = [dataset for panel_stock, _, dataset in panel if panel_stock == stock]
+    if not datasets:
+        raise ValueError(f"no datasets found for stock {stock}")
+    merged = _merge_lob_datasets(datasets, day=day)
+    if max_events > 0 and merged.orderbook.height > max_events:
+        merged = LobDataset(
+            stock=merged.stock,
+            day=merged.day,
+            orderbook=merged.orderbook.head(max_events),
+            messages=merged.messages.head(max_events),
+            trades=merged.trades.head(max_events),
+        )
+    return merged
+
+
+def _merge_lob_datasets(datasets: list[LobDataset], *, day: str) -> LobDataset:
+    if not datasets:
+        raise ValueError("expected at least one dataset to merge")
+    stock = datasets[0].stock
+    if any(dataset.stock != stock for dataset in datasets):
+        raise ValueError("cannot merge datasets from different stocks")
+    return LobDataset(
+        stock=stock,
+        day=day,
+        orderbook=pl.concat([dataset.orderbook for dataset in datasets], how="vertical"),
+        messages=pl.concat([dataset.messages for dataset in datasets], how="vertical"),
+        trades=pl.concat([dataset.trades for dataset in datasets], how="vertical"),
+    )
+
+
+def _panel_by_stock(
+    panel: list[tuple[str, str, LobDataset]],
+) -> dict[str, list[tuple[str, LobDataset]]]:
+    grouped: dict[str, list[tuple[str, LobDataset]]] = {}
+    for stock, day, dataset in panel:
+        grouped.setdefault(stock, []).append((day, dataset))
+    return grouped
+
+
+def _episode_starts(dataset: LobDataset, *, episode_events: int, latency_events: int) -> list[int]:
+    if episode_events <= PAPER.window_length + latency_events:
+        return []
+
+    starts_and_ends = [
+        (time.fromisoformat(start), time.fromisoformat(end))
+        for start, end in PAPER_PRETRAIN_WINDOWS
+    ]
+    timestamps = dataset.orderbook["timestamp"].to_list()
+    starts: list[int] = []
+    for window_start, window_end in starts_and_ends:
+        indices = [
+            index
+            for index, timestamp in enumerate(timestamps)
+            if window_start <= timestamp.time() <= window_end
+        ]
+        if not indices:
+            continue
+        window_first = indices[0]
+        window_last_exclusive = indices[-1] + 1
+        start = window_first
+        while start + episode_events <= window_last_exclusive:
+            starts.append(start)
+            start += episode_events
+
+    if starts:
+        return starts
+    if dataset.orderbook.height > episode_events:
+        return [0]
+    return []
+
+
 def _run_pretrain_on_dataset(
     *,
-    dataset,
+    dataset: LobDataset,
+    evaluation_dataset: LobDataset | None = None,
     model_name: str,
     output_dir: Path,
     epochs: int,
@@ -1004,10 +1189,16 @@ def _run_pretrain_on_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
     input_shape = pretrain_input_shape(model_name)
     arrays = build_pretrain_arrays(dataset, window_length=input_shape[0])
+    evaluation_arrays = (
+        build_pretrain_arrays(evaluation_dataset, window_length=input_shape[0])
+        if evaluation_dataset is not None
+        else None
+    )
     model = make_pretrain_model(model_name)
     metrics = train_lob_classifier(
         model,
         arrays,
+        evaluation_arrays=evaluation_arrays,
         epochs=epochs,
         batch_size=batch_size,
         seed=seed,
@@ -1021,6 +1212,7 @@ def _run_pretrain_on_dataset(
         "model": model_name,
         "stock": dataset.stock,
         "day": dataset.day,
+        "evaluation_day": evaluation_dataset.day if evaluation_dataset else dataset.day,
         **metrics.__dict__,
         "input_window_length": input_shape[0],
         "implementation_param": implementation_param,
@@ -1040,11 +1232,13 @@ def _run_pretrain_on_dataset(
 
 def _run_overall_synthetic_table(
     *,
-    datasets,
+    train_datasets: list[tuple[str, str, LobDataset]],
+    test_datasets: list[tuple[str, str, LobDataset]],
     output_dir: Path,
     episode_events: int,
     tabular_episodes: int,
     agent_timesteps: int,
+    encoder_checkpoint: Path,
     seed: int,
     device: str,
     ppo_class,
@@ -1053,85 +1247,153 @@ def _run_overall_synthetic_table(
     metrics_rows: list[dict[str, float | int | str | bool]] = []
     trade_rows: list[dict[str, float | int | str]] = []
     first_ppo_trade_log: list[dict[str, float | int]] = []
-    for dataset_index, (stock, day, dataset) in enumerate(datasets):
-        evaluation_events = min(episode_events, dataset.orderbook.height - 1)
-        baseline_metrics, baseline_trades = _evaluate_all_baselines(
-            dataset,
-            episode_events=evaluation_events,
-            tabular_episodes=tabular_episodes,
-            seed=seed + dataset_index,
-        )
-        for row in baseline_metrics:
-            row["stock"] = stock
-            row["day"] = day
-            metrics_rows.append(row)
-        _extend_tagged_trades(
-            trade_rows,
-            baseline_trades,
-            stock=stock,
-            day=day,
-        )
+    first_ppo_model: object | None = None
+    train_by_stock = _panel_by_stock(train_datasets)
+    test_by_stock = _panel_by_stock(test_datasets)
 
-        ppo_metrics, ppo_trades = _train_eval_ppo(
-            dataset,
-            output_dir=output_dir / stock / day / "c_ppo",
-            episode_events=evaluation_events,
+    for stock_index, (stock, stock_train_entries) in enumerate(train_by_stock.items()):
+        stock_test_entries = test_by_stock.get(stock)
+        if not stock_test_entries:
+            raise ValueError(f"no held-out test datasets found for stock {stock}")
+
+        train_dataset = _merge_lob_datasets(
+            [dataset for _, dataset in stock_train_entries],
+            day="train",
+        )
+        baseline_strategies = _baseline_strategies_for_train_data(
+            train_dataset,
+            episode_events=episode_events,
+            tabular_episodes=tabular_episodes,
+            seed=seed + 10_000 * stock_index,
+        )
+        ppo_model = _train_ppo_model(
+            train_dataset,
+            output_dir=output_dir / stock / "c_ppo",
+            episode_events=episode_events,
             latency_events=1,
             total_timesteps=agent_timesteps,
-            seed=seed + 30_000 + dataset_index,
+            seed=seed + 30_000 + stock_index,
             device=device,
             ppo_class=ppo_class,
+            encoder_checkpoint=encoder_checkpoint,
+            normalize_actions=True,
+            policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
         )
-        ppo_metrics.update({"method": "C-PPO", "stock": stock, "day": day})
-        metrics_rows.append(ppo_metrics)
-        _extend_tagged_trades(trade_rows, ppo_trades, stock=stock, day=day, method="C-PPO")
-        if not first_ppo_trade_log:
-            first_ppo_trade_log = ppo_trades
+        if first_ppo_model is None:
+            first_ppo_model = ppo_model
 
-        ddqn_metrics, ddqn_trades = _train_eval_ddqn(
-            dataset,
-            output_dir=output_dir / stock / day / "d_dqn",
-            episode_events=evaluation_events,
+        ddqn_model = _train_ddqn_model(
+            train_dataset,
+            output_dir=output_dir / stock / "d_dqn",
+            episode_events=episode_events,
             latency_events=1,
             total_timesteps=agent_timesteps,
-            seed=seed + 40_000 + dataset_index,
+            seed=seed + 40_000 + stock_index,
             device=device,
+            encoder_checkpoint=encoder_checkpoint,
         )
-        ddqn_metrics.update({"method": "D-DQN", "stock": stock, "day": day})
-        metrics_rows.append(ddqn_metrics)
-        _extend_tagged_trades(trade_rows, ddqn_trades, stock=stock, day=day, method="D-DQN")
-    return metrics_rows, trade_rows, first_ppo_trade_log
+
+        for test_index, (day, test_dataset) in enumerate(stock_test_entries):
+            episode_seed = seed + 1_000 * stock_index + test_index
+            for row, log_rows in _evaluate_strategies_on_test_episodes(
+                test_dataset,
+                strategies=baseline_strategies,
+                episode_events=episode_events,
+                latency_events=1,
+                seed=episode_seed,
+            ):
+                row.update({"stock": stock, "day": day})
+                metrics_rows.append(row)
+                _extend_tagged_trades(
+                    trade_rows,
+                    log_rows,
+                    stock=stock,
+                    day=day,
+                    method=str(row["method"]),
+                )
+
+            for row, log_rows in _evaluate_ppo_on_test_episodes(
+                ppo_model,
+                test_dataset,
+                episode_events=episode_events,
+                latency_events=1,
+                normalize_actions=True,
+                seed=episode_seed + 30_000,
+            ):
+                row.update(
+                    {
+                        "method": "C-PPO",
+                        "stock": stock,
+                        "day": day,
+                        "total_timesteps": agent_timesteps,
+                        "latency_events": 1,
+                        "lob_mode": "attn",
+                        "use_dynamic_state": True,
+                        "normalize_actions": True,
+                        "policy_log_std_init": FULL_REPLICATION_PPO_LOG_STD_INIT,
+                        "encoder_checkpoint": str(encoder_checkpoint),
+                    }
+                )
+                metrics_rows.append(row)
+                _extend_tagged_trades(
+                    trade_rows,
+                    log_rows,
+                    stock=stock,
+                    day=day,
+                    method="C-PPO",
+                )
+                if not first_ppo_trade_log:
+                    first_ppo_trade_log = log_rows
+
+            for row, log_rows in _evaluate_ddqn_on_test_episodes(
+                ddqn_model,
+                test_dataset,
+                episode_events=episode_events,
+                latency_events=1,
+                seed=episode_seed + 40_000,
+                device=device,
+            ):
+                row.update(
+                    {
+                        "method": "D-DQN",
+                        "stock": stock,
+                        "day": day,
+                        "total_timesteps": agent_timesteps,
+                        "latency_events": 1,
+                        "lob_mode": "attn",
+                        "use_dynamic_state": True,
+                        "encoder_checkpoint": str(encoder_checkpoint),
+                    }
+                )
+                metrics_rows.append(row)
+                _extend_tagged_trades(
+                    trade_rows,
+                    log_rows,
+                    stock=stock,
+                    day=day,
+                    method="D-DQN",
+                )
+
+    if first_ppo_model is None:
+        raise RuntimeError("overall replication did not train a PPO model")
+    return metrics_rows, trade_rows, first_ppo_trade_log, first_ppo_model
 
 
-def _evaluate_all_baselines(
-    dataset,
+def _baseline_strategies_for_train_data(
+    train_dataset: LobDataset,
     *,
     episode_events: int,
     tabular_episodes: int,
     seed: int,
-    latency_events: int = 1,
-):
-    sigma = max(estimate_event_volatility(dataset), 1e-6)
-    metrics_rows: list[dict[str, float | int | str]] = []
-    trade_rows: list[dict[str, float | int | str]] = []
-    strategies = [
+) -> list[object]:
+    sigma = max(estimate_event_volatility(train_dataset), 1e-6)
+    strategies: list[object] = [
         FixedLevelStrategy(level=1),
         FixedLevelStrategy(level=2),
         FixedLevelStrategy(level=3),
         RandomLevelStrategy(max_level=5, seed=seed),
         AvellanedaStoikovStrategy(sigma=sigma),
     ]
-    for strategy in strategies:
-        metrics, log_rows = evaluate_quote_strategy(
-            dataset,
-            strategy,
-            episode_events=episode_events,
-            latency_events=latency_events,
-            seed=seed,
-        )
-        metrics_rows.append(metrics)
-        trade_rows.extend(log_rows)
-
     tabular_config = QLearningConfig(
         episodes=tabular_episodes,
         episode_events=episode_events,
@@ -1141,22 +1403,61 @@ def _evaluate_all_baselines(
         ("Inv-RL", InventoryTimeEncoder(), OffsetActionSpace()),
         ("LOB-RL", LobRlEncoder(), BestBidAskActionSpace()),
     ):
-        metrics, log_rows, strategy = train_and_evaluate_tabular_baseline(
-            dataset,
+        strategy = train_tabular_q_strategy(
+            train_dataset,
             name=name,
             encoder=encoder,
             action_space=action_space,
             config=tabular_config,
-            latency_events=latency_events,
         )
-        metrics["q_states"] = len(strategy.q_table)
-        metrics_rows.append(metrics)
-        trade_rows.extend(log_rows)
-    return metrics_rows, trade_rows
+        strategies.append(strategy)
+    return strategies
 
 
-def _train_eval_ppo(
-    dataset,
+def _evaluate_strategies_on_test_episodes(
+    dataset: LobDataset,
+    *,
+    strategies: list[object],
+    episode_events: int,
+    latency_events: int,
+    seed: int,
+) -> list[tuple[dict[str, float | int | str], list[dict[str, float | int | str]]]]:
+    rows: list[tuple[dict[str, float | int | str], list[dict[str, float | int | str]]]] = []
+    evaluation_events = min(episode_events, dataset.orderbook.height - 1)
+    starts = _episode_starts(
+        dataset,
+        episode_events=evaluation_events,
+        latency_events=latency_events,
+    )
+    for strategy in strategies:
+        for episode_id, episode_start in enumerate(starts):
+            metrics, log_rows = evaluate_quote_strategy(
+                dataset,
+                strategy,  # type: ignore[arg-type]
+                episode_start=episode_start,
+                episode_events=evaluation_events,
+                latency_events=latency_events,
+                seed=seed + episode_id,
+            )
+            metrics.update(
+                {
+                    "episode_id": episode_id,
+                    "episode_start": episode_start,
+                    "episode_events": evaluation_events,
+                    "latency_events": latency_events,
+                }
+            )
+            if hasattr(strategy, "q_table"):
+                metrics["q_states"] = len(strategy.q_table)  # type: ignore[attr-defined]
+            for row in log_rows:
+                row["episode_id"] = episode_id
+                row["episode_start"] = episode_start
+            rows.append((metrics, log_rows))
+    return rows
+
+
+def _train_ppo_model(
+    train_dataset: LobDataset,
     *,
     output_dir: Path,
     episode_events: int,
@@ -1167,13 +1468,18 @@ def _train_eval_ppo(
     ppo_class,
     lob_mode: str = "attn",
     use_dynamic_state: bool = True,
-):
+    encoder_checkpoint: Path | None = None,
+    freeze_encoder: bool = False,
+    normalize_actions: bool = True,
+    policy_log_std_init: float = FULL_REPLICATION_PPO_LOG_STD_INIT,
+) -> object:
     output_dir.mkdir(parents=True, exist_ok=True)
     env = PaperMarketMakingEnv(
-        dataset,
+        train_dataset,
         episode_events=episode_events,
         latency_events=latency_events,
-        normalize_actions=False,
+        normalize_actions=normalize_actions,
+        random_episode_starts=True,
         seed=seed,
     )
     n_steps = min(128, max(2, episode_events // 2))
@@ -1186,7 +1492,10 @@ def _train_eval_ppo(
             "features_extractor_kwargs": {
                 "lob_mode": lob_mode,
                 "use_dynamic_state": use_dynamic_state,
+                "encoder_checkpoint": str(encoder_checkpoint) if encoder_checkpoint else None,
+                "freeze_encoder": freeze_encoder,
             },
+            "log_std_init": policy_log_std_init,
         },
         n_steps=n_steps,
         batch_size=batch_size,
@@ -1199,23 +1508,72 @@ def _train_eval_ppo(
     )
     model.learn(total_timesteps=total_timesteps)
     model.save(output_dir / "c_ppo_model")
-    metrics, trade_log = _evaluate_ppo_model(model, env, seed=seed + 1)
-    metrics.update(
-        {
-            "total_timesteps": total_timesteps,
-            "latency_events": latency_events,
-            "lob_mode": lob_mode,
-            "use_dynamic_state": use_dynamic_state,
-            "normalize_actions": False,
-        }
+    pl.DataFrame(
+        [
+            {
+                "total_timesteps": total_timesteps,
+                "train_events": train_dataset.orderbook.height,
+                "episode_events": episode_events,
+                "latency_events": latency_events,
+                "lob_mode": lob_mode,
+                "use_dynamic_state": use_dynamic_state,
+                "normalize_actions": normalize_actions,
+                "policy_log_std_init": policy_log_std_init,
+                "encoder_checkpoint": str(encoder_checkpoint) if encoder_checkpoint else None,
+                "freeze_encoder": freeze_encoder,
+                "random_episode_starts": True,
+            }
+        ]
+    ).write_csv(output_dir / "c_ppo_train_config.csv")
+    return model
+
+
+def _evaluate_ppo_on_test_episodes(
+    model: object,
+    dataset: LobDataset,
+    *,
+    episode_events: int,
+    latency_events: int,
+    normalize_actions: bool,
+    seed: int,
+) -> list[tuple[dict[str, float | int | str], list[dict[str, float | int]]]]:
+    rows: list[tuple[dict[str, float | int | str], list[dict[str, float | int]]]] = []
+    evaluation_events = min(episode_events, dataset.orderbook.height - 1)
+    env = PaperMarketMakingEnv(
+        dataset,
+        episode_events=evaluation_events,
+        latency_events=latency_events,
+        normalize_actions=normalize_actions,
+        seed=seed,
     )
-    pl.DataFrame([metrics]).write_csv(output_dir / "c_ppo_metrics.csv")
-    pl.DataFrame(trade_log).write_parquet(output_dir / "c_ppo_trades.parquet")
-    return metrics, trade_log
+    starts = _episode_starts(
+        dataset,
+        episode_events=evaluation_events,
+        latency_events=latency_events,
+    )
+    for episode_id, episode_start in enumerate(starts):
+        metrics, log_rows = _evaluate_ppo_model(
+            model,
+            env,
+            seed=seed + episode_id,
+            episode_start=episode_start,
+        )
+        metrics.update(
+            {
+                "episode_id": episode_id,
+                "episode_start": episode_start,
+                "episode_events": evaluation_events,
+            }
+        )
+        for row in log_rows:
+            row["episode_id"] = episode_id
+            row["episode_start"] = episode_start
+        rows.append((metrics, log_rows))
+    return rows
 
 
-def _train_eval_ddqn(
-    dataset,
+def _train_ddqn_model(
+    train_dataset: LobDataset,
     *,
     output_dir: Path,
     episode_events: int,
@@ -1225,12 +1583,15 @@ def _train_eval_ddqn(
     device: str,
     lob_mode: str = "attn",
     use_dynamic_state: bool = True,
-):
+    encoder_checkpoint: Path | None = None,
+    freeze_encoder: bool = False,
+) -> object:
     output_dir.mkdir(parents=True, exist_ok=True)
     env = PaperDiscreteMarketMakingEnv(
-        dataset,
+        train_dataset,
         episode_events=episode_events,
         latency_events=latency_events,
+        random_episode_starts=True,
         seed=seed,
     )
     config = DuelingDQNConfig(
@@ -1246,34 +1607,86 @@ def _train_eval_ddqn(
         config=config,
         lob_mode=lob_mode,
         use_dynamic_state=use_dynamic_state,
+        encoder_checkpoint=str(encoder_checkpoint) if encoder_checkpoint else None,
+        freeze_encoder=freeze_encoder,
         device=device,
     )
     save_dueling_dqn(model, output_dir / "d_dqn_model.pt", config=config, train_result=train_result)
-    metrics, trade_log = evaluate_dueling_dqn(model, env, seed=seed + 1, device=device)
-    metrics.update(
-        {
-            "total_timesteps": total_timesteps,
-            "updates": train_result.updates,
-            "final_epsilon": train_result.final_epsilon,
-            "latency_events": latency_events,
-            "lob_mode": lob_mode,
-            "use_dynamic_state": use_dynamic_state,
-        }
-    )
-    pl.DataFrame([metrics]).write_csv(output_dir / "d_dqn_metrics.csv")
-    pl.DataFrame(trade_log).write_parquet(output_dir / "d_dqn_trades.parquet")
     pl.DataFrame({"loss": train_result.losses}).write_csv(output_dir / "d_dqn_losses.csv")
-    return metrics, trade_log
+    pl.DataFrame(
+        [
+            {
+                "total_timesteps": total_timesteps,
+                "updates": train_result.updates,
+                "final_epsilon": train_result.final_epsilon,
+                "train_events": train_dataset.orderbook.height,
+                "episode_events": episode_events,
+                "latency_events": latency_events,
+                "lob_mode": lob_mode,
+                "use_dynamic_state": use_dynamic_state,
+                "encoder_checkpoint": str(encoder_checkpoint) if encoder_checkpoint else None,
+                "freeze_encoder": freeze_encoder,
+                "random_episode_starts": True,
+            }
+        ]
+    ).write_csv(output_dir / "d_dqn_train_config.csv")
+    return model
+
+
+def _evaluate_ddqn_on_test_episodes(
+    model,
+    dataset: LobDataset,
+    *,
+    episode_events: int,
+    latency_events: int,
+    seed: int,
+    device: str,
+) -> list[tuple[dict[str, float | int | str], list[dict[str, float | int]]]]:
+    rows: list[tuple[dict[str, float | int | str], list[dict[str, float | int]]]] = []
+    evaluation_events = min(episode_events, dataset.orderbook.height - 1)
+    env = PaperDiscreteMarketMakingEnv(
+        dataset,
+        episode_events=evaluation_events,
+        latency_events=latency_events,
+        seed=seed,
+    )
+    starts = _episode_starts(
+        dataset,
+        episode_events=evaluation_events,
+        latency_events=latency_events,
+    )
+    for episode_id, episode_start in enumerate(starts):
+        metrics, log_rows = evaluate_dueling_dqn(
+            model,
+            env,
+            seed=seed + episode_id,
+            device=device,
+            episode_start=episode_start,
+        )
+        metrics.update(
+            {
+                "episode_id": episode_id,
+                "episode_start": episode_start,
+                "episode_events": evaluation_events,
+            }
+        )
+        for row in log_rows:
+            row["episode_id"] = episode_id
+            row["episode_start"] = episode_start
+        rows.append((metrics, log_rows))
+    return rows
 
 
 def _run_latency_synthetic_table(
     *,
-    dataset,
+    train_dataset: LobDataset,
+    test_dataset: LobDataset,
     output_dir: Path,
     latencies: list[int],
     episode_events: int,
     tabular_episodes: int,
     agent_timesteps: int,
+    encoder_checkpoint: Path,
     seed: int,
     device: str,
     ppo_class,
@@ -1281,85 +1694,131 @@ def _run_latency_synthetic_table(
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_rows: list[dict[str, float | int | str | bool]] = []
     trade_rows: list[dict[str, float | int | str]] = []
-    evaluation_events = min(episode_events, dataset.orderbook.height - 1)
+    baseline_strategies = _baseline_strategies_for_train_data(
+        train_dataset,
+        episode_events=episode_events,
+        tabular_episodes=tabular_episodes,
+        seed=seed + 50_000,
+    )
+    ppo_model = _train_ppo_model(
+        train_dataset,
+        output_dir=output_dir / "latency_train" / "c_ppo",
+        episode_events=episode_events,
+        latency_events=1,
+        total_timesteps=agent_timesteps,
+        seed=seed + 51_000,
+        device=device,
+        ppo_class=ppo_class,
+        encoder_checkpoint=encoder_checkpoint,
+        normalize_actions=True,
+        policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
+    )
+    ddqn_model = _train_ddqn_model(
+        train_dataset,
+        output_dir=output_dir / "latency_train" / "d_dqn",
+        episode_events=episode_events,
+        latency_events=1,
+        total_timesteps=agent_timesteps,
+        seed=seed + 52_000,
+        device=device,
+        encoder_checkpoint=encoder_checkpoint,
+    )
+
     for latency_index, latency in enumerate(latencies):
-        baseline_metrics, baseline_trades = _evaluate_all_baselines(
-            dataset,
-            episode_events=evaluation_events,
-            tabular_episodes=tabular_episodes,
+        for row, log_rows in _evaluate_strategies_on_test_episodes(
+            test_dataset,
+            strategies=baseline_strategies,
+            episode_events=episode_events,
             latency_events=latency,
             seed=seed + latency_index,
-        )
-        for row in baseline_metrics:
+        ):
             row.update(
                 {
-                    "stock": dataset.stock,
-                    "day": dataset.day,
+                    "stock": test_dataset.stock,
+                    "day": test_dataset.day,
                     "latency_events": latency,
                 }
             )
             metrics_rows.append(row)
-        _extend_tagged_trades(
-            trade_rows,
-            baseline_trades,
-            stock=dataset.stock,
-            day=dataset.day,
-            latency_events=latency,
-        )
+            _extend_tagged_trades(
+                trade_rows,
+                log_rows,
+                stock=test_dataset.stock,
+                day=test_dataset.day,
+                method=str(row["method"]),
+                latency_events=latency,
+            )
 
-        ppo_metrics, ppo_trades = _train_eval_ppo(
-            dataset,
-            output_dir=output_dir / f"latency_{latency}" / "c_ppo",
-            episode_events=evaluation_events,
+        for row, log_rows in _evaluate_ppo_on_test_episodes(
+            ppo_model,
+            test_dataset,
+            episode_events=episode_events,
             latency_events=latency,
-            total_timesteps=agent_timesteps,
-            seed=seed + 50_000 + latency_index,
-            device=device,
-            ppo_class=ppo_class,
-        )
-        ppo_metrics.update(
-            {"method": "C-PPO", "stock": dataset.stock, "day": dataset.day}
-        )
-        metrics_rows.append(ppo_metrics)
-        _extend_tagged_trades(
-            trade_rows,
-            ppo_trades,
-            stock=dataset.stock,
-            day=dataset.day,
-            method="C-PPO",
-            latency_events=latency,
-        )
-
-        ddqn_metrics, ddqn_trades = _train_eval_ddqn(
-            dataset,
-            output_dir=output_dir / f"latency_{latency}" / "d_dqn",
-            episode_events=evaluation_events,
-            latency_events=latency,
-            total_timesteps=agent_timesteps,
+            normalize_actions=True,
             seed=seed + 60_000 + latency_index,
-            device=device,
-        )
-        ddqn_metrics.update(
-            {"method": "D-DQN", "stock": dataset.stock, "day": dataset.day}
-        )
-        metrics_rows.append(ddqn_metrics)
-        _extend_tagged_trades(
-            trade_rows,
-            ddqn_trades,
-            stock=dataset.stock,
-            day=dataset.day,
-            method="D-DQN",
+        ):
+            row.update(
+                {
+                    "method": "C-PPO",
+                    "stock": test_dataset.stock,
+                    "day": test_dataset.day,
+                    "latency_events": latency,
+                    "trained_latency_events": 1,
+                    "total_timesteps": agent_timesteps,
+                    "normalize_actions": True,
+                    "policy_log_std_init": FULL_REPLICATION_PPO_LOG_STD_INIT,
+                    "encoder_checkpoint": str(encoder_checkpoint),
+                }
+            )
+            metrics_rows.append(row)
+            _extend_tagged_trades(
+                trade_rows,
+                log_rows,
+                stock=test_dataset.stock,
+                day=test_dataset.day,
+                method="C-PPO",
+                latency_events=latency,
+            )
+
+        for row, log_rows in _evaluate_ddqn_on_test_episodes(
+            ddqn_model,
+            test_dataset,
+            episode_events=episode_events,
             latency_events=latency,
-        )
+            seed=seed + 70_000 + latency_index,
+            device=device,
+        ):
+            row.update(
+                {
+                    "method": "D-DQN",
+                    "stock": test_dataset.stock,
+                    "day": test_dataset.day,
+                    "latency_events": latency,
+                    "trained_latency_events": 1,
+                    "total_timesteps": agent_timesteps,
+                    "encoder_checkpoint": str(encoder_checkpoint),
+                }
+            )
+            metrics_rows.append(row)
+            _extend_tagged_trades(
+                trade_rows,
+                log_rows,
+                stock=test_dataset.stock,
+                day=test_dataset.day,
+                method="D-DQN",
+                latency_events=latency,
+            )
     return metrics_rows, trade_rows
 
 
 def _run_ablation_synthetic_table(
     *,
-    dataset,
+    train_dataset: LobDataset,
+    test_dataset: LobDataset,
     output_dir: Path,
     episode_events: int,
     agent_timesteps: int,
+    encoder_checkpoint: Path,
     seed: int,
     device: str,
     ppo_class,
@@ -1373,12 +1832,12 @@ def _run_ablation_synthetic_table(
     )
     metrics_rows: list[dict[str, float | int | str | bool]] = []
     trade_rows: list[dict[str, float | int | str]] = []
-    evaluation_events = min(episode_events, dataset.orderbook.height - 1)
     for variant_index, (variant, lob_mode, use_dynamic_state) in enumerate(variants):
-        ppo_metrics, ppo_trades = _train_eval_ppo(
-            dataset,
+        variant_checkpoint = encoder_checkpoint if lob_mode == "attn" else None
+        ppo_model = _train_ppo_model(
+            train_dataset,
             output_dir=output_dir / "c_ppo" / variant,
-            episode_events=evaluation_events,
+            episode_events=episode_events,
             latency_events=1,
             total_timesteps=agent_timesteps,
             seed=seed + 70_000 + variant_index,
@@ -1386,53 +1845,85 @@ def _run_ablation_synthetic_table(
             ppo_class=ppo_class,
             lob_mode=lob_mode,
             use_dynamic_state=use_dynamic_state,
+            encoder_checkpoint=variant_checkpoint,
+            normalize_actions=True,
+            policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
         )
-        ppo_metrics.update(
-            {
-                "method": "C-PPO",
-                "variant": variant,
-                "stock": dataset.stock,
-                "day": dataset.day,
-            }
-        )
-        metrics_rows.append(ppo_metrics)
-        _extend_tagged_trades(
-            trade_rows,
-            ppo_trades,
-            stock=dataset.stock,
-            day=dataset.day,
-            method="C-PPO",
-            variant=variant,
-        )
+        for row, log_rows in _evaluate_ppo_on_test_episodes(
+            ppo_model,
+            test_dataset,
+            episode_events=episode_events,
+            latency_events=1,
+            normalize_actions=True,
+            seed=seed + 75_000 + variant_index,
+        ):
+            row.update(
+                {
+                    "method": "C-PPO",
+                    "variant": variant,
+                    "stock": test_dataset.stock,
+                    "day": test_dataset.day,
+                    "total_timesteps": agent_timesteps,
+                    "latency_events": 1,
+                    "lob_mode": lob_mode,
+                    "use_dynamic_state": use_dynamic_state,
+                    "normalize_actions": True,
+                    "policy_log_std_init": FULL_REPLICATION_PPO_LOG_STD_INIT,
+                    "encoder_checkpoint": str(variant_checkpoint) if variant_checkpoint else None,
+                }
+            )
+            metrics_rows.append(row)
+            _extend_tagged_trades(
+                trade_rows,
+                log_rows,
+                stock=test_dataset.stock,
+                day=test_dataset.day,
+                method="C-PPO",
+                variant=variant,
+            )
 
-        ddqn_metrics, ddqn_trades = _train_eval_ddqn(
-            dataset,
+        ddqn_model = _train_ddqn_model(
+            train_dataset,
             output_dir=output_dir / "d_dqn" / variant,
-            episode_events=evaluation_events,
+            episode_events=episode_events,
             latency_events=1,
             total_timesteps=agent_timesteps,
             seed=seed + 80_000 + variant_index,
             device=device,
             lob_mode=lob_mode,
             use_dynamic_state=use_dynamic_state,
+            encoder_checkpoint=variant_checkpoint,
         )
-        ddqn_metrics.update(
-            {
-                "method": "D-DQN",
-                "variant": variant,
-                "stock": dataset.stock,
-                "day": dataset.day,
-            }
-        )
-        metrics_rows.append(ddqn_metrics)
-        _extend_tagged_trades(
-            trade_rows,
-            ddqn_trades,
-            stock=dataset.stock,
-            day=dataset.day,
-            method="D-DQN",
-            variant=variant,
-        )
+        for row, log_rows in _evaluate_ddqn_on_test_episodes(
+            ddqn_model,
+            test_dataset,
+            episode_events=episode_events,
+            latency_events=1,
+            seed=seed + 85_000 + variant_index,
+            device=device,
+        ):
+            row.update(
+                {
+                    "method": "D-DQN",
+                    "variant": variant,
+                    "stock": test_dataset.stock,
+                    "day": test_dataset.day,
+                    "total_timesteps": agent_timesteps,
+                    "latency_events": 1,
+                    "lob_mode": lob_mode,
+                    "use_dynamic_state": use_dynamic_state,
+                    "encoder_checkpoint": str(variant_checkpoint) if variant_checkpoint else None,
+                }
+            )
+            metrics_rows.append(row)
+            _extend_tagged_trades(
+                trade_rows,
+                log_rows,
+                stock=test_dataset.stock,
+                day=test_dataset.day,
+                method="D-DQN",
+                variant=variant,
+            )
     return metrics_rows, trade_rows
 
 
@@ -1459,26 +1950,30 @@ def _extend_tagged_trades(
         target.append(tagged)
 
 
-def _plot_attention_from_dataset(dataset, output_path: Path) -> None:
+def _plot_attention_from_ppo_encoder(model: object, dataset: LobDataset, output_path: Path) -> None:
     index = min(max(PAPER.window_length - 1, 80), dataset.orderbook.height - 1)
     start = index - PAPER.window_length + 1
     lob_values = dataset.orderbook.select(lob_columns()).slice(start, PAPER.window_length)
     window = normalize_lob_window(lob_values.to_numpy())
-    model = AttnLOBClassifier()
-    model.eval()
+    policy = getattr(model, "policy")
+    extractor = getattr(policy, "features_extractor")
+    encoder = getattr(extractor, "lob_encoder")
+    encoder.eval()
+    device = next(encoder.parameters()).device
     with torch.no_grad():
-        _, weights = model.encoder(
-            torch.from_numpy(window).float().unsqueeze(0),
+        _, weights = encoder(
+            torch.from_numpy(window).float().unsqueeze(0).to(device),
             return_attention_weights=True,
         )
-    plot_attention_heatmap(weights.squeeze(0).numpy(), output_path, lob_window=window)
+    plot_attention_heatmap(weights.squeeze(0).cpu().numpy(), output_path, lob_window=window)
 
 
 def _write_full_replication_config(
     path: Path,
     *,
     stock_specs: list[tuple[str, float]],
-    days: int,
+    train_days: int,
+    test_days: int,
     events_per_day: int,
     episode_events: int,
     pretrain_events: int,
@@ -1494,7 +1989,16 @@ def _write_full_replication_config(
         "",
         f"- stocks: {', '.join(stock for stock, _ in stock_specs)}",
         f"- base_prices: {', '.join(str(price) for _, price in stock_specs)}",
-        f"- days: {days}",
+        f"- train_days: {train_days}",
+        f"- test_days: {test_days}",
+        (
+            f"- train_date_range: {PAPER_TRADING_DAYS_201911[0]}.."
+            f"{PAPER_TRADING_DAYS_201911[train_days - 1]}"
+        ),
+        (
+            f"- test_date_range: {PAPER_TRADING_DAYS_201911[train_days]}.."
+            f"{PAPER_TRADING_DAYS_201911[train_days + test_days - 1]}"
+        ),
         f"- events_per_day: {events_per_day}",
         f"- episode_events: {episode_events}",
         f"- pretrain_events: {pretrain_events}",

@@ -44,11 +44,12 @@ def generate_synthetic_lob_day(config: SyntheticLobConfig) -> LobDataset:
 
     rng = np.random.default_rng(config.seed)
     timestamps = _generate_timestamps(config.day, config.n_events)
-    center_ticks = _generate_mid_ticks(config, rng)
+    pressure = _generate_microstructure_pressure(config, rng)
+    center_ticks = _generate_mid_ticks(config, rng, pressure)
     spread_ticks = rng.choice([1, 2, 3], size=config.n_events, p=[0.76, 0.20, 0.04])
 
-    orderbook = _build_orderbook(config, timestamps, center_ticks, spread_ticks, rng)
-    messages = _build_messages(timestamps, center_ticks, rng, config.market_event_probability)
+    orderbook = _build_orderbook(config, timestamps, center_ticks, spread_ticks, pressure, rng)
+    messages = _build_messages(timestamps, pressure, rng, config.market_event_probability)
     trades = _build_trade_summaries(config, timestamps, center_ticks, spread_ticks, messages, rng)
 
     return LobDataset(
@@ -87,7 +88,53 @@ def _linspace_datetimes(start: datetime, end: datetime, n: int) -> list[datetime
     return [start + timedelta(microseconds=int(offset)) for offset in offsets]
 
 
-def _generate_mid_ticks(config: SyntheticLobConfig, rng: np.random.Generator) -> np.ndarray:
+def _generate_microstructure_pressure(
+    config: SyntheticLobConfig,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    regimes = rng.choice(
+        ["stable", "trend", "volatile"],
+        size=config.n_events,
+        p=[
+            config.stable_regime_probability,
+            config.trend_regime_probability,
+            config.volatile_regime_probability,
+        ],
+    )
+    pressure = np.empty(config.n_events, dtype=np.float64)
+    pressure[0] = float(rng.normal(0.0, 0.20))
+    trend_sign = float(rng.choice([-1, 1]))
+    trend_clock = 0
+
+    for i in range(1, config.n_events):
+        if trend_clock <= 0 and regimes[i] == "trend":
+            trend_sign = float(rng.choice([-1, 1]))
+            trend_clock = int(rng.integers(80, 420))
+        trend_clock = max(0, trend_clock - 1)
+
+        if regimes[i] == "stable":
+            drift = 0.0
+            shock_scale = 0.13
+            persistence = 0.94
+        elif regimes[i] == "trend":
+            drift = 0.08 * trend_sign
+            shock_scale = 0.17
+            persistence = 0.97
+        else:
+            drift = 0.0
+            shock_scale = 0.36
+            persistence = 0.82
+
+        pressure[i] = persistence * pressure[i - 1] + drift + rng.normal(0.0, shock_scale)
+
+    return np.tanh(pressure)
+
+
+def _generate_mid_ticks(
+    config: SyntheticLobConfig,
+    rng: np.random.Generator,
+    pressure: np.ndarray,
+) -> np.ndarray:
     n = config.n_events
     base_tick = int(round(config.base_price / config.tick_size))
     ticks = np.empty(n, dtype=np.int64)
@@ -111,12 +158,40 @@ def _generate_mid_ticks(config: SyntheticLobConfig, rng: np.random.Generator) ->
             trend_clock = int(rng.integers(80, 420))
         trend_clock = max(0, trend_clock - 1)
 
+        signal = float(np.clip(pressure[i - 1], -1.0, 1.0))
         if regimes[i] == "stable":
-            step = rng.choice([-1, 0, 1], p=[0.08, 0.84, 0.08])
+            move_probability = 0.18
+            up_probability = move_probability * (0.5 + 0.45 * signal)
+            down_probability = move_probability - up_probability
+            step = rng.choice(
+                [-1, 0, 1],
+                p=[down_probability, 1.0 - move_probability, up_probability],
+            )
         elif regimes[i] == "trend":
-            step = rng.choice([trend_sign, 0, -trend_sign], p=[0.55, 0.35, 0.10])
+            trend_signal = float(np.clip(0.55 * signal + 0.45 * trend_sign, -1.0, 1.0))
+            move_probability = 0.65
+            up_probability = move_probability * (0.5 + 0.42 * trend_signal)
+            down_probability = move_probability - up_probability
+            step = rng.choice(
+                [-1, 0, 1],
+                p=[down_probability, 1.0 - move_probability, up_probability],
+            )
         else:
-            step = rng.choice([-2, -1, 0, 1, 2], p=[0.12, 0.24, 0.28, 0.24, 0.12])
+            move_probability = 0.72
+            large_move_probability = 0.18
+            signed_probability = 0.5 + 0.38 * signal
+            up_probability = move_probability * signed_probability
+            down_probability = move_probability - up_probability
+            step = rng.choice(
+                [-2, -1, 0, 1, 2],
+                p=[
+                    down_probability * large_move_probability,
+                    down_probability * (1.0 - large_move_probability),
+                    1.0 - move_probability,
+                    up_probability * (1.0 - large_move_probability),
+                    up_probability * large_move_probability,
+                ],
+            )
         ticks[i] = max(1, ticks[i - 1] + int(step))
 
     return ticks
@@ -127,6 +202,7 @@ def _build_orderbook(
     timestamps: list[datetime],
     center_ticks: np.ndarray,
     spread_ticks: np.ndarray,
+    pressure: np.ndarray,
     rng: np.random.Generator,
 ) -> pl.DataFrame:
     data: dict[str, object] = {"timestamp": timestamps}
@@ -137,10 +213,14 @@ def _build_orderbook(
     for level in range(1, config.levels + 1):
         distance = level - 1
         depth_mean = 900 + 190 * level
-        depth_noise = rng.lognormal(mean=0.0, sigma=0.35, size=len(timestamps))
-        ask_volume = _round_lot(depth_mean * depth_noise, rng)
+        level_decay = np.exp(-(level - 1) / 5.0)
+        imbalance_scale = 0.45 * level_decay * pressure
+        ask_noise = rng.lognormal(mean=0.0, sigma=0.30, size=len(timestamps))
+        bid_noise = rng.lognormal(mean=0.0, sigma=0.30, size=len(timestamps))
+        ask_volume = _round_lot(depth_mean * np.exp(-imbalance_scale) * ask_noise, rng)
         bid_volume = _round_lot(
-            depth_mean * rng.lognormal(mean=0.0, sigma=0.35, size=len(timestamps)), rng
+            depth_mean * np.exp(imbalance_scale) * bid_noise,
+            rng,
         )
 
         data[f"ask{level}_price"] = (ask1_ticks + distance) * config.tick_size
@@ -162,12 +242,11 @@ def _round_lot(values: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 def _build_messages(
     timestamps: list[datetime],
-    center_ticks: np.ndarray,
+    pressure: np.ndarray,
     rng: np.random.Generator,
     market_event_probability: float,
 ) -> pl.DataFrame:
-    price_move = np.diff(center_ticks, prepend=center_ticks[0])
-    buy_pressure = np.clip(0.5 + 0.18 * np.sign(price_move), 0.1, 0.9)
+    buy_pressure = np.clip(0.5 + 0.30 * pressure, 0.08, 0.92)
     has_market = rng.random(len(timestamps)) < market_event_probability
 
     market_n = rng.poisson(1.2, len(timestamps)) * has_market
@@ -175,13 +254,11 @@ def _build_messages(
     market_sell_n = market_n - market_buy_n
 
     limit_n = rng.poisson(3.5, len(timestamps))
-    limit_buy_n = rng.binomial(limit_n, np.clip(0.52 - 0.12 * np.sign(price_move), 0.15, 0.85))
+    limit_buy_n = rng.binomial(limit_n, np.clip(0.50 + 0.18 * pressure, 0.12, 0.88))
     limit_sell_n = limit_n - limit_buy_n
 
     withdraw_n = rng.poisson(2.1, len(timestamps))
-    withdraw_buy_n = rng.binomial(
-        withdraw_n, np.clip(0.48 + 0.10 * np.sign(price_move), 0.15, 0.85)
-    )
+    withdraw_buy_n = rng.binomial(withdraw_n, np.clip(0.50 - 0.16 * pressure, 0.12, 0.88))
     withdraw_sell_n = withdraw_n - withdraw_buy_n
 
     return pl.DataFrame(
