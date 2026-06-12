@@ -94,6 +94,13 @@ class HistoricalReplay:
                 for level in range(1, PAPER.lob_levels + 1)
             ]
         )
+        self.mid_prices = (self.ask_prices[:, 0] + self.bid_prices[:, 0]) / 2.0
+        self.market_buy_volume = (
+            dataset.messages["market_buy_volume"].to_numpy().astype(np.float64)
+        )
+        self.market_sell_volume = (
+            dataset.messages["market_sell_volume"].to_numpy().astype(np.float64)
+        )
         self.trade_price_min = self.trades["trade_price_min"].to_numpy().astype(np.float64)
         self.trade_price_min_volume = (
             self.trades["trade_price_min_volume"].to_numpy().astype(np.int64)
@@ -104,7 +111,7 @@ class HistoricalReplay:
         )
 
     def mid_price(self, index: int) -> float:
-        return float((self.ask_prices[index, 0] + self.bid_prices[index, 0]) / 2.0)
+        return float(self.mid_prices[index])
 
     def best_bid_ask(self, index: int) -> tuple[float, float]:
         return float(self.bid_prices[index, 0]), float(self.ask_prices[index, 0])

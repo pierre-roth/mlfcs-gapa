@@ -44,9 +44,8 @@ class FixedLevelStrategy:
         del account, episode_progress
         if not 1 <= self.level <= PAPER.lob_levels:
             raise ValueError(f"level must be in [1, {PAPER.lob_levels}]")
-        row = replay.orderbook.row(decision_index, named=True)
-        ask = float(row[f"ask{self.level}_price"])
-        bid = float(row[f"bid{self.level}_price"])
+        ask = float(replay.ask_prices[decision_index, self.level - 1])
+        bid = float(replay.bid_prices[decision_index, self.level - 1])
         return Quote(
             ask_price=ask,
             ask_volume=-PAPER.minimum_trade_unit,
@@ -79,9 +78,8 @@ class RandomLevelStrategy:
         del account, episode_progress
         ask_level = int(self.rng.integers(1, self.max_level + 1))
         bid_level = int(self.rng.integers(1, self.max_level + 1))
-        row = replay.orderbook.row(decision_index, named=True)
-        ask = float(row[f"ask{ask_level}_price"])
-        bid = float(row[f"bid{bid_level}_price"])
+        ask = float(replay.ask_prices[decision_index, ask_level - 1])
+        bid = float(replay.bid_prices[decision_index, bid_level - 1])
         return Quote(
             ask_price=ask,
             ask_volume=-PAPER.minimum_trade_unit,

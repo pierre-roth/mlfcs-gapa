@@ -38,10 +38,14 @@ by the paper:
 
 - Table I: FC-LOB, Conv-LOB, DeepLOB, and Attn-LOB pretraining.
 - Table II: C-PPO, D-DQN, Inv-RL, LOB-RL, AS, Random, and Fixed baselines.
-- Figure 2: latency sweep.
+- Figure 2: latency sweep. Two figures are written: the full method grid and
+  `figure_2_latency_paper.png` restricted to the paper's five panels
+  (C-PPO, D-DQN, AS, Random, Fixed; Fixed is the level-1 strategy).
 - Table III: runtime benchmark rows.
 - Table IV: C-PPO and D-DQN ablations.
-- Figure 3: attention heatmap from the trained C-PPO encoder.
+- Figure 3: attention from the trained C-PPO encoder on two stable and two
+  rapidly changing held-out windows, selected by in-window mid-price
+  volatility to mirror the paper's (a)/(b) split.
 - Figure 4: held-out decision trace from C-PPO.
 
 The supervised Attn-LOB checkpoint is reused by the RL agents where the paper
@@ -70,6 +74,13 @@ Some details are not recoverable from the paper and public demo code alone:
   8-action interpretation.
 - The paper equations use a continuous action in `[0, 1]`; the implementation
   keeps that range instead of normalizing to `[-1, 1]`.
+
+The paper does not state RL optimization hyperparameters beyond the learning
+rate, so the full replication uses standard, scale-aware choices: PPO collects
+rollouts from 8 parallel environments (256 steps each, minibatch = 1/4
+rollout, lr 1e-4, gamma 0.99); D-DQN at scale uses a 100k-transition buffer,
+batch 64, one gradient update every 4 environment steps, and a 2,000-step
+target sync. Smoke-scale runs fall back to proportionally smaller values.
 
 These are treated as reconstruction limits, not opportunities to add new
 behavior.
@@ -111,6 +122,32 @@ the same defaults.
 
 For a small local check, use targeted tests only. Do not run the full training
 pipeline locally unless intentionally doing compute work.
+
+`scripts/euler/` contains exactly four scripts:
+
+- `setup_venv.sh` — one-time environment setup.
+- `wandb_env.sh` — sourced by job scripts; builds W&B CLI flags from
+  `WANDB_ENABLED` and friends.
+- `test_pipeline_cpu.sh` — small CPU job: unit tests plus a miniature
+  `run-full-synthetic-replication` through every stage, with artifact
+  assertions. Run this before the full job after any code change.
+- `full_replication_gpu.sh` — the entire replication as one GPU job.
+
+```bash
+cd "$HOME/projects/mlfcs-gapa"
+bash scripts/euler/setup_venv.sh                       # once
+sbatch scripts/euler/test_pipeline_cpu.sh              # ~30 min sanity check
+WANDB_ENABLED=true sbatch scripts/euler/full_replication_gpu.sh
+```
+
+The full job runs `mlfcs-gapa run-full-synthetic-replication` with
+paper-faithful constants; the synthetic-data calibration knobs are
+environment variables in the script. Defaults: 10,000 events/day (~7,600
+stable-window events per stock/day), 200,000 agent timesteps (~2.6 passes
+over the train panel), 5 pretraining epochs, PPO collecting from 8 parallel
+environments. Conv-LOB's 1024-event windows are capped in-code at 20,000
+events because materializing them over the full panel costs >10 GB. The job
+is sized well inside its 24-hour limit.
 
 On Euler, code should live under:
 

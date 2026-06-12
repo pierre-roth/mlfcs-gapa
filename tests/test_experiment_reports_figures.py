@@ -3,6 +3,7 @@ import polars as pl
 
 from mlfcs_gapa.experiments.figures import (
     plot_attention_heatmap,
+    plot_attention_market_grid,
     plot_decision_trace,
     plot_latency_figure,
 )
@@ -80,6 +81,18 @@ def test_attention_heatmap_with_lob_state_is_written(tmp_path) -> None:
     lob_window = np.arange(50 * 40, dtype=np.float32).reshape(50, 40)
 
     plot_attention_heatmap(np.ones((10, 50)) / 50.0, output, lob_window=lob_window)
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+
+
+def test_attention_market_grid_is_written(tmp_path) -> None:
+    output = tmp_path / "attention_market_grid.png"
+    weights = np.ones((10, 50)) / 50.0
+    lob_window = np.arange(50 * 40, dtype=np.float32).reshape(50, 40)
+    panel = (weights, lob_window)
+
+    plot_attention_market_grid([panel, panel], [panel, panel], output)
 
     assert output.exists()
     assert output.stat().st_size > 0

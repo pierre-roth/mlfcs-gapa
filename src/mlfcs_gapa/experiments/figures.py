@@ -214,6 +214,89 @@ def plot_attention_heatmap(
     plt.close(fig)
 
 
+def plot_attention_market_grid(
+    stable_panels: list[tuple[np.ndarray, np.ndarray]],
+    rapid_panels: list[tuple[np.ndarray, np.ndarray]],
+    output_path: Path,
+) -> None:
+    """Create the paper's full Figure 3: stable vs rapidly changing markets.
+
+    Each panel is an `(attention_weights, lob_window)` pair, where the weights
+    may have shape `(heads, window)` or `(window,)` and the window must have
+    shape `(50, 40)`. The stable panels form the top row group and the rapid
+    panels the bottom row group, matching the paper's layout.
+    """
+
+    if not stable_panels or not rapid_panels:
+        raise ValueError("both stable and rapid panel lists must be non-empty")
+
+    n_cols = max(len(stable_panels), len(rapid_panels))
+    fig = plt.figure(figsize=(4.6 * n_cols, 8.6))
+    outer = fig.add_gridspec(2, 1, hspace=0.32)
+    group_titles = ("(a) Stable markets.", "(b) Rapidly changing markets.")
+
+    for group_index, (panels, title) in enumerate(
+        zip((stable_panels, rapid_panels), group_titles, strict=True)
+    ):
+        inner = outer[group_index].subgridspec(
+            2, n_cols, height_ratios=[1.0, 3.4], hspace=0.12, wspace=0.22
+        )
+        for column, (attention_weights, lob_window) in enumerate(panels):
+            weights = np.asarray(attention_weights, dtype=np.float64)
+            if weights.ndim == 1:
+                weights = weights[None, :]
+            attention = weights.sum(axis=0)
+            x = np.arange(attention.shape[0])
+            state = _paper_lob_state_matrix(lob_window)
+
+            axis_attention = fig.add_subplot(inner[0, column])
+            axis_attention.bar(x, attention, width=0.8, color="#1f77b4")
+            axis_attention.set_xlim(0, attention.shape[0])
+            axis_attention.set_ylabel("Attn")
+            axis_attention.tick_params(labelbottom=False)
+
+            axis_state = fig.add_subplot(inner[1, column])
+            axis_state.imshow(
+                state,
+                aspect="auto",
+                cmap="viridis",
+                interpolation="nearest",
+                extent=[0, attention.shape[0], state.shape[0], 0],
+            )
+            axis_state.set_xlabel("Timestamps")
+            axis_state.set_xlim(0, attention.shape[0])
+            axis_state.set_yticks([0, 5, 10, 15, 20, 25, 30, 35, 40])
+            axis_state.set_yticklabels(
+                ["10", "ask", "0", "bid", "10", "ask", "0", "bid", "10"], fontsize=8
+            )
+            if column == 0:
+                axis_state.text(
+                    -0.16,
+                    0.75,
+                    "Volume",
+                    transform=axis_state.transAxes,
+                    rotation=90,
+                    va="center",
+                    ha="center",
+                )
+                axis_state.text(
+                    -0.16,
+                    0.25,
+                    "Price",
+                    transform=axis_state.transAxes,
+                    rotation=90,
+                    va="center",
+                    ha="center",
+                )
+        group_bottom = 0.51 if group_index == 0 else 0.015
+        fig.text(0.5, group_bottom, title, ha="center", fontsize=13)
+
+    fig.subplots_adjust(top=0.97, bottom=0.07, left=0.09, right=0.98)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
 def _paper_lob_state_matrix(lob_window: np.ndarray) -> np.ndarray:
     window = np.asarray(lob_window, dtype=np.float64)
     if window.shape != (50, 40):

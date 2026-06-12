@@ -92,9 +92,13 @@ def train_lob_classifier(
         last_loss = float(np.mean(losses)) if losses else 0.0
 
     model.eval()
+    prediction_batches: list[np.ndarray] = []
+    eval_loader = DataLoader(TensorDataset(x_eval), batch_size=batch_size, shuffle=False)
     with torch.no_grad():
-        logits = model(x_eval.to(device))
-        predictions = logits.argmax(dim=1).cpu().numpy()
+        for (batch_x,) in eval_loader:
+            logits = model(batch_x.to(device))
+            prediction_batches.append(logits.argmax(dim=1).cpu().numpy())
+    predictions = np.concatenate(prediction_batches)
 
     labels = y_eval.numpy()
     precision, recall, f1, _ = precision_recall_fscore_support(

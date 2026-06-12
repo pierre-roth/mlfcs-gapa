@@ -80,13 +80,11 @@ class LobRlEncoder:
         index: int,
         episode_progress: float,
     ) -> StateKey:
-        del episode_progress
-        row = dataset.orderbook.row(index, named=True)
-        msg = dataset.messages.row(index, named=True)
-        bid_depth = float(row["bid1_volume"]) + float(row["bid2_volume"])
-        ask_depth = float(row["ask1_volume"]) + float(row["ask2_volume"])
-        bid_speed = int(float(msg["market_sell_volume"]) > bid_depth)
-        ask_speed = int(float(msg["market_buy_volume"]) > ask_depth)
+        del dataset, episode_progress
+        bid_depth = float(replay.bid_volumes[index, 0] + replay.bid_volumes[index, 1])
+        ask_depth = float(replay.ask_volumes[index, 0] + replay.ask_volumes[index, 1])
+        bid_speed = int(replay.market_sell_volume[index] > bid_depth)
+        ask_speed = int(replay.market_buy_volume[index] > ask_depth)
         mid_frac = self._mid_change_fraction(replay, index)
         mid_fraction = _signed_bucket(mid_frac, self.mid_fraction_threshold)
         inv_sign = _signed_bucket(
@@ -105,8 +103,8 @@ class LobRlEncoder:
         end_curr = index
         if end_prev <= start_prev or end_curr <= start_curr:
             return 0.0
-        prev = np.array([replay.mid_price(i) for i in range(start_prev, end_prev)])
-        curr = np.array([replay.mid_price(i) for i in range(start_curr, end_curr)])
+        prev = replay.mid_prices[start_prev:end_prev]
+        curr = replay.mid_prices[start_curr:end_curr]
         if len(prev) == 0 or len(curr) == 0:
             return 0.0
         combined = np.concatenate([prev, curr])

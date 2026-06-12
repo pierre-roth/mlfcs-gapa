@@ -6,6 +6,7 @@ from datetime import time
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
 import polars as pl
 import torch
 import typer
@@ -36,6 +37,7 @@ from mlfcs_gapa.env.tabular_rl import (
 from mlfcs_gapa.env.gym_env import PaperMarketMakingEnv
 from mlfcs_gapa.experiments.figures import (
     plot_attention_heatmap,
+    plot_attention_market_grid,
     plot_decision_trace,
     plot_latency_figure,
 )
@@ -90,6 +92,9 @@ PAPER_TEST_DAYS = len(PAPER_TRADING_DAYS_201911) - PAPER_TRAIN_DAYS
 FULL_REPLICATION_EVENTS_PER_DAY = PAPER.episode_events * 3
 FULL_REPLICATION_AGENT_TIMESTEPS = PAPER.episode_events * PAPER_TRAIN_DAYS * 5
 FULL_REPLICATION_PPO_LOG_STD_INIT = -2.0
+# Conv-LOB consumes 1024-event windows; materializing them over the full panel
+# costs >10 GB, so long-window models are capped to this many events.
+LONG_WINDOW_PRETRAIN_EVENT_CAP = 20_000
 
 
 @app.callback()
@@ -379,54 +384,6 @@ def run_synthetic_latency_baselines(
     console.print(f"[green]wrote[/green] {metrics_path}")
     console.print(f"[green]wrote[/green] {trades_path}")
     console.print(f"[green]wrote[/green] {figure_path}")
-
-
-@app.command("pretrain-synthetic-attn-lob")
-def pretrain_synthetic_attn_lob(
-    output_dir: Path = typer.Option(Path("runs/synthetic-pretrain"), help="Output directory."),
-    events: int = typer.Option(1_000, min=200, help="Synthetic events."),
-    epochs: int = typer.Option(1, min=1, help="Training epochs."),
-    batch_size: int = typer.Option(64, min=1, help="Batch size."),
-    device: str = typer.Option("cpu", help="Torch device, e.g. cpu or cuda."),
-    seed: int = typer.Option(1, help="Random seed."),
-    wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
-    wandb_entity: str = typer.Option(DEFAULT_WANDB_ENTITY, help="W&B entity/team."),
-    wandb_project: str = typer.Option(DEFAULT_WANDB_PROJECT, help="W&B project."),
-    wandb_mode: str | None = typer.Option(None, help="W&B mode: online, offline, or disabled."),
-    wandb_group: str | None = typer.Option(None, help="Optional W&B group."),
-    wandb_run_name: str | None = typer.Option(None, help="Optional W&B run name."),
-) -> None:
-    """Run a small Attn-LOB pretraining experiment on synthetic data."""
-
-    with wandb_run(
-        enabled=wandb,
-        job_type="pretrain",
-        config={
-            "model_name": "Attn-LOB",
-            "output_dir": output_dir,
-            "events": events,
-            "epochs": epochs,
-            "batch_size": batch_size,
-            "device": device,
-            "seed": seed,
-        },
-        entity=wandb_entity,
-        project=wandb_project,
-        mode=wandb_mode,
-        group=wandb_group,
-        name=wandb_run_name,
-        tags=("synthetic", "pretrain", "attn-lob"),
-    ) as tracker:
-        _run_synthetic_pretrain(
-            model_name="Attn-LOB",
-            output_dir=output_dir,
-            events=events,
-            epochs=epochs,
-            batch_size=batch_size,
-            device=device,
-            seed=seed,
-            tracker=tracker,
-        )
 
 
 @app.command("pretrain-synthetic")
@@ -809,8 +766,6 @@ def benchmark_runtime_synthetic(
 ) -> None:
     """Measure Table-III-style runtime on a synthetic smoke workload."""
 
-    from stable_baselines3 import PPO
-
     tracker = init_wandb_run(
         enabled=wandb,
         job_type="runtime-benchmark",
@@ -829,6 +784,36 @@ def benchmark_runtime_synthetic(
         name=wandb_run_name,
         tags=("synthetic", "runtime"),
     )
+    rows = _benchmark_runtime_rows(
+        output_path=output_path,
+        events=events,
+        episode_events=episode_events,
+        train_timesteps=train_timesteps,
+        seed=seed,
+        device=device,
+    )
+    for row in rows:
+        method = str(row["method"]).lower().replace("-", "_")
+        phase = str(row["phase"])
+        tracker.log_metrics(row, prefix=f"runtime/{method}/{phase}")
+    tracker.log_artifact(output_path, name=f"runtime-seed-{seed}", artifact_type="runtime")
+    tracker.finish()
+    console.print(f"[green]wrote[/green] {output_path}")
+
+
+def _benchmark_runtime_rows(
+    *,
+    output_path: Path,
+    events: int,
+    episode_events: int,
+    train_timesteps: int,
+    seed: int,
+    device: str,
+) -> list[dict[str, float | str | int]]:
+    """Run the Table III runtime measurements and write the CSV."""
+
+    from stable_baselines3 import PPO
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset = generate_synthetic_lob_day(SyntheticLobConfig(n_events=events, seed=seed))
     evaluation_events = min(episode_events, events - 1)
@@ -926,13 +911,7 @@ def benchmark_runtime_synthetic(
     )
 
     pl.DataFrame(rows).write_csv(output_path)
-    for row in rows:
-        method = str(row["method"]).lower().replace("-", "_")
-        phase = str(row["phase"])
-        tracker.log_metrics(row, prefix=f"runtime/{method}/{phase}")
-    tracker.log_artifact(output_path, name=f"runtime-seed-{seed}", artifact_type="runtime")
-    tracker.finish()
-    console.print(f"[green]wrote[/green] {output_path}")
+    return rows
 
 
 @app.command("run-full-synthetic-replication")
@@ -981,6 +960,7 @@ def run_full_synthetic_replication(
     ),
     latency_values: str = typer.Option("1,5,10,20,50,100", help="Latency grid."),
     runtime_train_timesteps: int = typer.Option(32, min=1, help="Tiny train timing steps."),
+    ppo_n_envs: int = typer.Option(8, min=1, help="Parallel PPO training environments."),
     seed: int = typer.Option(1, help="Base random seed."),
     device: str = typer.Option("cpu", help="Torch/SB3 device."),
     wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
@@ -1023,6 +1003,7 @@ def run_full_synthetic_replication(
             "tabular_episodes": tabular_episodes,
             "latencies": latencies,
             "runtime_train_timesteps": runtime_train_timesteps,
+            "ppo_n_envs": ppo_n_envs,
             "seed": seed,
             "device": device,
         },
@@ -1086,9 +1067,16 @@ def run_full_synthetic_replication(
     )
     attn_lob_checkpoint: Path | None = None
     for model_index, model_name in enumerate(PRETRAIN_MODEL_NAMES):
+        model_train_dataset = pretrain_dataset
+        model_evaluation_dataset = pretrain_evaluation_dataset
+        if pretrain_input_shape(model_name)[0] >= 512:
+            model_train_dataset = _head_dataset(pretrain_dataset, LONG_WINDOW_PRETRAIN_EVENT_CAP)
+            model_evaluation_dataset = _head_dataset(
+                pretrain_evaluation_dataset, LONG_WINDOW_PRETRAIN_EVENT_CAP
+            )
         row, model_path = _run_pretrain_on_dataset(
-            dataset=pretrain_dataset,
-            evaluation_dataset=pretrain_evaluation_dataset,
+            dataset=model_train_dataset,
+            evaluation_dataset=model_evaluation_dataset,
             model_name=model_name,
             output_dir=table_i_dir,
             epochs=pretrain_epochs,
@@ -1117,6 +1105,7 @@ def run_full_synthetic_replication(
             seed=seed,
             device=device,
             ppo_class=PPO,
+            ppo_n_envs=ppo_n_envs,
         )
     )
     overall_metrics_path = output_dir / "table_ii_overall" / "overall_metrics.csv"
@@ -1142,17 +1131,20 @@ def run_full_synthetic_replication(
         seed=seed,
         device=device,
         ppo_class=PPO,
+        ppo_n_envs=ppo_n_envs,
     )
     latency_dir = output_dir / "figure_2_latency"
     latency_metrics_path = latency_dir / "latency_metrics.csv"
     latency_trades_path = latency_dir / "latency_trades.parquet"
     latency_figure_path = latency_dir / "figure_2_latency.png"
+    latency_paper_figure_path = latency_dir / "figure_2_latency_paper.png"
     pl.DataFrame(latency_metrics).write_csv(latency_metrics_path)
     pl.DataFrame(latency_trades).write_parquet(latency_trades_path)
     plot_latency_figure(pl.DataFrame(latency_metrics), latency_figure_path)
+    _plot_paper_latency_figure(pl.DataFrame(latency_metrics), latency_paper_figure_path)
 
     runtime_path = output_dir / "table_iii_runtime" / "runtime_metrics.csv"
-    benchmark_runtime_synthetic(
+    runtime_rows = _benchmark_runtime_rows(
         output_path=runtime_path,
         events=min(events_per_day, 1_000),
         episode_events=min(episode_events, events_per_day - 1),
@@ -1160,6 +1152,10 @@ def run_full_synthetic_replication(
         seed=seed,
         device=device,
     )
+    for runtime_row in runtime_rows:
+        runtime_method = str(runtime_row["method"]).lower().replace("-", "_")
+        runtime_phase = str(runtime_row["phase"])
+        tracker.log_metrics(runtime_row, prefix=f"table_iii/{runtime_method}/{runtime_phase}")
 
     ablation_metrics, ablation_trades = _run_ablation_synthetic_table(
         train_dataset=_first_stock_train_dataset(
@@ -1175,6 +1171,7 @@ def run_full_synthetic_replication(
         seed=seed,
         device=device,
         ppo_class=PPO,
+        ppo_n_envs=ppo_n_envs,
     )
     ablation_dir = output_dir / "table_iv_ablation"
     ablation_metrics_path = ablation_dir / "ablation_metrics.csv"
@@ -1203,6 +1200,7 @@ def run_full_synthetic_replication(
             overall_summary_path,
             latency_metrics_path,
             latency_figure_path,
+            latency_paper_figure_path,
             runtime_path,
             ablation_metrics_path,
             ablation_summary_path,
@@ -1235,6 +1233,7 @@ def run_full_synthetic_replication(
             overall_summary_path,
             latency_metrics_path,
             latency_figure_path,
+            latency_paper_figure_path,
             runtime_path,
             ablation_metrics_path,
             ablation_summary_path,
@@ -1443,16 +1442,19 @@ def _stock_dataset_from_panel(
     datasets = [dataset for panel_stock, _, dataset in panel if panel_stock == stock]
     if not datasets:
         raise ValueError(f"no datasets found for stock {stock}")
-    merged = _merge_lob_datasets(datasets, day=day)
-    if max_events > 0 and merged.orderbook.height > max_events:
-        merged = LobDataset(
-            stock=merged.stock,
-            day=merged.day,
-            orderbook=merged.orderbook.head(max_events),
-            messages=merged.messages.head(max_events),
-            trades=merged.trades.head(max_events),
-        )
-    return merged
+    return _head_dataset(_merge_lob_datasets(datasets, day=day), max_events)
+
+
+def _head_dataset(dataset: LobDataset, max_events: int) -> LobDataset:
+    if max_events <= 0 or dataset.orderbook.height <= max_events:
+        return dataset
+    return LobDataset(
+        stock=dataset.stock,
+        day=dataset.day,
+        orderbook=dataset.orderbook.head(max_events),
+        messages=dataset.messages.head(max_events),
+        trades=dataset.trades.head(max_events),
+    )
 
 
 def _merge_lob_datasets(datasets: list[LobDataset], *, day: str) -> LobDataset:
@@ -1578,6 +1580,7 @@ def _run_overall_synthetic_table(
     seed: int,
     device: str,
     ppo_class,
+    ppo_n_envs: int = 8,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_rows: list[dict[str, float | int | str | bool]] = []
@@ -1614,6 +1617,7 @@ def _run_overall_synthetic_table(
             encoder_checkpoint=encoder_checkpoint,
             normalize_actions=True,
             policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
+            n_envs=ppo_n_envs,
         )
         if first_ppo_model is None:
             first_ppo_model = ppo_model
@@ -1808,18 +1812,28 @@ def _train_ppo_model(
     freeze_encoder: bool = False,
     normalize_actions: bool = True,
     policy_log_std_init: float = FULL_REPLICATION_PPO_LOG_STD_INIT,
+    n_envs: int = 8,
 ) -> object:
+    from stable_baselines3.common.vec_env import DummyVecEnv
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    env = PaperMarketMakingEnv(
-        train_dataset,
-        episode_events=episode_events,
-        latency_events=latency_events,
-        normalize_actions=normalize_actions,
-        random_episode_starts=True,
-        seed=seed,
-    )
-    n_steps = min(128, max(2, episode_events // 2))
-    batch_size = min(64, n_steps)
+
+    def make_env(rank: int):
+        def _factory() -> PaperMarketMakingEnv:
+            return PaperMarketMakingEnv(
+                train_dataset,
+                episode_events=episode_events,
+                latency_events=latency_events,
+                normalize_actions=normalize_actions,
+                random_episode_starts=True,
+                seed=seed + rank,
+            )
+
+        return _factory
+
+    env = DummyVecEnv([make_env(rank) for rank in range(max(1, n_envs))])
+    n_steps = min(256, max(2, episode_events // 2))
+    batch_size = max(1, (n_steps * max(1, n_envs)) // 4)
     model = ppo_class(
         "MultiInputPolicy",
         env,
@@ -1851,6 +1865,9 @@ def _train_ppo_model(
                 "train_events": train_dataset.orderbook.height,
                 "episode_events": episode_events,
                 "latency_events": latency_events,
+                "n_envs": max(1, n_envs),
+                "n_steps": n_steps,
+                "batch_size": batch_size,
                 "lob_mode": lob_mode,
                 "use_dynamic_state": use_dynamic_state,
                 "normalize_actions": normalize_actions,
@@ -1932,10 +1949,11 @@ def _train_ddqn_model(
     )
     config = DuelingDQNConfig(
         total_timesteps=total_timesteps,
-        learning_starts=min(100, max(1, total_timesteps // 4)),
-        buffer_size=max(1_000, total_timesteps * 4),
-        batch_size=min(32, max(1, total_timesteps // 4)),
-        target_update_interval=max(50, total_timesteps // 2),
+        learning_starts=min(2_000, max(1, total_timesteps // 10)),
+        buffer_size=min(100_000, max(1_000, total_timesteps)),
+        batch_size=64 if total_timesteps >= 10_000 else min(32, max(1, total_timesteps // 4)),
+        train_frequency=4 if total_timesteps >= 10_000 else 1,
+        target_update_interval=min(2_000, max(50, total_timesteps // 10)),
         seed=seed,
     )
     model, train_result = train_dueling_dqn(
@@ -2026,6 +2044,7 @@ def _run_latency_synthetic_table(
     seed: int,
     device: str,
     ppo_class,
+    ppo_n_envs: int = 8,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_rows: list[dict[str, float | int | str | bool]] = []
@@ -2048,6 +2067,7 @@ def _run_latency_synthetic_table(
         encoder_checkpoint=encoder_checkpoint,
         normalize_actions=True,
         policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
+        n_envs=ppo_n_envs,
     )
     ddqn_model = _train_ddqn_model(
         train_dataset,
@@ -2158,6 +2178,7 @@ def _run_ablation_synthetic_table(
     seed: int,
     device: str,
     ppo_class,
+    ppo_n_envs: int = 8,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     variants = (
@@ -2184,6 +2205,7 @@ def _run_ablation_synthetic_table(
             encoder_checkpoint=variant_checkpoint,
             normalize_actions=True,
             policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
+            n_envs=ppo_n_envs,
         )
         for row, log_rows in _evaluate_ppo_on_test_episodes(
             ppo_model,
@@ -2286,22 +2308,104 @@ def _extend_tagged_trades(
         target.append(tagged)
 
 
+def _plot_paper_latency_figure(metrics: pl.DataFrame, output_path: Path) -> None:
+    """Write the paper's five-panel Figure 2: C-PPO, D-DQN, AS, Random, Fixed.
+
+    The paper's "Fixed" panel corresponds to one fixed quoting level; the
+    level-1 strategy is used here. The full method grid stays available in the
+    unrestricted latency figure.
+    """
+
+    paper_methods = ["C-PPO", "D-DQN", "AS", "Random", "Fixed"]
+    relabeled = metrics.with_columns(
+        pl.when(pl.col("method") == "Fixed_1")
+        .then(pl.lit("Fixed"))
+        .otherwise(pl.col("method"))
+        .alias("method")
+    ).filter(pl.col("method").is_in(paper_methods))
+    available = [
+        method for method in paper_methods if method in relabeled["method"].unique().to_list()
+    ]
+    if not available:
+        return
+    plot_latency_figure(relabeled, output_path, methods=available)
+
+
 def _plot_attention_from_ppo_encoder(model: object, dataset: LobDataset, output_path: Path) -> None:
-    index = min(max(PAPER.window_length - 1, 80), dataset.orderbook.height - 1)
-    start = index - PAPER.window_length + 1
-    lob_values = dataset.orderbook.select(lob_columns()).slice(start, PAPER.window_length)
-    window = normalize_lob_window(lob_values.to_numpy())
+    """Write the paper's Figure 3: attention on stable and rapidly changing markets."""
+
     policy = getattr(model, "policy")
     extractor = getattr(policy, "features_extractor")
     encoder = getattr(extractor, "lob_encoder")
     encoder.eval()
     device = next(encoder.parameters()).device
-    with torch.no_grad():
-        _, weights = encoder(
-            torch.from_numpy(window).float().unsqueeze(0).to(device),
-            return_attention_weights=True,
+
+    def encode_window(end_index: int) -> tuple[np.ndarray, np.ndarray]:
+        start = end_index - PAPER.window_length + 1
+        lob_values = dataset.orderbook.select(lob_columns()).slice(start, PAPER.window_length)
+        window = normalize_lob_window(lob_values.to_numpy())
+        with torch.no_grad():
+            _, weights = encoder(
+                torch.from_numpy(window).float().unsqueeze(0).to(device),
+                return_attention_weights=True,
+            )
+        return weights.squeeze(0).cpu().numpy(), window
+
+    stable_ends, rapid_ends = _select_attention_window_ends(dataset)
+    if stable_ends and rapid_ends:
+        plot_attention_market_grid(
+            [encode_window(end) for end in stable_ends],
+            [encode_window(end) for end in rapid_ends],
+            output_path,
         )
-    plot_attention_heatmap(weights.squeeze(0).cpu().numpy(), output_path, lob_window=window)
+        return
+
+    index = min(max(PAPER.window_length - 1, 80), dataset.orderbook.height - 1)
+    weights, window = encode_window(index)
+    plot_attention_heatmap(weights, output_path, lob_window=window)
+
+
+def _select_attention_window_ends(
+    dataset: LobDataset,
+    *,
+    n_stable: int = 2,
+    n_rapid: int = 2,
+) -> tuple[list[int], list[int]]:
+    """Pick non-overlapping window end indices for stable and volatile markets.
+
+    Stability is ranked by the mid-price standard deviation inside each
+    50-event window, mirroring the paper's stable versus rapidly changing
+    market split in Figure 3.
+    """
+
+    height = dataset.orderbook.height
+    if height < PAPER.window_length * (n_stable + n_rapid):
+        return [], []
+
+    ask1 = dataset.orderbook["ask1_price"].to_numpy().astype(np.float64)
+    bid1 = dataset.orderbook["bid1_price"].to_numpy().astype(np.float64)
+    mid = (ask1 + bid1) / 2.0
+
+    ends = np.arange(PAPER.window_length - 1, height)
+    window_std = np.array(
+        [mid[end - PAPER.window_length + 1 : end + 1].std() for end in ends]
+    )
+
+    def pick(order: np.ndarray, count: int, taken: list[int]) -> list[int]:
+        chosen: list[int] = []
+        for position in order:
+            end = int(ends[position])
+            if all(abs(end - other) >= PAPER.window_length for other in (*taken, *chosen)):
+                chosen.append(end)
+            if len(chosen) == count:
+                break
+        return chosen
+
+    rapid = pick(np.argsort(window_std)[::-1], n_rapid, [])
+    stable = pick(np.argsort(window_std), n_stable, rapid)
+    if len(stable) < n_stable or len(rapid) < n_rapid:
+        return [], []
+    return stable, rapid
 
 
 def _write_full_replication_config(

@@ -63,31 +63,31 @@ def normalize_lob_window(lob_window: np.ndarray) -> np.ndarray:
     window = np.asarray(lob_window, dtype=np.float32)
     if window.ndim != 2 or window.shape[1] != PAPER.lob_width:
         raise ValueError(f"expected LOB window shape (T, {PAPER.lob_width}), got {window.shape}")
+    return _normalize_lob_windows_batch(window[None])[0]
 
-    output = window.copy()
-    ask1 = output[:, 0]
-    bid1 = output[:, 2]
-    mid = (ask1 + bid1) / 2.0
 
-    price_cols = list(range(0, PAPER.lob_width, 4)) + list(range(2, PAPER.lob_width, 4))
-    volume_cols = list(range(1, PAPER.lob_width, 4)) + list(range(3, PAPER.lob_width, 4))
+def _normalize_lob_windows_batch(windows: np.ndarray) -> np.ndarray:
+    """Normalize `(N, T, 40)` windows at once; one window is the `N=1` case."""
 
-    for col in price_cols:
-        output[:, col] = output[:, col] / (mid + 1e-7) - 1.0
-        std = output[:, col].std()
-        output[:, col] = (output[:, col] - output[:, col].mean()) / (std + 1e-7)
+    output = windows.astype(np.float32, copy=True)
+    width = output.shape[2]
+    price_cols = np.array([*range(0, width, 4), *range(2, width, 4)])
+    volume_cols = price_cols + 1
 
-    for col in volume_cols:
-        max_value = output[:, col].max()
-        output[:, col] = output[:, col] / (max_value + 1e-7)
-
+    mid = (output[:, :, 0] + output[:, :, 2]) / 2.0
+    prices = output[:, :, price_cols] / (mid[:, :, None] + 1e-7) - 1.0
+    output[:, :, price_cols] = (prices - prices.mean(axis=1, keepdims=True)) / (
+        prices.std(axis=1, keepdims=True) + 1e-7
+    )
+    volumes = output[:, :, volume_cols]
+    output[:, :, volume_cols] = volumes / (volumes.max(axis=1, keepdims=True) + 1e-7)
     return output
 
 
 def build_lob_windows(
     lob_values: np.ndarray, window_length: int = PAPER.window_length
 ) -> np.ndarray:
-    """Build rolling LOB windows from canonical LOB values."""
+    """Build rolling normalized LOB windows from canonical LOB values."""
 
     values = np.asarray(lob_values, dtype=np.float32)
     if values.ndim != 2 or values.shape[1] != PAPER.lob_width:
@@ -95,9 +95,7 @@ def build_lob_windows(
     if len(values) < window_length:
         return np.empty((0, window_length, PAPER.lob_width), dtype=np.float32)
 
-    windows = np.empty(
-        (len(values) - window_length + 1, window_length, PAPER.lob_width), dtype=np.float32
-    )
-    for end in range(window_length, len(values) + 1):
-        windows[end - window_length] = normalize_lob_window(values[end - window_length : end])
-    return windows
+    windows = np.lib.stride_tricks.sliding_window_view(
+        values, window_length, axis=0
+    ).transpose(0, 2, 1)
+    return _normalize_lob_windows_batch(windows)
