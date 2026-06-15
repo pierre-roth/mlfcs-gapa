@@ -13,8 +13,8 @@ def test_discrete_action_mapping_matches_paper_offsets() -> None:
     action_0 = discrete_action_to_quote(replay, 60, 0)
     action_6 = discrete_action_to_quote(replay, 60, 6)
 
-    assert action_0.ask_price == row["ask1_price"]
-    assert action_0.bid_price == row["bid1_price"]
+    assert np.isclose(action_0.ask_price, row["ask1_price"])
+    assert np.isclose(action_0.bid_price, row["bid1_price"])
     assert np.isclose(action_6.ask_price, row["ask1_price"] + 0.02)
     assert np.isclose(action_6.bid_price, row["bid1_price"] - 0.02)
 

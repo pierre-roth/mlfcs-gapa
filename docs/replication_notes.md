@@ -58,6 +58,25 @@ The synthetic generator is expected to preserve the shape of the paper problem:
 canonical LOB columns, stable intraday windows, order-book levels, event-time
 windows, mid-price movement labels, and a learnable pressure signal.
 
+The generator is calibrated so the *economics* of the paper's Table II are
+reproducible (see `tests/test_synthetic_calibration.py` for the enforced
+bounds):
+
+- The mid price decomposes into a latent fair value (slow tick-level random
+  walk with occasional trend and volatile segments) plus a transient bid-ask
+  bounce that mean-reverts within a few events. Event returns are negatively
+  autocorrelated at lag 1, which makes passive market making profitable in
+  expectation — as on real LOB data.
+- Market-order flow is mostly uninformed; only a mild informed component is
+  shared with the fair-value drift, so passive fills face mild (not fatal)
+  adverse selection, and stale quotes degrade with latency the way Figure 2
+  shows.
+- Episodes stay lively: a 2,000-event (~5 minute) episode typically ranges
+  0.3–1.2% with visible trend segments, so Figures 3 and 4 keep their
+  stable-vs-trending narrative.
+- Spread, bounce amplitude, and fair-step size scale with the stock's price
+  level, giving the three paper stocks distinct microstructures.
+
 Synthetic results should not be compared to the paper's numeric profit or
 classification values as if they were the original market data. The correct
 claim is methodological replication under a controlled data substitute.
@@ -81,6 +100,24 @@ rollouts from 8 parallel environments (256 steps each, minibatch = 1/4
 rollout, lr 1e-4, gamma 0.99); D-DQN at scale uses a 100k-transition buffer,
 batch 64, one gradient update every 4 environment steps, and a 2,000-step
 target sync. Smoke-scale runs fall back to proportionally smaller values.
+
+Further calibration choices that the paper leaves to the market:
+
+- The label threshold `alpha` is "set according to the market" (paper
+  Section III-B1). On synthetic data it is auto-calibrated per stock so that
+  roughly one third of events are stationary; the value used is logged in the
+  Table I metrics CSV. `--pretrain-alpha` overrides it.
+- Pretraining uses lr 1e-4 (1e-3 collapses the deep convolutional models to
+  majority-class prediction).
+- The AS baseline's `sigma` is the price-unit mid volatility scaled to one
+  episode horizon, with `gamma = 1`, so the reservation-price skew is
+  meaningful at episode scale.
+- Table II follows the paper's reporting convention: metrics are aggregated
+  over the whole held-out period (ND-PnL shown x1e5, Profit Ratio x1e-4,
+  Sharpe across episode PnLs) in `overall_paper_table.csv`, and the +/- std
+  for the RL rows comes from training-seed repetition (`--agent-seeds`,
+  default 3); deterministic baselines report single values. The per-episode
+  mean/std summary remains in `overall_summary.csv`.
 
 These are treated as reconstruction limits, not opportunities to add new
 behavior.

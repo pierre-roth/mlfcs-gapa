@@ -49,7 +49,9 @@ EPISODE_EVENTS="${EPISODE_EVENTS:-2000}"
 PRETRAIN_EVENTS="${PRETRAIN_EVENTS:-0}"
 PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-5}"
 PRETRAIN_BATCH_SIZE="${PRETRAIN_BATCH_SIZE:-128}"
+PRETRAIN_LEARNING_RATE="${PRETRAIN_LEARNING_RATE:-1e-4}"
 AGENT_TIMESTEPS="${AGENT_TIMESTEPS:-200000}"
+AGENT_SEEDS="${AGENT_SEEDS:-3}"
 TABULAR_EPISODES="${TABULAR_EPISODES:-50}"
 LATENCIES="${LATENCIES:-1,5,10,20,50,100}"
 RUNTIME_TRAIN_TIMESTEPS="${RUNTIME_TRAIN_TIMESTEPS:-64}"
@@ -62,7 +64,7 @@ echo "run_root=${RUN_ROOT}"
 echo "stocks=${STOCKS} train_days=${TRAIN_DAYS} test_days=${TEST_DAYS}"
 echo "events_per_day=${EVENTS_PER_DAY} episode_events=${EPISODE_EVENTS}"
 echo "pretrain: events=${PRETRAIN_EVENTS} epochs=${PRETRAIN_EPOCHS} batch=${PRETRAIN_BATCH_SIZE}"
-echo "agents: timesteps=${AGENT_TIMESTEPS} tabular_episodes=${TABULAR_EPISODES} ppo_n_envs=${PPO_N_ENVS}"
+echo "agents: timesteps=${AGENT_TIMESTEPS} seeds=${AGENT_SEEDS} tabular_episodes=${TABULAR_EPISODES} ppo_n_envs=${PPO_N_ENVS}"
 echo "latencies=${LATENCIES} seed=${SEED} device=${DEVICE}"
 
 mlfcs-gapa run-full-synthetic-replication \
@@ -75,7 +77,9 @@ mlfcs-gapa run-full-synthetic-replication \
   --pretrain-events "${PRETRAIN_EVENTS}" \
   --pretrain-epochs "${PRETRAIN_EPOCHS}" \
   --pretrain-batch-size "${PRETRAIN_BATCH_SIZE}" \
+  --pretrain-learning-rate "${PRETRAIN_LEARNING_RATE}" \
   --agent-timesteps "${AGENT_TIMESTEPS}" \
+  --agent-seeds "${AGENT_SEEDS}" \
   --tabular-episodes "${TABULAR_EPISODES}" \
   --latency-values "${LATENCIES}" \
   --runtime-train-timesteps "${RUNTIME_TRAIN_TIMESTEPS}" \

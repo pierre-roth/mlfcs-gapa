@@ -21,6 +21,7 @@ def build_pretrain_arrays(
     dataset: LobDataset,
     *,
     window_length: int = PAPER.window_length,
+    threshold: float = PAPER.midprice_label_threshold,
 ) -> PretrainArrays:
     """Build `(N, window_length, 40)` windows and aligned direction labels.
 
@@ -35,7 +36,7 @@ def build_pretrain_arrays(
     ask1 = dataset.orderbook["ask1_price"].to_numpy()
     bid1 = dataset.orderbook["bid1_price"].to_numpy()
     midprices = (ask1 + bid1) / 2.0
-    labels = midprice_direction_labels(midprices)
+    labels = midprice_direction_labels(midprices, threshold=threshold)
     aligned_labels = labels[window_length - 1 :]
 
     valid = aligned_labels >= 0

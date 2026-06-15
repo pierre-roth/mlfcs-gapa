@@ -45,6 +45,7 @@ mlfcs-gapa run-full-synthetic-replication \
   --pretrain-epochs 1 \
   --pretrain-batch-size 64 \
   --agent-timesteps 256 \
+  --agent-seeds 2 \
   --tabular-episodes 3 \
   --latency-values 1,5 \
   --runtime-train-timesteps 16 \
@@ -66,6 +67,7 @@ artifacts = [
     "table_i_pretraining/table_i_pretrain_metrics.csv",
     "table_ii_overall/overall_metrics.csv",
     "table_ii_overall/overall_summary.csv",
+    "table_ii_overall/overall_paper_table.csv",
     "figure_2_latency/latency_metrics.csv",
     "figure_2_latency/figure_2_latency.png",
     "figure_2_latency/figure_2_latency_paper.png",
@@ -90,6 +92,14 @@ methods = set(overall["method"].unique().to_list())
 expected = {"C-PPO", "D-DQN", "Inv-RL", "LOB-RL", "AS", "Random", "Fixed_1", "Fixed_2", "Fixed_3"}
 assert methods == expected, methods
 assert set(overall["stock"].unique().to_list()) == {"000001", "000858"}
+rl_rows = overall.filter(pl.col("method").is_in(["C-PPO", "D-DQN"]))
+assert set(rl_rows["train_seed"].unique().to_list()) == {0, 1}, rl_rows
+
+paper_table = pl.read_csv(
+    root / "table_ii_overall/overall_paper_table.csv", schema_overrides={"stock": pl.Utf8}
+)
+assert set(paper_table["method"].unique().to_list()) == expected
+assert paper_table.filter(pl.col("method") == "C-PPO")["seeds"].min() == 2
 
 latency = pl.read_csv(
     root / "figure_2_latency/latency_metrics.csv", schema_overrides={"stock": pl.Utf8}

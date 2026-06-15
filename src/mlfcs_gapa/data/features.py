@@ -7,6 +7,32 @@ import numpy as np
 from mlfcs_gapa.paper.constants import PAPER
 
 
+def midprice_relative_moves(
+    midprices: np.ndarray,
+    horizon: int = PAPER.midprice_horizon_events,
+) -> np.ndarray:
+    """Compute the paper's `l_t` (Equations 6-7) for every event.
+
+    Entries without enough past or future context are NaN.
+    """
+
+    prices = np.asarray(midprices, dtype=np.float64)
+    if horizon <= 0:
+        raise ValueError("horizon must be positive")
+    if prices.ndim != 1:
+        raise ValueError("midprices must be one-dimensional")
+
+    moves = np.full(prices.shape, np.nan, dtype=np.float64)
+    if len(prices) < (2 * horizon + 1):
+        return moves
+
+    for t in range(horizon, len(prices) - horizon):
+        m_minus = prices[t - horizon + 1 : t + 1].mean()
+        m_plus = prices[t + 1 : t + horizon + 1].mean()
+        moves[t] = (m_plus - m_minus) / m_minus
+    return moves
+
+
 def midprice_direction_labels(
     midprices: np.ndarray,
     horizon: int = PAPER.midprice_horizon_events,
@@ -23,28 +49,33 @@ def midprice_direction_labels(
     Entries without enough past or future context are set to `-1`.
     """
 
-    prices = np.asarray(midprices, dtype=np.float64)
-    labels = np.full(prices.shape, -1, dtype=np.int64)
-
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
-    if prices.ndim != 1:
-        raise ValueError("midprices must be one-dimensional")
-    if len(prices) < (2 * horizon + 1):
-        return labels
-
-    for t in range(horizon, len(prices) - horizon):
-        m_minus = prices[t - horizon + 1 : t + 1].mean()
-        m_plus = prices[t + 1 : t + horizon + 1].mean()
-        relative_move = (m_plus - m_minus) / m_minus
-        if relative_move > threshold:
-            labels[t] = 2
-        elif relative_move < -threshold:
-            labels[t] = 0
-        else:
-            labels[t] = 1
-
+    moves = midprice_relative_moves(midprices, horizon)
+    labels = np.full(moves.shape, -1, dtype=np.int64)
+    valid = np.isfinite(moves)
+    labels[valid & (moves > threshold)] = 2
+    labels[valid & (moves < -threshold)] = 0
+    labels[valid & (np.abs(moves) <= threshold)] = 1
     return labels
+
+
+def calibrate_label_threshold(
+    midprices: np.ndarray,
+    horizon: int = PAPER.midprice_horizon_events,
+    *,
+    stationary_share: float = 1.0 / 3.0,
+) -> float:
+    """Calibrate the label threshold `alpha` to the market, per the paper.
+
+    The paper sets `alpha` "according to the market"; for a synthetic market
+    the threshold is chosen so roughly `stationary_share` of events are
+    labeled stationary, balancing the three classes.
+    """
+
+    moves = midprice_relative_moves(midprices, horizon)
+    magnitudes = np.abs(moves[np.isfinite(moves)])
+    if len(magnitudes) == 0:
+        return PAPER.midprice_label_threshold
+    return float(max(np.quantile(magnitudes, stationary_share), 1e-12))
 
 
 def normalize_lob_window(lob_window: np.ndarray) -> np.ndarray:

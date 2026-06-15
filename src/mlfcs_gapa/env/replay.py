@@ -53,6 +53,7 @@ class EpisodeMetrics:
     mean_inventory: float
     mean_abs_inventory: float
     mean_quoted_spread: float
+    buy_notional: float
 
 
 class HistoricalReplay:
@@ -233,6 +234,7 @@ def compute_episode_metrics(
         mean_inventory=mean_inventory,
         mean_abs_inventory=mean_abs_inventory,
         mean_quoted_spread=mean_spread,
+        buy_notional=buy_notional,
     )
 
 

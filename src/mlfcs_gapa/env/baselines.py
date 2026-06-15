@@ -92,8 +92,15 @@ class RandomLevelStrategy:
 
 @dataclass(frozen=True)
 class AvellanedaStoikovStrategy:
+    """Avellaneda-Stoikov quotes (paper Equations 17-18).
+
+    `sigma` is the price-unit volatility over one episode horizon, so the
+    reservation-price skew `q * gamma * sigma^2 * tau` is meaningful at the
+    scale of one episode (tau is the remaining episode fraction).
+    """
+
     sigma: float
-    gamma: float = 0.1
+    gamma: float = 1.0
     kappa: float = 100.0
     tick_size: float = 0.01
 
@@ -138,6 +145,20 @@ def estimate_event_volatility(dataset: LobDataset) -> float:
     if len(returns) == 0:
         return 0.0
     return float(np.std(returns))
+
+
+def estimate_episode_volatility(
+    dataset: LobDataset, episode_events: int = PAPER.episode_events
+) -> float:
+    """Price-unit mid volatility scaled to one episode horizon for AS quotes."""
+
+    ask1 = dataset.orderbook["ask1_price"].to_numpy().astype(np.float64)
+    bid1 = dataset.orderbook["bid1_price"].to_numpy().astype(np.float64)
+    mid = (ask1 + bid1) / 2.0
+    changes = np.diff(mid)
+    if len(changes) == 0:
+        return 0.0
+    return float(np.std(changes) * np.sqrt(max(1, episode_events)))
 
 
 def evaluate_quote_strategy(

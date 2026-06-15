@@ -1,5 +1,6 @@
 import numpy as np
 import polars as pl
+import pytest
 
 from mlfcs_gapa.experiments.figures import (
     plot_attention_heatmap,
@@ -7,7 +8,11 @@ from mlfcs_gapa.experiments.figures import (
     plot_decision_trace,
     plot_latency_figure,
 )
-from mlfcs_gapa.experiments.reports import add_paper_table_columns, summarize_paper_table
+from mlfcs_gapa.experiments.reports import (
+    add_paper_table_columns,
+    aggregate_period_table,
+    summarize_paper_table,
+)
 
 
 def test_report_helpers_add_paper_scaled_columns() -> None:
@@ -28,6 +33,36 @@ def test_report_helpers_add_paper_scaled_columns() -> None:
     assert np.allclose(scaled["profit_ratio_table"].to_numpy(), [1.0, 2.0, 3.0])
     assert summary.height == 2
     assert "pnl_map_mean" in summary.columns
+
+
+def test_aggregate_period_table_matches_paper_convention() -> None:
+    metrics = pl.DataFrame(
+        {
+            "method": ["AS", "AS", "C-PPO", "C-PPO", "C-PPO", "C-PPO"],
+            "stock": ["000001"] * 6,
+            "train_seed": [None, None, 0, 0, 1, 1],
+            "pnl": [10.0, 20.0, 40.0, 60.0, 50.0, 70.0],
+            "mean_quoted_spread": [0.01, 0.03, 0.02, 0.02, 0.02, 0.02],
+            "mean_abs_inventory": [100.0, 300.0, 50.0, 50.0, 50.0, 50.0],
+            "buy_notional": [1_000.0, 1_000.0, 500.0, 500.0, 500.0, 500.0],
+        }
+    )
+
+    table = aggregate_period_table(metrics)
+
+    as_row = table.filter(pl.col("method") == "AS")
+    # Period totals: PnL 30 over mean spread 0.02 -> ND-PnL 1500 -> 0.015e5.
+    assert as_row["nd_pnl_e5_mean"][0] == pytest.approx(30.0 / 0.02 / 1e5, rel=1e-4)
+    assert as_row["pnl_map_mean"][0] == pytest.approx(30.0 / 200.0, rel=1e-4)
+    assert as_row["profit_ratio_e4_mean"][0] == pytest.approx(30.0 / 2_000.0 * 1e4, rel=1e-4)
+    assert as_row["nd_pnl_e5_std"][0] is None
+    assert as_row["seeds"][0] == 1
+
+    ppo_row = table.filter(pl.col("method") == "C-PPO")
+    # Two seeds with period PnL 100 and 120 -> mean 110/0.02/1e5.
+    assert ppo_row["nd_pnl_e5_mean"][0] == pytest.approx(110.0 / 0.02 / 1e5, rel=1e-4)
+    assert ppo_row["nd_pnl_e5_std"][0] > 0
+    assert ppo_row["seeds"][0] == 2
 
 
 def test_latency_figure_is_written(tmp_path) -> None:

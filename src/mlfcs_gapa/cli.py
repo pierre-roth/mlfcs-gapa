@@ -21,7 +21,7 @@ from mlfcs_gapa.env.baselines import (
     AvellanedaStoikovStrategy,
     FixedLevelStrategy,
     RandomLevelStrategy,
-    estimate_event_volatility,
+    estimate_episode_volatility,
     evaluate_quote_strategy,
 )
 from mlfcs_gapa.env.discrete_env import PaperDiscreteMarketMakingEnv
@@ -41,7 +41,7 @@ from mlfcs_gapa.experiments.figures import (
     plot_decision_trace,
     plot_latency_figure,
 )
-from mlfcs_gapa.experiments.reports import summarize_paper_table
+from mlfcs_gapa.experiments.reports import aggregate_period_table, summarize_paper_table
 from mlfcs_gapa.experiments.tracking import (
     DEFAULT_WANDB_ENTITY,
     DEFAULT_WANDB_PROJECT,
@@ -182,8 +182,8 @@ def run_synthetic_baselines(
         dataset = generate_synthetic_lob_day(
             SyntheticLobConfig(day=day, n_events=events_per_day, seed=seed + day_index)
         )
-        sigma = max(estimate_event_volatility(dataset), 1e-6)
         evaluation_events = min(episode_events, events_per_day - 1)
+        sigma = max(estimate_episode_volatility(dataset, evaluation_events), 1e-6)
         strategies = [
             FixedLevelStrategy(level=1),
             FixedLevelStrategy(level=2),
@@ -306,8 +306,8 @@ def run_synthetic_latency_baselines(
         dataset = generate_synthetic_lob_day(
             SyntheticLobConfig(day=day, n_events=events_per_day, seed=seed + day_index)
         )
-        sigma = max(estimate_event_volatility(dataset), 1e-6)
         evaluation_events = min(episode_events, events_per_day - 1)
+        sigma = max(estimate_episode_volatility(dataset, evaluation_events), 1e-6)
 
         for latency in latency_values:
             strategies = [
@@ -819,7 +819,7 @@ def _benchmark_runtime_rows(
     evaluation_events = min(episode_events, events - 1)
     rows: list[dict[str, float | str | int]] = []
 
-    sigma = max(estimate_event_volatility(dataset), 1e-6)
+    sigma = max(estimate_episode_volatility(dataset, evaluation_events), 1e-6)
     for name, strategy in (
         ("Random", RandomLevelStrategy(max_level=5, seed=seed)),
         ("Fixed", FixedLevelStrategy(level=1)),
@@ -950,6 +950,14 @@ def run_full_synthetic_replication(
     ),
     pretrain_epochs: int = typer.Option(1, min=1, help="Pretraining epochs per Table I model."),
     pretrain_batch_size: int = typer.Option(64, min=1, help="Pretraining batch size."),
+    pretrain_learning_rate: float = typer.Option(
+        1e-4, min=1e-8, help="Pretraining learning rate."
+    ),
+    pretrain_alpha: float = typer.Option(
+        0.0,
+        min=0.0,
+        help="Label threshold alpha; 0 calibrates it to the synthetic market.",
+    ),
     agent_timesteps: int = typer.Option(
         FULL_REPLICATION_AGENT_TIMESTEPS,
         min=1,
@@ -961,6 +969,9 @@ def run_full_synthetic_replication(
     latency_values: str = typer.Option("1,5,10,20,50,100", help="Latency grid."),
     runtime_train_timesteps: int = typer.Option(32, min=1, help="Tiny train timing steps."),
     ppo_n_envs: int = typer.Option(8, min=1, help="Parallel PPO training environments."),
+    agent_seeds: int = typer.Option(
+        3, min=1, help="Training seeds per RL agent for Table II mean +/- std."
+    ),
     seed: int = typer.Option(1, help="Base random seed."),
     device: str = typer.Option("cpu", help="Torch/SB3 device."),
     wandb: bool = typer.Option(False, "--wandb/--no-wandb", help="Log this run to W&B."),
@@ -999,11 +1010,14 @@ def run_full_synthetic_replication(
             "pretrain_events": pretrain_events,
             "pretrain_epochs": pretrain_epochs,
             "pretrain_batch_size": pretrain_batch_size,
+            "pretrain_learning_rate": pretrain_learning_rate,
+            "pretrain_alpha": pretrain_alpha,
             "agent_timesteps": agent_timesteps,
             "tabular_episodes": tabular_episodes,
             "latencies": latencies,
             "runtime_train_timesteps": runtime_train_timesteps,
             "ppo_n_envs": ppo_n_envs,
+            "agent_seeds": agent_seeds,
             "seed": seed,
             "device": device,
         },
@@ -1045,6 +1059,7 @@ def run_full_synthetic_replication(
         pretrain_events=pretrain_events,
         pretrain_epochs=pretrain_epochs,
         agent_timesteps=agent_timesteps,
+        agent_seeds=agent_seeds,
         tabular_episodes=tabular_episodes,
         latencies=latencies,
         seed=seed,
@@ -1083,6 +1098,8 @@ def run_full_synthetic_replication(
             batch_size=pretrain_batch_size,
             device=device,
             seed=seed + model_index,
+            learning_rate=pretrain_learning_rate,
+            label_threshold=pretrain_alpha,
         )
         if model_name == "Attn-LOB":
             attn_lob_checkpoint = model_path
@@ -1106,14 +1123,18 @@ def run_full_synthetic_replication(
             device=device,
             ppo_class=PPO,
             ppo_n_envs=ppo_n_envs,
+            agent_seeds=agent_seeds,
         )
     )
     overall_metrics_path = output_dir / "table_ii_overall" / "overall_metrics.csv"
     overall_trades_path = output_dir / "table_ii_overall" / "overall_trades.parquet"
     overall_summary_path = output_dir / "table_ii_overall" / "overall_summary.csv"
-    pl.DataFrame(overall_metrics).write_csv(overall_metrics_path)
+    overall_paper_table_path = output_dir / "table_ii_overall" / "overall_paper_table.csv"
+    overall_frame = pl.DataFrame(overall_metrics, infer_schema_length=None)
+    overall_frame.write_csv(overall_metrics_path)
     pl.DataFrame(overall_trades).write_parquet(overall_trades_path)
-    summarize_paper_table(pl.DataFrame(overall_metrics)).write_csv(overall_summary_path)
+    summarize_paper_table(overall_frame).write_csv(overall_summary_path)
+    aggregate_period_table(overall_frame).write_csv(overall_paper_table_path)
 
     latency_metrics, latency_trades = _run_latency_synthetic_table(
         train_dataset=_first_stock_train_dataset(
@@ -1198,6 +1219,7 @@ def run_full_synthetic_replication(
             table_i_path,
             overall_metrics_path,
             overall_summary_path,
+            overall_paper_table_path,
             latency_metrics_path,
             latency_figure_path,
             latency_paper_figure_path,
@@ -1231,6 +1253,7 @@ def run_full_synthetic_replication(
             table_i_path,
             overall_metrics_path,
             overall_summary_path,
+            overall_paper_table_path,
             latency_metrics_path,
             latency_figure_path,
             latency_paper_figure_path,
@@ -1523,12 +1546,20 @@ def _run_pretrain_on_dataset(
     batch_size: int,
     device: str,
     seed: int,
+    learning_rate: float = 1e-4,
+    label_threshold: float = 0.0,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     input_shape = pretrain_input_shape(model_name)
-    arrays = build_pretrain_arrays(dataset, window_length=input_shape[0])
+    if label_threshold <= 0.0:
+        label_threshold = _calibrated_label_threshold(dataset)
+    arrays = build_pretrain_arrays(
+        dataset, window_length=input_shape[0], threshold=label_threshold
+    )
     evaluation_arrays = (
-        build_pretrain_arrays(evaluation_dataset, window_length=input_shape[0])
+        build_pretrain_arrays(
+            evaluation_dataset, window_length=input_shape[0], threshold=label_threshold
+        )
         if evaluation_dataset is not None
         else None
     )
@@ -1539,6 +1570,7 @@ def _run_pretrain_on_dataset(
         evaluation_arrays=evaluation_arrays,
         epochs=epochs,
         batch_size=batch_size,
+        learning_rate=learning_rate,
         seed=seed,
         device=device,
     )
@@ -1552,6 +1584,8 @@ def _run_pretrain_on_dataset(
         "day": dataset.day,
         "evaluation_day": evaluation_dataset.day if evaluation_dataset else dataset.day,
         **metrics.__dict__,
+        "label_threshold": label_threshold,
+        "learning_rate": learning_rate,
         "input_window_length": input_shape[0],
         "implementation_param": implementation_param,
         "implementation_encoder_param": implementation_encoder_param,
@@ -1581,9 +1615,10 @@ def _run_overall_synthetic_table(
     device: str,
     ppo_class,
     ppo_n_envs: int = 8,
+    agent_seeds: int = 1,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
-    metrics_rows: list[dict[str, float | int | str | bool]] = []
+    metrics_rows: list[dict[str, float | int | str | bool | None]] = []
     trade_rows: list[dict[str, float | int | str]] = []
     first_ppo_trade_log: list[dict[str, float | int]] = []
     first_ppo_model: object | None = None
@@ -1605,33 +1640,6 @@ def _run_overall_synthetic_table(
             tabular_episodes=tabular_episodes,
             seed=seed + 10_000 * stock_index,
         )
-        ppo_model = _train_ppo_model(
-            train_dataset,
-            output_dir=output_dir / stock / "c_ppo",
-            episode_events=episode_events,
-            latency_events=1,
-            total_timesteps=agent_timesteps,
-            seed=seed + 30_000 + stock_index,
-            device=device,
-            ppo_class=ppo_class,
-            encoder_checkpoint=encoder_checkpoint,
-            normalize_actions=True,
-            policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
-            n_envs=ppo_n_envs,
-        )
-        if first_ppo_model is None:
-            first_ppo_model = ppo_model
-
-        ddqn_model = _train_ddqn_model(
-            train_dataset,
-            output_dir=output_dir / stock / "d_dqn",
-            episode_events=episode_events,
-            latency_events=1,
-            total_timesteps=agent_timesteps,
-            seed=seed + 40_000 + stock_index,
-            device=device,
-            encoder_checkpoint=encoder_checkpoint,
-        )
 
         for test_index, (day, test_dataset) in enumerate(stock_test_entries):
             episode_seed = seed + 1_000 * stock_index + test_index
@@ -1642,7 +1650,7 @@ def _run_overall_synthetic_table(
                 latency_events=1,
                 seed=episode_seed,
             ):
-                row.update({"stock": stock, "day": day})
+                row.update({"stock": stock, "day": day, "train_seed": None})
                 metrics_rows.append(row)
                 _extend_tagged_trades(
                     trade_rows,
@@ -1652,67 +1660,105 @@ def _run_overall_synthetic_table(
                     method=str(row["method"]),
                 )
 
-            for row, log_rows in _evaluate_ppo_on_test_episodes(
-                ppo_model,
-                test_dataset,
+        # The paper's Table II reports RL rows as mean +/- std across
+        # training runs; the deterministic baselines are evaluated once.
+        for seed_index in range(max(1, agent_seeds)):
+            agent_seed_offset = stock_index + 199 * seed_index
+            ppo_model = _train_ppo_model(
+                train_dataset,
+                output_dir=output_dir / stock / f"c_ppo_seed{seed_index}",
                 episode_events=episode_events,
                 latency_events=1,
-                normalize_actions=True,
-                seed=episode_seed + 30_000,
-            ):
-                row.update(
-                    {
-                        "method": "C-PPO",
-                        "stock": stock,
-                        "day": day,
-                        "total_timesteps": agent_timesteps,
-                        "latency_events": 1,
-                        "lob_mode": "attn",
-                        "use_dynamic_state": True,
-                        "normalize_actions": True,
-                        "policy_log_std_init": FULL_REPLICATION_PPO_LOG_STD_INIT,
-                        "encoder_checkpoint": str(encoder_checkpoint),
-                    }
-                )
-                metrics_rows.append(row)
-                _extend_tagged_trades(
-                    trade_rows,
-                    log_rows,
-                    stock=stock,
-                    day=day,
-                    method="C-PPO",
-                )
-                if not first_ppo_trade_log:
-                    first_ppo_trade_log = log_rows
-
-            for row, log_rows in _evaluate_ddqn_on_test_episodes(
-                ddqn_model,
-                test_dataset,
-                episode_events=episode_events,
-                latency_events=1,
-                seed=episode_seed + 40_000,
+                total_timesteps=agent_timesteps,
+                seed=seed + 30_000 + agent_seed_offset,
                 device=device,
-            ):
-                row.update(
-                    {
-                        "method": "D-DQN",
-                        "stock": stock,
-                        "day": day,
-                        "total_timesteps": agent_timesteps,
-                        "latency_events": 1,
-                        "lob_mode": "attn",
-                        "use_dynamic_state": True,
-                        "encoder_checkpoint": str(encoder_checkpoint),
-                    }
-                )
-                metrics_rows.append(row)
-                _extend_tagged_trades(
-                    trade_rows,
-                    log_rows,
-                    stock=stock,
-                    day=day,
-                    method="D-DQN",
-                )
+                ppo_class=ppo_class,
+                encoder_checkpoint=encoder_checkpoint,
+                normalize_actions=True,
+                policy_log_std_init=FULL_REPLICATION_PPO_LOG_STD_INIT,
+                n_envs=ppo_n_envs,
+            )
+            if first_ppo_model is None:
+                first_ppo_model = ppo_model
+
+            ddqn_model = _train_ddqn_model(
+                train_dataset,
+                output_dir=output_dir / stock / f"d_dqn_seed{seed_index}",
+                episode_events=episode_events,
+                latency_events=1,
+                total_timesteps=agent_timesteps,
+                seed=seed + 40_000 + agent_seed_offset,
+                device=device,
+                encoder_checkpoint=encoder_checkpoint,
+            )
+
+            for test_index, (day, test_dataset) in enumerate(stock_test_entries):
+                episode_seed = seed + 1_000 * stock_index + test_index
+                for row, log_rows in _evaluate_ppo_on_test_episodes(
+                    ppo_model,
+                    test_dataset,
+                    episode_events=episode_events,
+                    latency_events=1,
+                    normalize_actions=True,
+                    seed=episode_seed + 30_000,
+                ):
+                    row.update(
+                        {
+                            "method": "C-PPO",
+                            "stock": stock,
+                            "day": day,
+                            "train_seed": seed_index,
+                            "total_timesteps": agent_timesteps,
+                            "latency_events": 1,
+                            "lob_mode": "attn",
+                            "use_dynamic_state": True,
+                            "normalize_actions": True,
+                            "policy_log_std_init": FULL_REPLICATION_PPO_LOG_STD_INIT,
+                            "encoder_checkpoint": str(encoder_checkpoint),
+                        }
+                    )
+                    metrics_rows.append(row)
+                    if seed_index == 0:
+                        _extend_tagged_trades(
+                            trade_rows,
+                            log_rows,
+                            stock=stock,
+                            day=day,
+                            method="C-PPO",
+                        )
+                        if not first_ppo_trade_log:
+                            first_ppo_trade_log = log_rows
+
+                for row, log_rows in _evaluate_ddqn_on_test_episodes(
+                    ddqn_model,
+                    test_dataset,
+                    episode_events=episode_events,
+                    latency_events=1,
+                    seed=episode_seed + 40_000,
+                    device=device,
+                ):
+                    row.update(
+                        {
+                            "method": "D-DQN",
+                            "stock": stock,
+                            "day": day,
+                            "train_seed": seed_index,
+                            "total_timesteps": agent_timesteps,
+                            "latency_events": 1,
+                            "lob_mode": "attn",
+                            "use_dynamic_state": True,
+                            "encoder_checkpoint": str(encoder_checkpoint),
+                        }
+                    )
+                    metrics_rows.append(row)
+                    if seed_index == 0:
+                        _extend_tagged_trades(
+                            trade_rows,
+                            log_rows,
+                            stock=stock,
+                            day=day,
+                            method="D-DQN",
+                        )
 
     if first_ppo_model is None:
         raise RuntimeError("overall replication did not train a PPO model")
@@ -1726,7 +1772,7 @@ def _baseline_strategies_for_train_data(
     tabular_episodes: int,
     seed: int,
 ) -> list[object]:
-    sigma = max(estimate_event_volatility(train_dataset), 1e-6)
+    sigma = max(estimate_episode_volatility(train_dataset, episode_events), 1e-6)
     strategies: list[object] = [
         FixedLevelStrategy(level=1),
         FixedLevelStrategy(level=2),
@@ -1794,6 +1840,14 @@ def _evaluate_strategies_on_test_episodes(
                 row["episode_start"] = episode_start
             rows.append((metrics, log_rows))
     return rows
+
+
+def _calibrated_label_threshold(dataset: LobDataset) -> float:
+    from mlfcs_gapa.data.features import calibrate_label_threshold
+
+    ask1 = dataset.orderbook["ask1_price"].to_numpy()
+    bid1 = dataset.orderbook["bid1_price"].to_numpy()
+    return calibrate_label_threshold((ask1 + bid1) / 2.0)
 
 
 def _train_ppo_model(
@@ -2419,6 +2473,7 @@ def _write_full_replication_config(
     pretrain_events: int,
     pretrain_epochs: int,
     agent_timesteps: int,
+    agent_seeds: int,
     tabular_episodes: int,
     latencies: list[int],
     seed: int,
@@ -2444,6 +2499,7 @@ def _write_full_replication_config(
         f"- pretrain_events: {pretrain_events}",
         f"- pretrain_epochs: {pretrain_epochs}",
         f"- agent_timesteps: {agent_timesteps}",
+        f"- agent_seeds: {agent_seeds}",
         f"- tabular_episodes: {tabular_episodes}",
         f"- latency_events: {', '.join(str(value) for value in latencies)}",
         f"- seed: {seed}",
