@@ -356,7 +356,7 @@ def _make_train_env(config, *, train_dataset, as_strategy, seed):
 
     def make_env(rank: int):
         def _factory():
-            if config.variant in {"soft_as", "hard_as", "profit_ppo"}:
+            if config.variant in {"bc_warm_start", "soft_as", "hard_as", "profit_ppo"}:
                 return ASGuidedMarketMakingEnv(
                     train_dataset,
                     as_strategy=as_strategy,
@@ -388,7 +388,7 @@ def _make_train_env(config, *, train_dataset, as_strategy, seed):
 def _make_eval_env(config, *, test_dataset, as_strategy, seed):
     guidance = _guidance_for_config(config)
     episode_events = min(config.episode_events, test_dataset.orderbook.height - 1)
-    if config.variant == "hard_as":
+    if config.variant in {"bc_warm_start", "soft_as", "hard_as", "profit_ppo"}:
         return ASGuidedMarketMakingEnv(
             test_dataset,
             as_strategy=as_strategy,
@@ -488,6 +488,8 @@ def _guidance_for_config(config: ASGuidedPanelConfig) -> ASGuidanceConfig:
             base_reward="profit",
         )
     if config.variant == "profit_ppo":
+        return ASGuidanceConfig(mode="none", base_reward="profit")
+    if config.variant == "bc_warm_start":
         return ASGuidanceConfig(mode="none", base_reward="profit")
     return ASGuidanceConfig(mode="none", base_reward="paper_hybrid")
 

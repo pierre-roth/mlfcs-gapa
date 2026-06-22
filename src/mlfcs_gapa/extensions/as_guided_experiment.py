@@ -116,7 +116,7 @@ def run_synthetic_as_guided_experiment(
             "bc_samples": config.bc_samples if config.variant == "bc_warm_start" else 0,
             "soft_penalty": config.soft_penalty if config.variant == "soft_as" else 0.0,
             "as_base_reward": "profit"
-            if config.variant in {"soft_as", "hard_as"}
+            if config.variant in {"bc_warm_start", "soft_as", "hard_as"}
             else "paper_hybrid",
             "hard_window_bias": config.hard_window_bias if config.variant == "hard_as" else 0.0,
             "hard_window_spread": config.hard_window_spread if config.variant == "hard_as" else 0.0,
@@ -133,7 +133,24 @@ def run_synthetic_as_guided_experiment(
 
 
 def _make_train_env(config, train_dataset, as_strategy):
-    if config.variant == "soft_as":
+    if config.variant == "bc_warm_start":
+        guidance = ASGuidanceConfig(mode="none", base_reward="profit")
+
+        def make_env(rank: int):
+            def _factory():
+                return ASGuidedMarketMakingEnv(
+                    train_dataset,
+                    as_strategy=as_strategy,
+                    guidance=guidance,
+                    episode_events=config.episode_events,
+                    normalize_actions=True,
+                    random_episode_starts=True,
+                    seed=config.seed + rank,
+                )
+
+            return _factory
+
+    elif config.variant == "soft_as":
         guidance = ASGuidanceConfig(
             mode="soft",
             soft_penalty=config.soft_penalty,
@@ -200,13 +217,22 @@ def _serializable_config(config: ASGuidedExperimentConfig) -> dict[str, object]:
 
 
 def _make_eval_env(config, test_dataset, as_strategy):
-    if config.variant == "hard_as":
-        guidance = ASGuidanceConfig(
-            mode="hard",
-            hard_window_bias=config.hard_window_bias,
-            hard_window_spread=config.hard_window_spread,
-            base_reward="profit",
-        )
+    if config.variant in {"bc_warm_start", "soft_as", "hard_as"}:
+        if config.variant == "soft_as":
+            guidance = ASGuidanceConfig(
+                mode="soft",
+                soft_penalty=config.soft_penalty,
+                base_reward="profit",
+            )
+        elif config.variant == "hard_as":
+            guidance = ASGuidanceConfig(
+                mode="hard",
+                hard_window_bias=config.hard_window_bias,
+                hard_window_spread=config.hard_window_spread,
+                base_reward="profit",
+            )
+        else:
+            guidance = ASGuidanceConfig(mode="none", base_reward="profit")
         return ASGuidedMarketMakingEnv(
             test_dataset,
             as_strategy=as_strategy,

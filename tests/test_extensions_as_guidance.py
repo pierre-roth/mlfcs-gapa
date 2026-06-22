@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -11,6 +13,7 @@ from mlfcs_gapa.extensions.as_guidance import (
     paper_action_to_env_action,
 )
 from mlfcs_gapa.extensions.as_guided_env import ASGuidedMarketMakingEnv
+from mlfcs_gapa.extensions.as_guided_panel import ASGuidedPanelConfig, _guidance_for_config
 
 
 def test_as_teacher_demo_collection_shapes() -> None:
@@ -93,3 +96,16 @@ def test_soft_as_guided_env_uses_profit_reward_base() -> None:
     assert row["base_reward"] == "profit"
     assert reward == pytest.approx(row["profit_reward"] - row["as_guidance_penalty"])
     assert info["base_reward"] == "profit"
+
+
+def test_bc_warm_start_finetunes_with_profit_reward() -> None:
+    config = ASGuidedPanelConfig(
+        output_dir=Path("unused"),
+        variant="bc_warm_start",
+        label="bc_as",
+    )
+
+    guidance = _guidance_for_config(config)
+
+    assert guidance.mode == "none"
+    assert guidance.base_reward == "profit"
