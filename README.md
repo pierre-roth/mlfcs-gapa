@@ -4,8 +4,6 @@ Code accompanying the AS-regularized market-making project. The repository conta
 a synthetic-data replication of the Attn-LOB/C-PPO market-making pipeline and a
 separate extension package for Avellaneda--Stoikov (AS) guided policies.
 
-Project repository: <https://github.com/pierre-roth/mlfcs-gapa>
-
 ## Setup
 
 Requires Python 3.12 and `uv`.
