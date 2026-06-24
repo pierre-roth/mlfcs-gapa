@@ -1,0 +1,4 @@
+method,stock,as_gamma,as_kappa,as_calibration
+as_empirical_matched,000001,0.05,125.22877541262076,stock_specific
+as_empirical_matched,000858,0.05,23.886201669360876,stock_specific
+as_empirical_matched,002415,0.05,83.78609448688599,stock_specific
