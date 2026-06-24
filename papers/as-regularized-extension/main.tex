@@ -54,7 +54,7 @@
 \maketitle
 
 \begin{abstract}
-Deep reinforcement-learning market makers are often trained with hybrid rewards that mix dampened profit-and-loss, transaction advantage, and inventory penalties. We revisit the Attn-LOB / C-PPO market maker of \citet{guo2023mm} and ask whether the behavioural prior can instead come from a classical quoting model. We propose \softas: PPO with pure profit as the economic reward and a soft action-space regularizer toward a per-stock Avellaneda--Stoikov (AS) teacher fitted on training data. On a synthetic, paper-shaped replication benchmark, the selected soft-AS policy improves mean episode PnL over reward-shaped \cppo{} by $15.10$ across 15 stock--seed pairs ($95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$) and over \profitppo{} by $9.50$ ($95\%$ CI $[5.45,13.56]$, $p=1.9\times10^{-4}$). It also stays much closer to the AS teacher in action space. The gain is not free: \softas{} quotes tighter, fills more, and carries more inventory, especially under high latency. The result is therefore a focused claim: AS regularization is a cleaner, interpretable way to steer a deep market maker than hybrid reward shaping in this controlled benchmark.
+Deep reinforcement-learning market makers are often trained with hybrid rewards that mix dampened profit-and-loss, transaction advantage, and inventory penalties. We revisit the Attn-LOB / C-PPO market maker of \citet{guo2023mm} and ask whether the behavioural prior can instead come from a classical quoting model. We propose \softas: PPO with pure profit as the economic reward and a soft action-space regularizer toward a per-stock Avellaneda--Stoikov (AS) teacher fitted on training data. On a synthetic, paper-shaped replication benchmark, the selected soft-AS policy improves mean episode PnL over reward-shaped \cppo{} by $15.10$ across 15 stock--seed pairs ($95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$) and over \profitppo{} by $9.50$ ($95\%$ CI $[5.45,13.56]$, $p=1.9\times10^{-4}$). It also stays much closer to the AS teacher in action space. The tradeoff is visible: \softas{} quotes tighter, fills more, and carries more inventory, especially under high latency. In this benchmark, AS regularization gives a cleaner and more inspectable way to steer a deep market maker than hybrid reward shaping.
 \end{abstract}
 
 \section{Introduction}
@@ -71,17 +71,17 @@ R_t
 \end{equation}
 These terms are useful engineering, but they are not potential-based reward shaping \citep{ng1999}; they change the optimization target and introduce coefficients that must be retuned for each market.
 
-We replace this hybrid reward with a simpler separation. The economic objective is pure profit. The behavioural prior is supplied by Avellaneda--Stoikov (AS), a classical market-making model that gives an interpretable reservation price and spread from inventory, volatility, time remaining, risk aversion, and liquidity \citep{avellaneda2008}. Instead of copying AS, we regularize the learned continuous action toward a fitted AS teacher:
+Our alternative keeps the accounting simpler. The environment reward is pure profit, while the behavioural prior comes from Avellaneda--Stoikov (AS), a classical market-making model that gives an interpretable reservation price and spread from inventory, volatility, time remaining, risk aversion, and liquidity \citep{avellaneda2008}. Instead of copying AS, we regularize the learned continuous action toward a fitted AS teacher:
 \begin{equation}
 J(\pi)
 = \E_{\pi}\!\left[\sum_t \Delta\mathrm{PnL}_t
 - \lambda \left\lVert a^\pi_t-a^{\mathrm{AS}}_t \right\rVert_2^2 \right].
 \label{eq:softas}
 \end{equation}
-This is not an unconstrained profit-only agent; it is profit-based RL with an explicit, inspectable policy prior.
+The AS term is part of the training objective, but the economic reward being optimized is ordinary marked-to-market profit.
 
 \paragraph{Contributions.}
-First, we formulate AS guidance as a soft action-space regularizer for continuous-action PPO market making. Second, we calibrate one AS teacher per stock from the training window and keep the extension code separated from the paper-replication pipeline. Third, we run a matched synthetic benchmark following the original paper's stock/day/episode/action structure. The main comparison uses five PPO seeds for \softas{}, \cppo{}, and \profitppo{} on three synthetic stocks. Fourth, we regenerate the original-style analyses--performance by stock, latency, attention, and decision traces--for the proposed method, and add teacher-action divergence diagnostics.
+We formulate AS guidance as a soft action-space regularizer for continuous-action PPO market making, calibrate one AS teacher per stock from the training window, and keep the extension code separated from the paper-replication pipeline. The experiments use a matched synthetic benchmark following the original paper's stock/day/episode/action structure, with five PPO seeds for \softas{}, \cppo{}, and \profitppo{} on three synthetic stocks. We also regenerate the original-style analyses--performance by stock, latency, attention, and decision traces--for the proposed method, and add teacher-action divergence diagnostics.
 
 \section{Related work}
 \label{sec:related}
@@ -127,7 +127,8 @@ The main paper reports three PPO methods. \cppo{} is the reward-shaped baseline 
 \section{Experimental setup}
 \label{sec:setup}
 
-The original Shenzhen Stock Exchange LOB data are proprietary. We therefore use a synthetic event-level LOB generator that preserves the experimental shape of \citet{guo2023mm}: three stock identities, top-10 book levels, stable intraday windows, 10 train days, 11 test days, and 2000-event episodes. The simulator replays the synthetic stream and fills the agent's quotes only when the recorded trade stream crosses the quote. There is no market impact and no transaction cost. This setup is appropriate for method comparison and debugging; it does not support live-market performance claims.
+\paragraph{A synthetic benchmark.}
+The original Shenzhen Stock Exchange LOB data are proprietary. We therefore use a synthetic event-level LOB generator that preserves the experimental shape of \citet{guo2023mm}: three stock identities, top-10 book levels, stable intraday windows, 10 train days, 11 test days, and 2000-event episodes. Each instrument has its own base price and generated training/test days. The latent fair value moves through stable, trending, and volatile regimes; around it the generator builds a top-10 book, trade stream, and market-order flow. The simulator then replays this stream and fills the agent's quotes only when recorded trades cross the quote. There is no market impact and no transaction cost. The benchmark is useful for controlled comparisons and debugging because every method faces the same synthetic tapes, but it remains a proxy for the proprietary data used in the original paper.
 
 The original code trains one model per stock, not a single shared cross-stock policy, and we keep that design. The main comparison uses five PPO seeds per stock for each of \cppo{}, \profitppo{}, and \softas{}: 15 paired stock--seed units per method. All learned methods use the same state, encoder, action space, trade granularity, train/test split, and 400k PPO training steps.
 
@@ -163,7 +164,7 @@ Method & PnL ($\pm$SE) & ND-PnL & Sharpe ($\pm$SE) & Abs. inv. & Spread & Fills 
 
 Table~\ref{tab:main} and Figure~\ref{fig:overview} give the main result. \softas{} is best on mean PnL, ND-PnL, and Sharpe. The profit-only control is also stronger than the original reward-shaped baseline, so part of the improvement comes from removing the old hybrid reward. The AS regularizer adds a second gain on top of that stronger profit-only baseline.
 
-The paired tests in Table~\ref{tab:paired} are the cleanest comparison because each row compares methods on the same stock and seed. \softas{} improves PnL over \cppo{} by $15.10$ with a $95\%$ CI of $[9.19,21.01]$ and $p=8.1\times10^{-5}$. Against \profitppo{}, the improvement is $9.50$ with $p=1.9\times10^{-4}$. The result is therefore not just "profit-only was enough"; the fitted AS prior contributes statistically visible signal.
+The paired tests in Table~\ref{tab:paired} are the cleanest comparison because each row compares methods on the same stock and seed. \softas{} improves PnL over \cppo{} by $15.10$ with a $95\%$ CI of $[9.19,21.01]$ and $p=8.1\times10^{-5}$. Against \profitppo{}, the improvement is $9.50$ with $p=1.9\times10^{-4}$. This matters because \profitppo{} already removes the hybrid reward; the fitted AS prior still adds statistically visible signal.
 
 \begin{table}[t]
 \centering
@@ -201,7 +202,7 @@ The main advantage of AS regularization over reward shaping is inspectability: a
 \label{fig:teacher}
 \end{figure}
 
-This alignment is not free. The same diagnostic run shows more fills per episode for \softas{} ($96.8$ versus $54.4$ for \cppo{} at the logged evaluation granularity) and larger inventory excursions. In the five-seed training evaluation, \softas{} also has higher average inventory and more fills than both controls (Table~\ref{tab:main}). The correct conclusion is not that AS regularization dominates every risk axis; it gives a transparent knob for moving the policy toward an interpretable market-making regime.
+The same diagnostic run shows more fills per episode for \softas{} ($96.8$ versus $54.4$ for \cppo{} at the logged evaluation granularity) and larger inventory excursions. In the five-seed training evaluation, \softas{} also has higher average inventory and more fills than both controls (Table~\ref{tab:main}). AS regularization improves the policy by making it more willing to quote, so the added return comes with a clearer inventory and latency tradeoff.
 
 \subsection{Latency remains the main weakness}
 
@@ -228,18 +229,18 @@ Figure~\ref{fig:decision} mirrors the original paper's decision-trace diagnostic
 \section{Discussion}
 \label{sec:discussion}
 
-\paragraph{Why soft regularization helps.}
-The three main methods separate the effect of the old reward from the effect of the AS prior. \profitppo{} beats \cppo{}, meaning the hybrid reward was not ideal in this synthetic setting. \softas{} then beats \profitppo{}, meaning the classical teacher adds useful structure beyond merely removing reward shaping. Hard AS constraints, reported in Appendix~\ref{app:sensitivity}, were weaker: clipping the policy near AS removes profitable deviations. The soft prior is useful precisely because it is defeasible.
+\paragraph{Why the soft prior helps.}
+The three main methods separate the effect of the old reward from the effect of the AS prior. \profitppo{} beats \cppo{}, so the hybrid reward was a poor fit for this synthetic setting. \softas{} then beats \profitppo{}, which points to the classical teacher adding useful structure beyond the reward change. Hard AS constraints, reported in Appendix~\ref{app:sensitivity}, were weaker because clipping the policy near AS removes profitable deviations. The soft prior works better because the policy can still move away from the teacher when the data support it.
 
-\paragraph{What the result does and does not claim.}
-The claim is intentionally narrow. On a paper-shaped synthetic benchmark, with per-stock policies and matched seeds, AS-regularized PPO is a stronger and more interpretable alternative to hybrid reward shaping. It is not a claim of universal superiority. The method trades more and carries more inventory. It is also latency-sensitive. A live or proprietary-data claim would require a real event stream, transaction costs, market impact, and stricter tail-risk constraints.
+\paragraph{Scope and risk.}
+The claim is intentionally narrow. On a paper-shaped synthetic benchmark, with per-stock policies and matched seeds, AS-regularized PPO is a stronger and more interpretable alternative to hybrid reward shaping. The method trades more and carries more inventory, and the latency sweep shows that this matters when quotes become stale. A live or proprietary-data claim would require a real event stream, transaction costs, market impact, and stricter tail-risk constraints.
 
-\paragraph{Why this is still useful.}
-Reward shaping hides design decisions inside scalar coefficients. AS regularization exposes them: the teacher can be inspected, calibrated, logged, and stress-tested. If the policy deviates from AS, that deviation is measurable. If the teacher is too aggressive, $\gamma$, $\kappa$, or $\lambda$ can be changed directly. That makes the approach easier to reason about than a hybrid reward whose terms interact indirectly.
+\paragraph{Practical value.}
+Reward shaping hides design decisions inside scalar coefficients. AS regularization makes those decisions easier to inspect: the teacher can be calibrated, logged, and stress-tested, and the policy's distance from the teacher can be measured directly. When the teacher is too aggressive, $\gamma$, $\kappa$, or $\lambda$ provide meaningful knobs. That makes the approach easier to reason about than a hybrid reward whose terms interact indirectly.
 
 \section{Conclusion}
 
-We revisited a reward-shaped deep market maker and replaced its hybrid reward with a profit objective plus a soft AS action prior. On a controlled synthetic replication of the original paper's experimental setup, the selected \softas{} policy beats both reward-shaped \cppo{} and a profit-only PPO control over five seeds per stock. The new diagnostics also sharpen the paper's limitations: the method is more active, more inventory-bearing, and more fragile under high latency. The strongest defensible conclusion is therefore not that AS regularization is risk-free, but that it is a cleaner and more interpretable way to steer deep market-making behaviour than hand-crafted hybrid reward shaping.
+We revisited a reward-shaped deep market maker and replaced its hybrid reward with a profit objective plus a soft AS action prior. On a controlled synthetic replication of the original paper's experimental setup, the selected \softas{} policy beats both reward-shaped \cppo{} and a profit-only PPO control over five seeds per stock. The diagnostics also sharpen the limitation: the method is more active, more inventory-bearing, and more fragile under high latency. Taken together, the experiments make a modest case for AS regularization as a cleaner and more interpretable way to steer deep market-making behaviour than hand-crafted hybrid reward shaping.
 
 \bibliographystyle{plainnat}
 \begin{thebibliography}{99}
@@ -343,7 +344,9 @@ Y.~Zhong, Y.~Bergstrom, and A.~R. Ward.
 \section{Synthetic benchmark}
 \label{app:data}
 
-The synthetic generator produces event-level LOB days with a latent fair-value process, bid--ask bounce, stable/trending/volatile regimes, market-order flow, and top-10 price/volume levels. Each day has $10{,}000$ raw events before stable-window filtering; downstream evaluation keeps the original paper's stable trading windows, 10:00--11:30 and 13:00--14:30. The three instruments use base prices $16.45$ (000001), $130.00$ (000858), and $35.00$ (002415). The replay simulator has no market impact and no transaction cost, so these experiments are controlled method comparisons rather than market-deployment evidence.
+The synthetic generator produces event-level LOB days with a latent fair-value process, bid--ask bounce, stable/trending/volatile regimes, market-order flow, and top-10 price/volume levels. Each day has $10{,}000$ raw events before stable-window filtering; downstream evaluation keeps the original paper's stable trading windows, 10:00--11:30 and 13:00--14:30. The three instruments use base prices $16.45$ (000001), $130.00$ (000858), and $35.00$ (002415), giving low-, high-, and mid-price test cases with different realized spread and volatility scales.
+
+The generator first simulates a latent fair value on the tick grid. Regime labels change the probability and size of fair-value moves, and order-flow intensity changes with the regime. Around the fair value, the code builds ask and bid ladders with ten levels of prices and volumes, then records trades whose signs and prices can cross the agent's later quotes during replay. This gives the policy the same kind of $50\times40$ LOB tensor used by \citet{guo2023mm}, while keeping the data fully reproducible and shareable. The replay simulator has no market impact and no transaction cost, so the benchmark should be read as controlled method-comparison evidence rather than market-deployment evidence.
 
 \section{Teacher calibration and sensitivity}
 \label{app:sensitivity}
@@ -362,7 +365,11 @@ The synthetic generator produces event-level LOB days with a latent fair-value p
 \label{fig:lambda}
 \end{figure}
 
-The broader matched sweep included base-teacher $\lambda\in\{0.03,0.05,0.10,0.125,0.20\}$, low-risk and high-risk teachers, fill-$\kappa$ calibration, hard AS windows, direct AS, and BC warm start. Hard AS was weaker than the selected soft regularizer because clipping near the teacher removes profitable deviations. BC warm start cloned AS in a supervised phase and then fine-tuned with pure profit, but the persistent soft prior was more reliable in exploratory runs.
+The broader matched sweep included base-teacher $\lambda\in\{0.03,0.05,0.10,0.125,0.20\}$, low-risk and high-risk teachers, fill-$\kappa$ calibration, hard AS windows, direct AS, and BC warm start. The selected main method uses the low-risk teacher with $\lambda=0.10$ because it gave the best balance of PnL, Sharpe, and behavioural alignment in the five-seed batch.
+
+Hard AS applies the teacher as an action constraint rather than a training penalty: the PPO policy proposes an action, and the environment clips that action to a fixed window around the AS action before converting it to quotes. The wider hard window was the best hard-AS variant in the matched batch, but it still underperformed the selected soft regularizer. This is consistent with the role of the constraint. A hard window prevents the policy from taking large deviations even when the synthetic tape makes those deviations profitable. It also treats the AS teacher as locally correct at every step, which is too strong once the fill process, finite action bounds, and end-of-episode liquidation differ from the idealized AS assumptions. Hard AS is therefore useful as a guardrail diagnostic, but it is a less flexible way to combine the teacher with PPO.
+
+BC warm start is different again. In the behavioural-cloning phase, the policy is trained by supervised learning to imitate AS actions on states from the training data; no RL reward is used in that phase. The resulting checkpoint is then fine-tuned with PPO using the pure-profit objective. This tests whether AS is best used only as an initialization. In exploratory runs it helped relative to training from scratch, but it was weaker than keeping the AS prior active during PPO. The likely reason is drift: once PPO fine-tuning begins, the policy can move away from AS without paying any continuing cost.
 
 \section{Attention diagnostic}
 \label{app:attention}
@@ -370,9 +377,13 @@ The broader matched sweep included base-teacher $\lambda\in\{0.03,0.05,0.10,0.12
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.78\textwidth]{figs/fig_attention.png}
-\caption{Attention diagnostic for the proposed policy. The plot is included for comparison with the original paper's interpretability figure, but it should be read cautiously: attention maps are descriptive diagnostics, not causal explanations of trading performance.}
+\caption{Attention diagnostic for the proposed policy. Low-variation and high-variation windows are selected by mid-price standard deviation over the 50-event input window. The plot is included for comparison with the original paper's interpretability figure, but it should be read cautiously: attention maps are descriptive diagnostics, not causal explanations of trading performance.}
 \label{fig:attention}
 \end{figure}
+
+The windows in Figure~\ref{fig:attention} are selected mechanically. For every possible 50-event input window, we compute the standard deviation of the level-1 mid-price. The two non-overlapping windows with the lowest values are labelled low-variation, and the two with the highest values are labelled high-variation. This makes the selection reproducible and matches the spirit of the original stable-versus-rapid comparison, but it is still a heuristic. We are confident that the selected windows differ in local mid-price variation under this metric; we should not claim that they are hand-validated economic regimes.
+
+The upper panels show attention mass over the 50 input timestamps, aggregated from the Attn-LOB encoder's self-attention weights. The lower panels show the normalized LOB tensor for the same window. These heatmaps can look unusual because the LOB tensor is not an image: it stacks ask/bid prices and volumes across ten levels, with normalization applied per window. Persistent price ladders and large volume bands therefore appear as blocks or stripes. Attention can also look fairly flat after aggregation because different heads attend to different timestamps, and summing or averaging over heads smooths those patterns. In this run the diagnostic mainly says that the encoder is using broad recent context rather than placing a sharp, paper-like spike on a single event. That is informative, but weaker than the attention story in the original paper and should be treated as a qualitative check rather than evidence of mechanism.
 
 \section{Per-stock numerical results}
 \label{app:tables}
