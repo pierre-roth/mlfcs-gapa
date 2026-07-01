@@ -53,6 +53,7 @@ ASCalibrationName = Literal[
     "stock_specific",
     "spread_kappa",
     "fill_kappa",
+    "inventory_target",
     "stock_risk_low",
     "stock_risk_high",
 ]
@@ -509,6 +510,9 @@ def _make_as_strategy_for_config(
     elif config.as_calibration == "fill_kappa":
         kappa = _estimate_kappa_from_fill_decay(dataset)
         gamma = _stock_specific_gamma(dataset, stock=stock)
+    elif config.as_calibration == "inventory_target":
+        kappa = _estimate_kappa_from_fill_decay(dataset)
+        gamma = _inventory_target_gamma(dataset)
     elif config.as_calibration == "stock_specific":
         kappa = _estimate_kappa_from_l1_spread(dataset)
         gamma = _stock_specific_gamma(dataset, stock=stock)
@@ -576,6 +580,30 @@ def _stock_specific_gamma(dataset: LobDataset, *, stock: str) -> float:
     del stock
     sigma = max(estimate_episode_volatility(dataset), 1e-6)
     return float(min(2.0, max(0.05, 0.0025 / (sigma * sigma))))
+
+
+def _inventory_target_gamma(
+    dataset: LobDataset,
+    *,
+    target_inventory_lots: float = PAPER.omega_inventory_units / 2.0,
+) -> float:
+    """Fit gamma so half-cap inventory skews AS by one mean half-spread.
+
+    The AS reservation-price skew is `q_lots * gamma * sigma^2 * tau`.
+    Setting `tau=1` and `q_lots` to half the paper inventory cap gives a
+    training-data-driven risk aversion tied to the stock's spread and
+    volatility scale instead of a hand-selected risk multiplier.
+    """
+
+    sigma = max(estimate_episode_volatility(dataset), 1e-6)
+    spread = (
+        dataset.orderbook["ask1_price"].to_numpy()
+        - dataset.orderbook["bid1_price"].to_numpy()
+    )
+    target_skew = max(float(spread.mean()) / 2.0, 1e-4)
+    denominator = max(float(target_inventory_lots) * sigma * sigma, 1e-8)
+    gamma = target_skew / denominator
+    return float(min(4.0, max(0.025, gamma)))
 
 
 def _scale_gamma(gamma: float, multiplier: float) -> float:

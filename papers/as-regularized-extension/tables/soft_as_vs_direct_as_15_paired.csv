@@ -1,0 +1,2 @@
+method,baseline,n_pairs,pnl_diff_mean,pnl_diff_ci_low,pnl_diff_ci_high,p_value,win_rate,nd_pnl_diff_mean,sharpe_diff_mean,mean_abs_inventory_diff
+soft_as_low_risk_lam_0p10,direct_as_low_risk_matched,15,48.53636363636224,11.415274481528542,85.65745279119594,0.014059704336288458,0.8,761.6469460222463,1.7958338136002088,-103.23522106308995

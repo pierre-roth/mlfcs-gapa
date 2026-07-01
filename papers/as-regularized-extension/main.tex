@@ -54,14 +54,17 @@
 \maketitle
 
 \begin{abstract}
-Deep reinforcement-learning market makers are often trained with hybrid rewards that mix dampened profit-and-loss, transaction advantage, and inventory penalties. We revisit the Attn-LOB / C-PPO market maker of \citet{guo2023mm} and ask whether the behavioural prior can instead come from a classical quoting model. We propose \softas: PPO with pure profit as the economic reward and a soft action-space regularizer toward a per-stock Avellaneda--Stoikov (AS) teacher fitted on training data. On a synthetic, paper-shaped replication benchmark, the selected soft-AS policy improves mean episode PnL over reward-shaped \cppo{} by $15.10$ across 15 stock--seed pairs ($95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$) and over \profitppo{} by $9.50$ ($95\%$ CI $[5.45,13.56]$, $p=1.9\times10^{-4}$). It also stays much closer to the AS teacher in action space. The tradeoff is visible: \softas{} quotes tighter, fills more, and carries more inventory, especially under high latency. In this benchmark, AS regularization gives a cleaner and more inspectable way to steer a deep market maker than hybrid reward shaping.
+Deep reinforcement-learning market makers are often trained with hybrid rewards that mix dampened profit-and-loss, transaction advantage, and inventory penalties. These terms work, but they bury the designer's intent inside indistinct scalar coefficients that interact indirectly and must be re-tuned per market. We revisit the Attn-LOB / C-PPO market maker of \citet{guo2023mm} and ask whether the behavioural prior can instead come from a classical quoting model. We propose \softas: PPO with pure profit as the economic reward and a soft action-space regularizer toward a per-stock Avellaneda--Stoikov (AS) teacher fitted on training data. This is a control-prior regularizer, not a reward heuristic: it still shapes the objective, but through an interpretable economic model whose parameters can be calibrated, logged, and stress-tested. On a synthetic, paper-shaped replication benchmark, \softas{} wins $93\%$ of 15 paired stock--seed runs against both controls (paired $\Delta\mathrm{PnL}=15.10$ over \cppo{}, $95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$; $\Delta\mathrm{PnL}=9.50$ over \profitppo{}, $p=1.9\times10^{-4}$), corresponding to a $\sim$$50\%$ and $\sim$$21\%$ gain in spread-normalized PnL. Because the prior lives in the action space we can read it directly: the policy's mean action gap to the teacher falls from $0.468$ to $0.230$, showing that the regularizer moves quoting behavior, not just terminal PnL. The gain is not free, \softas{} quotes tighter, fills more, carries more inventory, and degrades faster under high latency. On this benchmark, an AS control prior is a cleaner and more inspectable way to steer a deep market maker than hybrid reward shaping.
+
+
+%On a synthetic, paper-shaped replication benchmark, the selected soft-AS policy improves mean episode PnL over reward-shaped \cppo{} by $15.10$ across 15 stock--seed pairs ($95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$) and over \profitppo{} by $9.50$ ($95\%$ CI $[5.45,13.56]$, $p=1.9\times10^{-4}$). It also stays much closer to the AS teacher in action space. The tradeoff is visible: \softas{} quotes tighter, fills more, and carries more inventory, especially under high latency. In this benchmark, AS regularization gives a cleaner and more inspectable way to steer a deep market maker than hybrid reward shaping.
 \end{abstract}
 
 \section{Introduction}
 
-Market making is the problem of continuously quoting bid and ask limit orders to earn the spread while managing inventory risk \citep{stoll1989,odhara1998}. A modern limit order book (LOB) is high-dimensional, noisy, and fast-moving, so recent work uses deep reinforcement learning (RL) to learn quoting policies directly from LOB state. The Attn-LOB / C-PPO agent of \citet{guo2023mm} is a strong example: a convolutional-attention encoder reads a rolling LOB window, and PPO emits continuous bid/ask quote parameters.
+Market making is the problem of continuously quoting bid and ask limit orders to earn the spread while managing inventory risk \citep{stoll1989,odhara1998}. A modern limit order book (LOB) is high-dimensional, noisy, and fast-moving, so recent work uses deep reinforcement learning (RL) to learn quoting policies directly from LOB state. The Attn-LOB / C-PPO agent of \citet{guo2023mm} is a strong example: a convolutional-attention encoder reads a rolling LOB window and PPO emits continuous bid/ask quote parameters.
 
-The agent's behaviour, however, is largely determined by a hand-designed reward. The original C-PPO reward combines dampened PnL, trading PnL, and an inventory penalty:
+The agent's behaviour, however, is largely determined by a hand-designed reward. The original C-PPO reward adds three heuristic terms: dampened PnL, trading PnL, and an inventory penalty:
 \begin{equation}
 R_t
 = \underbrace{\Delta\mathrm{PnL}_t-\max(0,\eta\Delta\mathrm{PnL}_t)}_{\text{dampened PnL}}
@@ -69,19 +72,32 @@ R_t
 - \underbrace{\zeta \mathrm{Inv}_t^2}_{\text{inventory penalty}} .
 \label{eq:hybrid}
 \end{equation}
-These terms are useful engineering, but they are not potential-based reward shaping \citep{ng1999}; they change the optimization target and introduce coefficients that must be retuned for each market.
 
-Our alternative keeps the accounting simpler. The environment reward is pure profit, while the behavioural prior comes from Avellaneda--Stoikov (AS), a classical market-making model that gives an interpretable reservation price and spread from inventory, volatility, time remaining, risk aversion, and liquidity \citep{avellaneda2008}. Instead of copying AS, we regularize the learned continuous action toward a fitted AS teacher:
+Each term encodes a sensible intention, e.g. suppress holding profits, reward fills near mid, discourage large positions, but the encoding is opaque. The terms are not potential-based \citep{ng1999}, so they reshape the optimal policy rather than merely accelerating learning; their coefficients ($\eta,\zeta$) interact indirectly, must be re-tuned per market, and give the designer no direct read on the quoting behaviour they induce. When such an agent quotes too tightly or carries too much inventory, the reward offers no interpretable knob with which to correct it.
+
+We ask whether the behavioural prior can instead come from a calibrated classical model, expressed where it is easiest to inspect: the action itself. We keep the marked-to-market profit as the economic reward and add a soft regularizer that pulls the learned continuous action toward a fitted Avellaneda--Stoikov (AS) teacher \citep{avellaneda2008}:
+%The environment reward is pure profit, while the behavioural prior comes from Avellaneda--Stoikov (AS), a classical market-making model that gives an interpretable reservation price and spread from inventory, volatility, time remaining, risk aversion, and liquidity \citep{avellaneda2008}. Instead of copying AS, we regularize the learned continuous action toward a fitted AS teacher:
 \begin{equation}
 J(\pi)
 = \E_{\pi}\!\left[\sum_t \Delta\mathrm{PnL}_t
 - \lambda \left\lVert a^\pi_t-a^{\mathrm{AS}}_t \right\rVert_2^2 \right].
 \label{eq:softas}
 \end{equation}
-The AS term is part of the training objective, but the economic reward being optimized is ordinary marked-to-market profit.
+The AS term is part of the training objective, but the economic reward being optimized is ordinary marked-to-market profit. We do not present this as a way to escape objective design; it is a soft control-prior regularizer, a domain instance of pulling a deep policy toward a fixed policy prior in action space \citep{cheng2019control}, and it changes what the agent optimizes just as the hybrid reward does. The difference is where the design lives. Rather than spreading the designer's intent across reward coefficients that interact indirectly, we concentrate it in a single object: an Avellaneda--Stoikov teacher whose parameters $\gamma$ and $\kappa$ carry economic meaning and can be calibrated per stock, with one weight $\lambda$ setting how hard the policy is held to it. Because the policy and the teacher emit actions in the same normalized space, we can also measure the gap between them directly, and so check whether the prior is actually shaping quotes rather than reading that off terminal PnL.
+
+%Coupling AS with RL is not itself new, but the coupling matters. \citet{falcesmarin2022}, for example, have an RL network adjust AS's risk-aversion parameter and let AS produce the quotes; the learned component tunes the classical model. We do the opposite: the learned policy quotes, and AS serves only as a soft target it is free to leave when the data warrant. Otherwise we keep the agent of \citet{guo2023mm} intact (the encoder, simulator, action space, and PPO training are unchanged) and vary only how the behavioural prior enters.
+
+
+
+%\paragraph{Contributions.}
+%We formulate AS guidance as a soft action-space regularizer for continuous-action PPO market making, calibrate one AS teacher per stock from the training window, and keep the extension code separated from the paper-replication pipeline. The experiments use a matched synthetic benchmark following the original paper's stock/day/episode/action structure, with five PPO seeds for \softas{}, \cppo{}, and \profitppo{} on three synthetic stocks. We also regenerate the original-style analyses--performance by stock, latency, attention, and decision traces--for the proposed method, and add teacher-action divergence diagnostics.
 
 \paragraph{Contributions.}
-We formulate AS guidance as a soft action-space regularizer for continuous-action PPO market making, calibrate one AS teacher per stock from the training window, and keep the extension code separated from the paper-replication pipeline. The experiments use a matched synthetic benchmark following the original paper's stock/day/episode/action structure, with five PPO seeds for \softas{}, \cppo{}, and \profitppo{} on three synthetic stocks. We also regenerate the original-style analyses--performance by stock, latency, attention, and decision traces--for the proposed method, and add teacher-action divergence diagnostics.
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt,topsep=2pt]
+\item We formulate AS guidance as a soft control-prior regularizer for continuous-action PPO market making, replacing the hand-crafted hybrid reward of Eq.~\eqref{eq:hybrid} with a profit objective plus an interpretable, calibrated action prior.
+\item We calibrate one AS teacher per stock from the training window, getting a behavioural prior that is inspectable, loggable, and steerable through economically meaningful knobs ($\gamma,\kappa,\lambda$).
+\item On a matched synthetic replication of \citet{guo2023mm} with five seeds per stock, we show that \softas{} improves spread-normalized PnL and Sharpe over both reward-shaped \cppo{} and a profit-only control, and we add teacher-divergence, latency, and decision-trace diagnostics that show the prior steers quoting behaviour directly and locate where it breaks.
+\end{itemize}
 
 \section{Related work}
 \label{sec:related}
@@ -93,47 +109,109 @@ r(s,q,t)=s-q\gamma\sigma^2(T-t),
 \delta^a+\delta^b=\gamma\sigma^2(T-t)+\frac{2}{\gamma}\log\!\left(1+\frac{\gamma}{\kappa}\right).
 \label{eq:as}
 \end{equation}
-This structure is interpretable but depends on assumptions about price and arrival processes \citep{gueant2013}. Deep LOB models such as DeepLOB and related architectures learn representations directly from order-book tensors \citep{zhang2019deeplob,tsantekidis2020,ntakaris2019}. RL market makers have used handcrafted state, discrete actions, and model-free policies \citep{lim2018,spooner2018,zhong2020,sadighian2019,gasperov2021}. \citet{guo2023mm} combine an Attn-LOB encoder with a continuous, AS-like action space and the hybrid reward in Eq.~\eqref{eq:hybrid}. We keep their encoder, simulator, action space, and PPO training setup, but move the behavioural structure from the hybrid reward into an AS action prior.
+This structure is interpretable but depends on assumptions about price and arrival processes \citep{gueant2013}. Deep LOB models such as DeepLOB and related architectures learn representations directly from order-book tensors \citep{zhang2019deeplob,tsantekidis2020,ntakaris2019}, and RL market makers have used handcrafted state, discrete actions, and model-free policies \citep{lim2018,spooner2018,zhong2020,sadighian2019,gasperov2021}. \citet{guo2023mm} combine an Attn-LOB encoder with a continuous, AS-like action space and the hybrid reward in Eq.~\eqref{eq:hybrid}, trained with PPO \citep{schulman2017ppo}; we keep their encoder, simulator, action space, and training setup, and change only how the behavioural prior enters.
 
-\section{Method}
-\label{sec:method}
+\paragraph{Regularizing a learned policy toward a prior.}
+Keeping the profit reward while penalizing departures from a fixed action-space prior is a standard device in reinforcement learning. The closest precedent is \citet{cheng2019control}, who regularize a deep policy toward a control prior using a weight $\lambda$ that is adapted over training, and show that the regularized policy approximately preserves the prior's control-theoretic stability guarantees while reducing the variance of the policy gradient. Our penalty admits the same bias--variance reading: the AS teacher supplies structure where the data are uninformative, and $\lambda$ governs how far the policy may move away from it. Comparable constraints appear in offline RL, where the policy is tied to a behaviour prior to curb value over-estimation \citep{fujimoto2019bcq}, and in residual policy learning, where a learned term is added on top of a fixed controller \citep{silver2018residual}. What is new here is not the regularizer, which is shared across these settings, but the prior it pulls toward: a per-stock Avellaneda--Stoikov model whose parameters $\gamma$ and $\kappa$ are economically meaningful and can be calibrated and stress-tested, in place of a generic KL or proximity term.
 
-\paragraph{Replicated agent.}
-The state is a rolling $50\times40$ tensor of the top-10 ask/bid prices and volumes, plus agent state such as inventory and remaining episode time. The Attn-LOB feature extractor applies convolutional filters, an Inception block, and multi-head self-attention. The continuous policy emits two normalized actions, $A_1,A_2\in[0,1]$: a reservation-price bias and a quoted spread,
+\paragraph{Coupling AS with learning.}
+Combining AS with RL is not itself new; what differs is the direction of the coupling. \citet{falcesmarin2022} have a network set AS's risk-aversion parameter and let AS produce the quotes, so learning tunes the classical model from within. We reverse this: the policy quotes directly, and AS enters only as a target it may leave when the data warrant. The classical model therefore supplies a behavioural prior rather than the quoting rule.
+
+
+\section{The replicated agent}
+\label{sec:replicated}
+
+
+We build on the Attn-LOB / \cppo{} market maker of \citet{guo2023mm}, which has four parts: an encoder that reads the LOB, an action space that turns network outputs into quotes, a reward that defines good market making, and a replay simulator for training and evaluation. We keep all four and change only how the behavioural prior is supplied; full reproduction details are in Appendix~\ref{app:data}.
+
+%The agent we build on has four components: an encoder that reads the LOB, an action space that maps network outputs to quote prices, a reward signal that defines good market making, and a replay simulator for training and evaluation. We retain all four from \citet{guo2023mm} and modify only the reward; full reproduction details are in Appendix~\ref{app:data}.
+
+\paragraph{State and encoder.} The agent observes a rolling window of
+$T\!=\!50$ LOB snapshots, each a $40$-dimensional vector of the top-ten
+ask and bid prices and volumes. The Attn-LOB encoder reads this $50\times40$ tensor with convolutional filters, an Inception block, and a multi-head self-attention layer: the
+convolutions pick up spatial patterns across price levels within each
+snapshot, while the Inception and attention layers capture temporal
+dependencies across the window at multiple scales. Dynamic agent state
+(inventory, remaining time, and cash or marked-to-market value) is concatenated to the encoded features. We pre-train the encoder on a three-way mid-price direction task and reuse it as the PPO feature extractor, as in the original work.
+
+
+\paragraph{Continuous action space.} The policy outputs two actions
+$A_1,A_2\in[0,1]$. $A_1$ sets a reservation-price bias and $A_2$ the
+quoted spread:
 \begin{equation}
-\delta = A_1\cdot\text{max\_bias},\quad
-p_r=p_m-\mathrm{sign}(\mathrm{Inv})\delta,\quad
-\mathrm{spread}=A_2\cdot\text{max\_spread},\quad
-p_{a,b}=p_r\pm \frac{\mathrm{spread}}{2}.
+\delta = A_1 \cdot \text{max\_bias}, \quad
+p_r = p_m - \mathrm{sign}(\mathrm{Inv})\,\delta, \quad
+\text{spread} = A_2 \cdot \text{max\_spread}, \quad
+p_{a,b} = p_r \pm \tfrac{\text{spread}}{2}.
 \label{eq:action}
 \end{equation}
-We retain the paper's $\text{max\_bias}=0.05$, $\text{max\_spread}=0.1$, $\text{minimum\_trade\_unit}=100$, and end-of-episode liquidation.
+The agent thus quotes symmetrically around a reservation price $p_r$ that it skews against its own inventory. This is deliberately the same shape as the AS closed form of Eq.~\eqref{eq:as}: $A_1$ takes the role of the inventory-dependent reservation shift $q\gamma\sigma^2(T-t)$, and $A_2$ the role of the optimal spread $\delta^a+\delta^b$.
 
-\paragraph{AS teacher.}
-At each step we convert Eq.~\eqref{eq:as} into the same normalized action coordinates as Eq.~\eqref{eq:action}:
+Both the policy and the AS model write into this same $(A_1,A_2)$ space, which is what lets AS serve as a regularization target in Section~\ref{sec:method}.
+
+\paragraph{Reward (baseline).} %The reward-shaped baseline, which we call \cppo, uses the hybrid reward of Eq.~\eqref{eq:hybrid} with $\eta=0.5$, $\zeta=0.01$, trained with PPO. As noted in Section~1, the three reward terms are not potential-based: they reshape the optimal policy rather than merely accelerating learning. The dampening coefficient $\eta$ suppresses holding profits, the inventory penalty $\zeta$ constrains position size, and the trading PnL term encourages fills near mid. These interact in ways that are difficult to disentangle, which motivates our alternative. This baseline is our primary point of comparison.
+
+Our primary point of comparison, \cppo{}, trains PPO on the hybrid reward of Eq.~\eqref{eq:hybrid} with the original coefficients $\eta=0.5$ and $\zeta=0.01$. As noted in the introduction, these terms are not potential-based \citep{ng1999} and reshape the optimal policy rather than merely accelerating learning. We carry the coefficients over unchanged rather than re-tuning them for this benchmark. This keeps the baseline faithful to the source, and the difficulty of re-tuning such coupled terms for each new market is itself part of what motivates moving the prior out of the reward.
+
+
+\paragraph{Simulator.} A replay simulator fills the agent's quotes
+only when the recorded stream trades through the quoted price. There
+is no market impact and no transaction cost; the agent may run long or short and is liquidated at the end of each $2000$-event episode. The simulator is identical for every method, so within-benchmark comparisons are fair. It is not, however, neutral across quoting styles: with no spread to pay and no impact to absorb, a frictionless tape rewards tight, high-participation quoting and so flatters more aggressive policies. Absolute PnL should therefore be read as a benchmark quantity rather than a live-trading estimate, and the cross-method ranking should be weighed alongside the inventory and latency costs we report in Section~\ref{sec:results}. This mirrors the small-order
+assumption of the original work.
+
+\section{AS-regularized PPO}
+\label{sec:method}
+
+We change only the training objective of the agent in Section~\ref{sec:replicated}: it still optimizes marked-to-market profit, but we add a soft penalty pulling each quoting action toward a fitted Avellaneda--Stoikov teacher. Concretely, the per-step reward is
+
+\begin{equation}
+r_t = \Delta\mathrm{PnL}_t - \lambda\,\bigl\lVert a^\pi_t - a^{\mathrm{AS}}_t \bigr\rVert_2^2 ,
+\label{eq:stepreward}
+\end{equation}
+and PPO maximizes the resulting return $J(\pi)=\E_\pi[\sum_t r_t]$, which is Eq.~\eqref{eq:softas}. The penalty acts on the action sampled during rollout collection, so it is part of the reward the policy optimizes rather than a separate supervised loss on the network. This is what we mean by a control-prior regularizer: it modifies the objective, like the hybrid reward, but through a single interpretable target instead of several hand-set coefficients.
+
+\paragraph{The AS teacher.}
+The teacher converts the AS closed form of Eq.~\eqref{eq:as} into the same normalized $(A_1,A_2)$ coordinates the policy uses in Eq.~\eqref{eq:action}. Given inventory $q$, a volatility estimate $\hat\sigma_t$, and time-to-close $T-t$,
 \begin{equation}
 a^{\mathrm{AS}}_t
-= \left(
-\mathrm{clip}\!\left(\frac{|q|\gamma\hat{\sigma}^2(T-t)}{\text{max\_bias}},0,1\right),
-\mathrm{clip}\!\left(\frac{\delta^a+\delta^b}{\text{max\_spread}},0,1\right)
-\right).
+= \Bigl(
+\operatorname{clip}\!\Bigl(\tfrac{|q|\,\gamma\,\hat\sigma_t^2\,(T-t)}{\text{max\_bias}},\,0,\,1\Bigr),\;
+\operatorname{clip}\!\Bigl(\tfrac{\delta^a+\delta^b}{\text{max\_spread}},\,0,\,1\Bigr)
+\Bigr),
+\qquad
+\delta^a+\delta^b = \gamma\hat\sigma_t^2(T-t) + \tfrac{2}{\gamma}\log\!\bigl(1+\tfrac{\gamma}{\kappa}\bigr).
 \label{eq:teacher}
 \end{equation}
-The teacher is deterministic once $(\gamma,\kappa)$ are fitted. We estimate one teacher per stock from the training data: $\kappa$ from the mean level-1 half-spread and $\gamma$ from realized volatility, then use a lower-risk $\gamma=0.025$ for the selected policy. The resulting $\kappa$ values are $125.2$, $23.9$, and $83.8$ for stocks 000001, 000858, and 002415.
+The first coordinate matches the inventory-dependent reservation shift of Eq.~\eqref{eq:action} and the second the optimal spread; clipping into $[0,1]$ keeps the teacher inside the policy's action range. The sign of the bias is supplied by $\operatorname{sign}(\mathrm{Inv})$ in Eq.~\eqref{eq:action}, so the teacher carries only its magnitude $|q|$. Once $(\gamma,\kappa)$ are fixed and $\hat\sigma_t$ is read from the state, the teacher is a deterministic function of the agent's situation and adds no learnable parameters.
+
+\paragraph{Calibration.}
+We fit one teacher per stock from the training window only. The liquidity parameter $\kappa$ is estimated from the mean level-one half-spread, giving $\kappa = 125.2,\ 23.9,\ 83.8$ for stocks 000001, 000858, and 002415. For risk aversion we use a fixed low-risk value $\gamma = 0.025$ for the reported policy; a volatility-fitted $\gamma$ and a higher-risk teacher are evaluated as controls in Appendix~\ref{app:sensitivity}. The volatility term $\hat\sigma_t$ is a rolling realized-volatility estimate computed from the same LOB stream the policy sees. We freeze the calibration used at training time and reuse it at evaluation, rather than recalibrating on the test split, so the teacher cannot leak test-window information into the policy's prior.
 
 \paragraph{Methods compared.}
-The main paper reports three PPO methods. \cppo{} is the reward-shaped baseline of Eq.~\eqref{eq:hybrid}. \profitppo{} removes the hybrid reward and trains on pure profit only. \softas{} trains on the profit objective plus the AS action regularizer in Eq.~\eqref{eq:softas}, with $\lambda=0.10$ and the low-risk per-stock teacher. Hard AS constraints, BC warm start, direct AS, and $\lambda$ sensitivity are appendix-only controls.
+We report three PPO agents that share this state, encoder, action space, and training budget, and differ only in the objective. \cppo{} is the reward-shaped baseline of Section~\ref{sec:replicated}. \profitppo{} drops the hybrid terms and trains on profit alone ($\lambda=0$ in Eq.~\eqref{eq:stepreward}), isolating the effect of removing the old reward. \softas{} adds the AS regularizer with $\lambda=0.10$ and the low-risk per-stock teacher. The three thus form a clean decomposition: \cppo{}~$\to$~\profitppo{} measures the effect of replacing the hand-crafted reward with pure profit, and \profitppo{}~$\to$~\softas{} measures what the calibrated prior adds on top. Hard AS constraints, behavioural-cloning warm starts, a direct-AS teacher policy, and the $\lambda$ sweep are appendix-only controls (Appendix~\ref{app:sensitivity}).
+
+
 
 \section{Experimental setup}
 \label{sec:setup}
 
 \paragraph{A synthetic benchmark.}
-The original Shenzhen Stock Exchange LOB data are proprietary. We therefore use a synthetic event-level LOB generator that preserves the experimental shape of \citet{guo2023mm}: three stock identities, top-10 book levels, stable intraday windows, 10 train days, 11 test days, and 2000-event episodes. Each instrument has its own base price and generated training/test days. The latent fair value moves through stable, trending, and volatile regimes; around it the generator builds a top-10 book, trade stream, and market-order flow. The simulator then replays this stream and fills the agent's quotes only when recorded trades cross the quote. There is no market impact and no transaction cost. The benchmark is useful for controlled comparisons and debugging because every method faces the same synthetic tapes, but it remains a proxy for the proprietary data used in the original paper.
+The original Shenzhen Stock Exchange LOB data are proprietary, so we use a synthetic event-level LOB generator that preserves the experimental shape of \citet{guo2023mm}: three stock identities, top-ten book levels, stable intraday windows, ten training days, eleven test days, and 2000-event episodes.
+Each instrument has its own base price and generated training/test days; a latent fair value moves through stable, trending, and volatile regimes while the generator builds the surrounding book, trade stream, and market-order flow. The simulator replays this stream and fills the agent's quotes only when recorded trades cross the quote. There is no market impact and no transaction cost. The benchmark is useful for controlled comparisons and debugging because every method faces the same synthetic tapes, but it remains a proxy for the proprietary data used in the original paper. Appendix~\ref{app:data} gives the generator details.
 
-The original code trains one model per stock, not a single shared cross-stock policy, and we keep that design. The main comparison uses five PPO seeds per stock for each of \cppo{}, \profitppo{}, and \softas{}: 15 paired stock--seed units per method. All learned methods use the same state, encoder, action space, trade granularity, train/test split, and 400k PPO training steps.
+\paragraph{Training protocol.}
+Following the original code, we train one policy per stock rather than a single shared cross-stock policy. All three agents (Section~\ref{sec:method}) use the same state, encoder, action space, trade granularity, train/test split, and 400k PPO steps, and differ only in the objective. The main comparison runs five PPO seeds per stock for each of \cppo{}, \profitppo{}, and \softas{}, giving 15 stock--seed units per method. The regularizer weight $\lambda$ and the per-stock teacher were selected in an earlier sweep (Appendix~\ref{app:sensitivity}); the final comparison reports five seeds per stock for the selected setting.
 
-For an episode with final marked-to-market value $V_T$ and initial value $V_0$, $\mathrm{PnL}=V_T-V_0$. We define $\mathrm{ND\mbox{-}PnL}=\mathrm{PnL}/(\overline{s}+10^{-7})$, where $\overline{s}$ is the mean quoted spread in the episode. Sharpe is computed on event-to-event marked-value increments $\Delta V_t$ as $\sqrt{n}\,\overline{\Delta V}/\mathrm{sd}(\Delta V)$, with no annualization. Paired tests use stock--seed units, not individual episodes.
+\paragraph{Metrics.}
+Our primary metric is spread-normalized PnL, $\mathrm{ND\text{-}PnL}=\mathrm{PnL}/(\overline{s}+10^{-7})$, where $\mathrm{PnL}=V_T-V_0$ is the change in marked-to-market value over an episode and $\overline{s}$ is the mean quoted spread. Dividing by $\overline{s}$ makes performance comparable across stocks whose price levels, and therefore absolute spreads and PnL differ substantially; it counts roughly how many spreads the agent captured. We also report raw PnL, Sharpe computed on event-to-event marked-value increments $\Delta V_t$ as $\sqrt{n}\,\overline{\Delta V}/\mathrm{sd}(\Delta V)$ without annualization, and behavioural quantities (mean absolute inventory, mean quoted spread, fills per episode).
 
+\paragraph{Significance.}
+Paired tests compare two agents on the same stock and seed before pooling differences across stocks. We report the mean paired difference, a $95\%$ confidence interval, and the paired win rate over the 15 units, but treat the raw PnL magnitude as secondary to ND-PnL and the per-stock breakdown. Direct AS has no training seed, so we evaluate it on the same stock, day, episode-start, and replay-seed schedule and pair it with each of the five learned-policy seed indices. Because the units cluster in three stocks rather than 15 independent draws, we read the pooled test alongside the per-stock breakdown in Appendix~\ref{app:tables} rather than treating the 15 as independent.
+
+
+% Paired tests use stock--seed units, not individual episodes.
+
+\newpage
 \section{Results}
 \label{sec:results}
 
@@ -149,6 +227,7 @@ Method & PnL ($\pm$SE) & ND-PnL & Sharpe ($\pm$SE) & Abs. inv. & Spread & Fills 
 \softas{} & $\mathbf{75.17}\pm22.06$ & $\mathbf{1223.9}$ & $\mathbf{2.54}\pm0.44$ & $54.2$ & $0.0468$ & $511.7$ \\
 \profitppo{} & $65.67\pm22.51$ & $1010.5$ & $2.29\pm0.42$ & $26.6$ & $0.0551$ & $437.7$ \\
 \cppo{} & $60.07\pm21.38$ & $812.1$ & $2.07\pm0.51$ & $19.3$ & $0.0637$ & $333.1$ \\
+Direct AS & $26.64\pm4.82$ & $462.2$ & $0.75\pm0.12$ & $157.5$ & $0.0544$ & $24.7$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -156,20 +235,26 @@ Method & PnL ($\pm$SE) & ND-PnL & Sharpe ($\pm$SE) & Abs. inv. & Spread & Fills 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\textwidth]{figs/fig_results_overview.png}
-\caption{Headline performance and risk diagnostics over five seeds. \softas{} has the strongest PnL and Sharpe, but reaches them by quoting tighter and participating more, which raises inventory exposure.}
+\caption{Headline performance and risk diagnostics over five seeds. \softas{} has the strongest ND-PnL and Sharpe, but reaches them by quoting tighter and participating more, which raises inventory exposure.}
 \label{fig:overview}
 \end{figure}
 
 \subsection{Soft AS improves return over both controls}
 
-Table~\ref{tab:main} and Figure~\ref{fig:overview} give the main result. \softas{} is best on mean PnL, ND-PnL, and Sharpe. The profit-only control is also stronger than the original reward-shaped baseline, so part of the improvement comes from removing the old hybrid reward. The AS regularizer adds a second gain on top of that stronger profit-only baseline.
 
-The paired tests in Table~\ref{tab:paired} are the cleanest comparison because each row compares methods on the same stock and seed. \softas{} improves PnL over \cppo{} by $15.10$ with a $95\%$ CI of $[9.19,21.01]$ and $p=8.1\times10^{-5}$. Against \profitppo{}, the improvement is $9.50$ with $p=1.9\times10^{-4}$. This matters because \profitppo{} already removes the hybrid reward; the fitted AS prior still adds statistically visible signal.
+Our primary comparison is the paired test together with ND-PnL, because the paired test holds the stock and seed fixed while ND-PnL removes most of the price-scale effect across stocks. Against the reward-shaped \cppo{} baseline, \softas{} improves per-unit PnL by $15.10$ ($95\%$ CI $[9.19,21.01]$, $p=8.1\times10^{-5}$) and wins on 14 of 15 units; against \profitppo{}, which already removes the hybrid reward, it improves by $9.50$ ($p=1.9\times10^{-4}$) and again wins on 14 of 15 (Table~\ref{tab:paired}). The second comparison is the more informative one: \profitppo{} has stripped out the old reward entirely, so the gain over it is attributable to the calibrated AS prior rather than to dropping the hybrid terms.
+
+The aggregate metrics in Table~\ref{tab:main} tell the same story in scale-comparable form. On ND-PnL, which counts how many spreads each agent captures and is therefore comparable across stocks, \softas{} reaches $1223.9$ against $812.1$ for \cppo{} and $1010.5$ for \profitppo{}--roughly a $50\%$ and $21\%$ improvement--and it also leads on Sharpe ($2.54$ vs.\ $2.07$ and $2.29$). Raw mean PnL is reported for completeness but should be read with care: because the three stocks differ in price level, the mean PnL is dominated by the high-price stock and is not comparable across instruments.
+
+That dominance does not, however, carry into the improvement. Figure~\ref{fig:perstock} and Appendix~\ref{app:tables} break the gain down by stock: \softas{} improves ND-PnL and Sharpe over \cppo{} on the low-price stock 000001 and the mid-price stock 002415, and remains competitive on the liquid high-price stock 000858, where the profit-only control is the strongest on ND-PnL. The gain is therefore spread across stocks rather than a single-stock artifact.
+
+
+
 
 \begin{table}[t]
 \centering
 \small
-\caption{Paired PnL comparisons over 15 stock--seed units.}
+\caption{Paired raw-PnL comparisons over 15 stock--seed units. The differences are computed within stock and seed; their scale should be read together with ND-PnL and the per-stock table.}
 \label{tab:paired}
 \begin{tabular}{llcccc}
 \toprule
@@ -178,6 +263,7 @@ Method & Baseline & $\Delta$PnL & $95\%$ CI & $p$ & Win rate \\
 \softas{} & \cppo{} & $15.10$ & $[9.19,21.01]$ & $8.1{\times}10^{-5}$ & $0.93$ \\
 \profitppo{} & \cppo{} & $5.60$ & $[0.36,10.83]$ & $0.038$ & $0.73$ \\
 \softas{} & \profitppo{} & $9.50$ & $[5.45,13.56]$ & $1.9{\times}10^{-4}$ & $0.93$ \\
+\softas{} & Direct AS & $48.54$ & $[11.42,85.66]$ & $0.014$ & $0.80$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -189,9 +275,26 @@ Method & Baseline & $\Delta$PnL & $95\%$ CI & $p$ & Win rate \\
 \label{fig:perstock}
 \end{figure}
 
-Figure~\ref{fig:perstock} shows why paired tests matter. The high-price stock 000858 dominates raw PnL, but the proposed method is not a single-stock artifact. It improves strongly on 000001 and 002415, and remains close to the best result on 000858.
+
+\subsection{The policy departs from its teacher}
+\label{sec:res-teacher}
+
+Because \softas{} is regularized toward AS, the natural question is
+whether it merely reproduces the teacher. It does not. Direct AS under
+the same low-risk per-stock calibration reaches $26.64$ mean PnL,
+$462.2$ ND-PnL, and $0.75$ Sharpe (Table~\ref{tab:main}). \softas{}
+improves on it by $48.54$ PnL in the paired stock--seed comparison
+($95\%$ CI $[11.42,85.66]$, $p=0.014$) and wins 12 of the 15 units
+(Table~\ref{tab:paired}). The result is not uniform across stocks:
+direct AS is competitive on the low-price stock 000001, while
+\softas{} is much stronger on 000858 and 002415. The teacher-divergence
+diagnostics in Section~\ref{sec:res-behaviour} explain this pattern:
+the policy stays close to AS in action space, but the gap is not zero.
+The soft prior supplies structure without forcing the policy to copy
+the teacher everywhere.
 
 \subsection{The AS prior changes behaviour directly}
+\label{sec:res-behaviour}
 
 The main advantage of AS regularization over reward shaping is inspectability: at evaluation time we can log both the policy action and the AS teacher action. Figure~\ref{fig:teacher} shows that \softas{} is substantially closer to the teacher in both quote-bias and spread coordinates. The mean L2 action gap falls from $0.468$ for \cppo{} and $0.469$ for \profitppo{} to $0.230$ for \softas{}.
 
@@ -202,11 +305,12 @@ The main advantage of AS regularization over reward shaping is inspectability: a
 \label{fig:teacher}
 \end{figure}
 
-The same diagnostic run shows more fills per episode for \softas{} ($96.8$ versus $54.4$ for \cppo{} at the logged evaluation granularity) and larger inventory excursions. In the five-seed training evaluation, \softas{} also has higher average inventory and more fills than both controls (Table~\ref{tab:main}). AS regularization improves the policy by making it more willing to quote, so the added return comes with a clearer inventory and latency tradeoff.
+Consistent with this, in the five-seed training evaluation \softas{} has higher average inventory and more fills than both controls (Table~\ref{tab:main}). AS regularization improves the policy by making it more willing to quote, so the added return comes with a clearer inventory and latency tradeoff.
+
 
 \subsection{Latency remains the main weakness}
-
-The original paper studied latency, so we reran an evaluation-only latency sweep for the saved seed-0/1/2 checkpoints at 1, 5, 10, 20, and 50 events. Figure~\ref{fig:latency} shows the key caveat. At low latency, \softas{} has the best return. As latency grows, all methods degrade, and the more active \softas{} policy degrades faster because stale quotes and larger inventory become costly. This is a useful stress test for the paper: it supports the low-latency result and exposes where an AS-regularized market maker needs stronger inventory or latency-aware controls.
+%The original paper studied latency, so we reran an evaluation-only latency sweep for the saved seed-0/1/2 checkpoints at 1, 5, 10, 20, and 50 events. Figure~\ref{fig:latency} shows the key caveat. At low latency, \softas{} has the best return. As latency grows, all methods degrade, and the more active \softas{} policy degrades faster because stale quotes and larger inventory become costly. This is a useful stress test for the paper: it supports the low-latency result and exposes where an AS-regularized market maker needs stronger inventory or latency-aware controls.
+To stress-test robustness we run an evaluation-only latency sweep on the saved checkpoints at 1, 5, 10, 20, and 50 events; the policies were trained at zero latency, so this measures how latency-naive policies degrade rather than how a latency-aware agent would behave. At low latency \softas{} has the best return. As latency grows all methods degrade, and \softas{} degrades fastest (Figure~\ref{fig:latency}): the same tight, high-participation quoting that wins at low latency becomes costly once quotes are stale and inventory is larger. This supports the low-latency result while marking exactly where an AS-regularized maker would need latency-aware or inventory-aware control.
 
 \begin{figure}[t]
 \centering
@@ -224,24 +328,55 @@ The original paper studied latency, so we reran an evaluation-only latency sweep
 \label{fig:decision}
 \end{figure}
 
-Figure~\ref{fig:decision} mirrors the original paper's decision-trace diagnostic for the proposed method. It is descriptive rather than causal, but it shows that the improved policy still looks like a market maker rather than a sparse opportunistic trader.
+Figure~\ref{fig:decision} mirrors the original paper's decision-trace diagnostic for the proposed method. It is descriptive rather than causal, but it shows that the improved policy still looks like a market maker (quoting both sides around mid and reverting inventory) rather than a sparse opportunistic trader.
 
 \section{Discussion}
 \label{sec:discussion}
 
-\paragraph{Why the soft prior helps.}
-The three main methods separate the effect of the old reward from the effect of the AS prior. \profitppo{} beats \cppo{}, so the hybrid reward was a poor fit for this synthetic setting. \softas{} then beats \profitppo{}, which points to the classical teacher adding useful structure beyond the reward change. Hard AS constraints, reported in Appendix~\ref{app:sensitivity}, were weaker because clipping the policy near AS removes profitable deviations. The soft prior works better because the policy can still move away from the teacher when the data support it.
+\paragraph{Why the soft prior helps.} The three main methods separate the effect of the old reward from the effect of the AS prior. \profitppo{} edges out \cppo{} by a smaller and less certain margin (Table~\ref{tab:paired}), suggesting the hybrid reward was at best no help in this synthetic setting. \softas{} then beats \profitppo{} more decisively, which points to the classical teacher adding useful structure beyond the reward change. Hard AS constraints, reported in Appendix~\ref{app:sensitivity}, were weaker because clipping the policy near AS removes profitable deviations. The soft prior works better because the policy can still move away from the teacher when the data support it. The latency results reinforce this point. Active quoting helps when information is fresh, but the same behavior becomes dangerous when quotes go stale. A rigid constraint or a shaped reward that discourages
+participation would completely hide this tradeoff. The soft prior makes it visible.
 
 \paragraph{Scope and risk.}
-The claim is intentionally narrow. On a paper-shaped synthetic benchmark, with per-stock policies and matched seeds, AS-regularized PPO is a stronger and more interpretable alternative to hybrid reward shaping. The method trades more and carries more inventory, and the latency sweep shows that this matters when quotes become stale. A live or proprietary-data claim would require a real event stream, transaction costs, market impact, and stricter tail-risk constraints.
+The claim is intentionally narrow. On a paper-shaped synthetic benchmark, with per-stock policies and matched seeds, AS-regularized PPO is a stronger and more interpretable alternative to hybrid reward shaping. The method trades more and carries more inventory, and the latency sweep shows that this matters when quotes become stale. A live or proprietary-data claim would require a real event stream, transaction costs, market impact, and stricter tail-risk constraints. The synthetic data was also designed to make spread capture learnable, with only soft adverse selection. Real markets with heavier informed
+flow would likely be less kind to aggressive quoting strategies.
 
 \paragraph{Practical value.}
-Reward shaping hides design decisions inside scalar coefficients. AS regularization makes those decisions easier to inspect: the teacher can be calibrated, logged, and stress-tested, and the policy's distance from the teacher can be measured directly. When the teacher is too aggressive, $\gamma$, $\kappa$, or $\lambda$ provide meaningful knobs. That makes the approach easier to reason about than a hybrid reward whose terms interact indirectly.
+Reward shaping hides design decisions inside scalar coefficients that interact indirectly. An AS action prior makes those decisions inspectable: the teacher can be calibrated, logged at evaluation time, and stress-tested, and the policy's distance from it can be measured directly (Section~\ref{sec:res-behaviour}). When the teacher is too aggressive, $\gamma$, $\kappa$, or $\lambda$ are economically meaningful knobs, which is easier to reason about than a hybrid reward whose terms trade off implicitly.
 
 \section{Conclusion}
 
-We revisited a reward-shaped deep market maker and replaced its hybrid reward with a profit objective plus a soft AS action prior. On a controlled synthetic replication of the original paper's experimental setup, the selected \softas{} policy beats both reward-shaped \cppo{} and a profit-only PPO control over five seeds per stock. The diagnostics also sharpen the limitation: the method is more active, more inventory-bearing, and more fragile under high latency. Taken together, the experiments make a modest case for AS regularization as a cleaner and more interpretable way to steer deep market-making behaviour than hand-crafted hybrid reward shaping.
+We revisited a reward-shaped deep market maker and replaced its hybrid
+reward with a pure-profit objective plus a soft Avellaneda--Stoikov
+action prior. The motivation was practical: hybrid rewards encode useful behavioural intentions but spreads them across coupled coefficients which are hard to interpret, to tune, and to
+debug when the agent misbehaves. An AS action prior replaces all of that with a single classical model whose parameters have clear economic meaning.
 
+On a controlled synthetic replication of the original experimental
+setup, \softas{} improves spread-normalized PnL by roughly $50\%$
+over reward-shaped \cppo{} and by $21\%$ over a profit-only control
+across five seeds per stock, and the gain is supported by paired tests
+and the per-stock breakdown. The Sharpe ratio also
+improves ($2.54$ against $2.07$ for \cppo{}), indicating that the
+higher returns are not simply noisier. Teacher-divergence diagnostics
+confirm that the regularizer directly steers quoting behaviour: on average, the
+policy stays close to the AS teacher but moves away from it when the data reward a different quote, which is the mechanism by which it outperforms the teacher and the unregularized baseline.
+
+The improvement is not free. \softas{} quotes tighter, fills more
+often, and carries approximately three times the inventory of \cppo{}. The
+latency sweep shows that this active profile degrades faster when
+quotes become stale, which would matter in any deployment with
+non-negligible communication or computation delays. These are direct consequences of the method's strength: a prior that encourages participation will always carry
+more inventory risk than one that discourages it.
+
+Several questions remain open. A state-dependent or annealed
+$\lambda$ could let the agent tighten its adherence to the teacher
+in volatile regimes and loosen it in stable ones. Most importantly,
+evaluation on a non-proprietary real LOB stream would test whether
+the AS prior remains useful when the fill process, adverse selection,
+and microstructure differ from the synthetic benchmark.
+
+
+
+\newpage
 \bibliographystyle{plainnat}
 \begin{thebibliography}{99}
 \providecommand{\natexlab}[1]{#1}
@@ -250,6 +385,16 @@ We revisited a reward-shaped deep market maker and replaced its hybrid reward wi
 M.~Avellaneda and S.~Stoikov.
 \newblock High-frequency trading in a limit order book.
 \newblock \emph{Quantitative Finance}, 8(3):217--224, 2008.
+
+\bibitem[Cheng et al.(2019)]{cheng2019control}
+R.~Cheng, A.~Verma, G.~Orosz, S.~Chaudhuri, Y.~Yue, and J.~W. Burdick.
+\newblock Control regularization for reduced variance reinforcement learning.
+\newblock In \emph{ICML}, pages 1940--1949, 2019.
+
+\bibitem[Falces Mar\'in et al.(2022)]{falcesmarin2022}
+J.~Falces Mar\'in, D.~D\'iaz Pardo de Vera, and E.~L\'opez Gonzalo.
+\newblock A reinforcement learning approach to improve the performance of the Avellaneda--Stoikov market-making algorithm.
+\newblock \emph{PLOS ONE}, 17(12):e0277042, 2022.
 
 \bibitem[Fujimoto et al.(2019)]{fujimoto2019bcq}
 S.~Fujimoto, D.~Meger, and D.~Precup.
@@ -261,15 +406,15 @@ B.~Ga\v{s}perov and Z.~Kostanj\v{c}ar.
 \newblock Market making with signals through deep reinforcement learning.
 \newblock \emph{IEEE Access}, 9:61611--61622, 2021.
 
-\bibitem[Gu\'eant et al.(2013)]{gueant2013}
-O.~Gu\'eant, C.-A. Lehalle, and J.~Fernandez-Tapia.
-\newblock Dealing with the inventory risk: a solution to the market making problem.
-\newblock \emph{Mathematics and Financial Economics}, 7(4):477--507, 2013.
-
 \bibitem[Gould et al.(2013)]{gould2013}
 M.~D. Gould, M.~A. Porter, S.~Williams, M.~McDonald, D.~J. Fenn, and S.~D. Howison.
 \newblock Limit order books.
 \newblock \emph{Quantitative Finance}, 13(11):1709--1742, 2013.
+
+\bibitem[Gu\'eant et al.(2013)]{gueant2013}
+O.~Gu\'eant, C.-A. Lehalle, and J.~Fernandez-Tapia.
+\newblock Dealing with the inventory risk: a solution to the market making problem.
+\newblock \emph{Mathematics and Financial Economics}, 7(4):477--507, 2013.
 
 \bibitem[Guo et al.(2023)]{guo2023mm}
 H.~Guo et al.
@@ -311,6 +456,11 @@ J.~Schulman, F.~Wolski, P.~Dhariwal, A.~Radford, and O.~Klimov.
 \newblock Proximal policy optimization algorithms.
 \newblock \emph{arXiv:1707.06347}, 2017.
 
+\bibitem[Silver et al.(2018)]{silver2018residual}
+T.~Silver, K.~Allen, J.~Tenenbaum, and L.~P. Kaelbling.
+\newblock Residual policy learning.
+\newblock \emph{arXiv:1812.06298}, 2018.
+
 \bibitem[Spooner et al.(2018)]{spooner2018}
 T.~Spooner, J.~Fearnley, R.~Savani, and A.~Koukorinis.
 \newblock Market making via reinforcement learning.
@@ -337,10 +487,10 @@ Y.~Zhong, Y.~Bergstrom, and A.~R. Ward.
 \newblock In \emph{IJCAI}, pages 4461--4468, 2020.
 
 \end{thebibliography}
-
 \newpage
 \appendix
 
+\section*{Appendix}
 \section{Synthetic benchmark}
 \label{app:data}
 
@@ -400,12 +550,15 @@ Stock & Method & PnL & ND-PnL & Sharpe & Abs. inv. \\
 000001 & \cppo{} & $0.44$ & $8.0$ & $0.19$ & $0.5$ \\
 000001 & \profitppo{} & $2.16$ & $44.3$ & $0.69$ & $2.2$ \\
 000001 & \softas{} & $9.16$ & $282.7$ & $0.75$ & $64.2$ \\
+000001 & Direct AS & $10.05$ & $363.4$ & $0.31$ & $214.8$ \\
 000858 & \cppo{} & $172.64$ & $2292.5$ & $4.66$ & $52.1$ \\
 000858 & \profitppo{} & $183.83$ & $2746.6$ & $4.38$ & $69.2$ \\
 000858 & \softas{} & $190.92$ & $2689.4$ & $4.67$ & $62.4$ \\
+000858 & Direct AS & $51.68$ & $517.6$ & $1.35$ & $52.0$ \\
 002415 & \cppo{} & $7.15$ & $135.6$ & $1.36$ & $5.1$ \\
 002415 & \profitppo{} & $11.02$ & $240.5$ & $1.81$ & $8.3$ \\
 002415 & \softas{} & $25.44$ & $699.4$ & $2.20$ & $36.2$ \\
+002415 & Direct AS & $18.18$ & $505.7$ & $0.58$ & $205.7$ \\
 \bottomrule
 \end{tabular}
 \end{table}
