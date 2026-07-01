@@ -1,7 +1,0 @@
-method,variant,stock,train_seed,episode_id,log_rows,fills,abs_volume,mean_abs_inventory_log,max_abs_inventory,final_value
-as_inventory_target,as_baseline,000858,-1,1,21461,230,23600,50.04892595871581,300,1.999999999996362
-as_inventory_target,as_baseline,002415,-1,0,21461,262,27800,138.47444201108988,900,20.0
-as_inventory_target,as_baseline,000001,-1,0,21461,277,31400,203.51334979730674,1000,0.999999999998181
-as_inventory_target,as_baseline,000001,-1,1,21461,313,34400,188.2997064442477,700,-23.0
-as_inventory_target,as_baseline,000858,-1,0,21461,244,25600,53.90708727459112,600,109.0
-as_inventory_target,as_baseline,002415,-1,1,21461,316,34400,178.09514934066445,1000,16.99999999999818

@@ -2,7 +2,7 @@
 
 Code accompanying the AS-regularized market-making project. The repository contains
 a synthetic-data replication of the Attn-LOB/C-PPO market-making pipeline and a
-separate extension package for Avellaneda--Stoikov (AS) guided policies.
+separate extension package for the AS-guided methods reported in the paper.
 
 ## Setup
 
@@ -18,9 +18,13 @@ uv run pytest
 - `src/mlfcs_gapa/data/` - synthetic LOB generation and feature preparation.
 - `src/mlfcs_gapa/env/`, `src/mlfcs_gapa/training/`, `src/mlfcs_gapa/models/` -
   replication environments, baselines, PPO, DQN, and Attn-LOB components.
-- `src/mlfcs_gapa/extensions/` - AS behavioural cloning, soft regularization,
-  hard action-window constraints, and matched extension sweeps.
-- `scripts/euler/` - ETH Euler smoke tests and GPU array jobs.
+- `src/mlfcs_gapa/extensions/` - AS teacher calibration, soft regularization,
+  hard action-window constraints, behavioural-cloning warm starts, and the
+  final matched experiment/diagnostic runners.
+- `scripts/euler/` - ETH Euler smoke tests, full replication, and final paper
+  experiment arrays.
+- `papers/` - LaTeX sources and figures for the replicated paper reference and
+  the AS-regularized extension paper. PDFs are intentionally ignored by Git.
 - `docs/` - replication and cluster notes.
 - `tests/` - unit and smoke tests.
 
